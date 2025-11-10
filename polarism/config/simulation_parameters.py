@@ -20,7 +20,12 @@ class PhysicsConstants:
     dt: float = 1e-3
 
 @dataclass
+class PotentialParameters:
+    potential_type: str = "zero"
+
+@dataclass
 class Config:
     grid: GridParameters = field(default_factory=GridParameters)
     boundry_condition: AbsorptionParameters = field(default_factory=AbsorptionParameters)
+    potential: PotentialParameters = field(default_factory=PotentialParameters)
     physics: PhysicsConstants = field(default_factory=PhysicsConstants)
