@@ -1,9 +1,9 @@
-from simulation.boundry_conditions_strategies.absorption_strategy import AbsorptionStrategy, create_absorption_profile
-from simulation.simulation_grid_2D import SimulationGrid2D
 import numpy as np
-from config.simulation_parameters import AbsorptionParameters
-from config.simulation_parameters import PhysicsConstants
 import matplotlib.pyplot as plt
+from .absorption_strategy import AbsorptionStrategy, create_absorption_profile
+from ..simulation_grid_2D import SimulationGrid2D
+from ..config.simulation_parameters import AbsorptionParameters
+from ..config.simulation_parameters import PhysicsConstants
 
 class AbsorptionPerturbationStrategy(AbsorptionStrategy):
     def __init__(self, grid: SimulationGrid2D, absorption_cfg: AbsorptionParameters, physics_constants: PhysicsConstants):
