@@ -11,7 +11,7 @@ class GridParameters:
 class AbsorptionParameters:
     profile_type: str = "sin2"
     strength: float = 1.0
-    absorption: str = "absorbtion-mask"
+    absorption: str = "absorption-mask"
     mask_width_percent: float = 0.1
 
 @dataclass
