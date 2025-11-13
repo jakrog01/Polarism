@@ -25,11 +25,14 @@ class PotentialParameters:
 
 @dataclass
 class LaserParameters:
-    laser_type: str = "continuous-gaussian"
+    type: str = "continuous-gaussian"
     wavelength: float = 800.0
     intensity: float = 1e6
-    pulse_duration: float = 3e-2
+    P0: float = 1.0
+    x0: float = 0.0
+    y0: float = 0.0
     sigma: float = 1e-2
+    pulse_duration: float = 3e-2
 
 @dataclass
 class Config:
@@ -37,3 +40,4 @@ class Config:
     boundry_condition: BoundaryConditionParameters = field(default_factory=BoundaryConditionParameters)
     potential: PotentialParameters = field(default_factory=PotentialParameters)
     physics: PhysicsConstants = field(default_factory=PhysicsConstants)
+    laser: LaserParameters = field(default_factory=LaserParameters)
