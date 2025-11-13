@@ -25,6 +25,7 @@ class PotentialParameters:
 
 @dataclass
 class LaserParameters:
+    laser_count = 1
     type: str = "continuous-gaussian"
     wavelength: float = 800.0
     intensity: float = 1e6
