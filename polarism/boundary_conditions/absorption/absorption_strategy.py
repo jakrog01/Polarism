@@ -2,9 +2,9 @@ import numpy as np
 from abc import ABC, abstractmethod
 
 class AbsorptionStrategy(ABC):
-
     @abstractmethod
     def __init__(self, grid, absorption_cfg, physics_constants):
+        super().__init__()
         pass
 
     @abstractmethod

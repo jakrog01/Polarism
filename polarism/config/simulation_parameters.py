@@ -8,10 +8,10 @@ class GridParameters:
     ly: float = 100.0
 
 @dataclass
-class AbsorptionParameters:
+class BoundaryConditionParameters:
     profile_type: str = "sin2"
     strength: float = 1.0
-    absorption: str = "absorption-mask"
+    absorption: str = "mask"
     mask_width_percent: float = 0.1
 
 @dataclass
@@ -24,8 +24,16 @@ class PotentialParameters:
     potential_type: str = "zero"
 
 @dataclass
+class LaserParameters:
+    laser_type: str = "continuous-gaussian"
+    wavelength: float = 800.0
+    intensity: float = 1e6
+    pulse_duration: float = 3e-2
+    sigma: float = 1e-2
+
+@dataclass
 class Config:
     grid: GridParameters = field(default_factory=GridParameters)
-    boundry_condition: AbsorptionParameters = field(default_factory=AbsorptionParameters)
+    boundry_condition: BoundaryConditionParameters = field(default_factory=BoundaryConditionParameters)
     potential: PotentialParameters = field(default_factory=PotentialParameters)
     physics: PhysicsConstants = field(default_factory=PhysicsConstants)

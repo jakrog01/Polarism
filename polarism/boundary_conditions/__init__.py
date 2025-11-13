@@ -1,1 +1,1 @@
-from .boundary_condition_factory import BoundaryConditionFactory
+from polarism.boundary_conditions.boundary_condition import BoundaryCondition
