@@ -26,7 +26,7 @@ class PotentialParameters:
 @dataclass
 class LaserParameters:
     laser_count = 1
-    type: str = "continuous-gaussian"
+    laser_type: str = "continuous-gaussian"
     wavelength: float = 800.0
     intensity: float = 1e6
     P0: float = 1.0
@@ -36,9 +36,16 @@ class LaserParameters:
     pulse_duration: float = 3e-2
 
 @dataclass
+class ReservoirParameters:
+    reservoir_type: str = "single"
+    R: float = 0.01
+    gamma_R: float = 0.1
+
+@dataclass
 class Config:
     grid: GridParameters = field(default_factory=GridParameters)
     boundry_condition: BoundaryConditionParameters = field(default_factory=BoundaryConditionParameters)
     potential: PotentialParameters = field(default_factory=PotentialParameters)
     physics: PhysicsConstants = field(default_factory=PhysicsConstants)
     laser: LaserParameters = field(default_factory=LaserParameters)
+    reservoir: ReservoirParameters = field(default_factory=ReservoirParameters)
