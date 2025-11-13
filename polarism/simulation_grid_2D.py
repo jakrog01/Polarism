@@ -1,6 +1,6 @@
 import numpy as np
 from dataclasses import dataclass
-from .config.simulation_parameters import GridParameters
+from polarism.config.simulation_parameters import GridParameters
 
 class SimulationGrid2D:
     def __init__(self, cfg: GridParameters):

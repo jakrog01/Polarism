@@ -1,4 +1,4 @@
-from .abstract_laser import AbstractLaser
+from polarism.laser.abstract_laser import AbstractLaser
 import numpy as np
 
 class ContinuousGaussian(AbstractLaser):
