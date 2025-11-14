@@ -1,4 +1,4 @@
-from polarism.laser.laser_register import available_lasers
+from polarism.laser.laser_registy import available_lasers
 
 class LaserFactory:
     @staticmethod

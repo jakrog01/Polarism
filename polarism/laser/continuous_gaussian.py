@@ -1,5 +1,5 @@
 from polarism.config.simulation_parameters import LaserParameters
-from polarism.laser.laser_register import register_laser
+from polarism.laser.laser_registy import register_laser
 from polarism.laser.abstract_laser import AbstractLaser
 import numpy as np
 
@@ -15,5 +15,5 @@ class ContinuousGaussian(AbstractLaser):
         r2 = (X-self.x0)**2 + (Y-self.y0)**2
         return self.P0*np.exp(-0.5*r2/self.sigma**2)
     
-    def P_time(self, t): 
+    def P_time(self, dt): 
         return 1.0
