@@ -8,16 +8,21 @@ class GridParameters:
     ly: float = 100.0
 
 @dataclass
+class PhysicsConstants:
+    hbar: float = 1.0
+    m_eff: float = 1.0
+    R: float = 0.01
+    gamma_R: float = 0.1
+    gamma_C: float = 0.05
+    g_C: float = 1.0
+    g_R: float = 0.5
+
+@dataclass
 class BoundaryConditionParameters:
     profile_type: str = "sin2"
     strength: float = 1.0
     absorption: str = "mask"
     mask_width_percent: float = 0.1
-
-@dataclass
-class PhysicsConstants:
-    hbar: float = 1.0
-    dt: float = 1e-3
 
 @dataclass
 class PotentialParameters:
@@ -38,8 +43,12 @@ class LaserParameters:
 @dataclass
 class ReservoirParameters:
     reservoir_type: str = "single"
-    R: float = 0.01
-    gamma_R: float = 0.1
+
+@dataclass
+class SolverParameters:
+    total_time: float = 100.0
+    dt: float = 1e-3
+    method: str = "split-step-fft"
 
 @dataclass
 class Config:
@@ -49,3 +58,4 @@ class Config:
     physics: PhysicsConstants = field(default_factory=PhysicsConstants)
     laser: LaserParameters = field(default_factory=LaserParameters)
     reservoir: ReservoirParameters = field(default_factory=ReservoirParameters)
+    solver: SolverParameters = field(default_factory=SolverParameters)
