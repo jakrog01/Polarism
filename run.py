@@ -11,6 +11,5 @@ def main():
     state = ps.SimulationState(grid)
     solver = ps.create_solver(state, cfg, grid, potential, lasers, reservoir, boundry_condition_strategy)
 
-
 if __name__ == "__main__":
     main()
