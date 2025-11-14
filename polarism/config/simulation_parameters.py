@@ -21,7 +21,7 @@ class PhysicsConstants:
 class BoundaryConditionParameters:
     profile_type: str = "sin2"
     strength: float = 1.0
-    absorption: str = "mask"
+    absorption: str = "no-absorption"
     mask_width_percent: float = 0.1
 
 @dataclass
