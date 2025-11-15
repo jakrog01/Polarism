@@ -11,9 +11,11 @@ class SplitStepFFTSolver(AbstractSolver):
 
     def step(self):
         self._first_half_step_kinetic()
-        self._full_step_potential()
+        P = self.laser.P(self.grid.X, self.grid.Y, self.state.t)
+        self._full_step_potential(P)
         self.state.psi = self.boundary_condition.after_step_action(self.state.psi)
         self._first_half_step_kinetic()
+
         self.state.t += self.config.solver.dt
     
     def _first_half_step_kinetic(self):
@@ -21,8 +23,8 @@ class SplitStepFFTSolver(AbstractSolver):
         psi_k *= self._kinetic_propagator
         self.state.psi = np.fft.ifft2(psi_k)
     
-    def _full_step_potential(self):
-        self.state.n = self.reservoir.step(self.state.n, self.config.solver.dt, self.state.psi, self.laser.P(self.grid.X, self.grid.Y, self.state.t))
+    def _full_step_potential(self, P):
+        self.state.n = self.reservoir.step(self.state.n, self.config.solver.dt, self.state.psi, P)
 
         eff_energy = self.potential + self.physics.g_C * np.abs(self.state.psi)**2 + self.physics.g_R * self.state.n
         gain_loss = (self.physics.R * self.state.n - self.physics.gamma_C) / 2.0
