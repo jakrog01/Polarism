@@ -35,9 +35,10 @@ class LaserParameters:
     wavelength: float = 800.0
     intensity: float = 1e6
     P0: float = 1.0
+    Pmax: float = 100.0
     x0: float = 0.0
     y0: float = 0.0
-    sigma: float = 1e-2
+    sigma_space: float = 1e-2
     pulse_duration: float = 3e-2
 
 @dataclass
