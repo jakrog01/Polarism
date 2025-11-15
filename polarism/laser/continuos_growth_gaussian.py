@@ -3,7 +3,7 @@ from polarism.laser.laser_registy import register_laser
 from polarism.laser.abstract_laser import AbstractLaser
 import numpy as np
 
-@register_laser("continuous-gaussian")
+@register_laser("continuous-growth-gaussian")
 class ContinuousGaussian(AbstractLaser):
     def __init__(self, laser_config: LaserParameters):
         super().__init__(laser_config)

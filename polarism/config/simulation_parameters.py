@@ -11,11 +11,11 @@ class GridParameters:
 class PhysicsConstants:
     hbar: float = 1.0
     m_eff: float = 1.0
-    R: float = 0.01
-    gamma_R: float = 0.1
-    gamma_C: float = 0.05
+    R: float = 1.0
+    gamma_R: float = 0.05
+    gamma_C: float = 1.0
     g_C: float = 1.0
-    g_R: float = 0.5
+    g_R: float = 2.0
 
 @dataclass
 class BoundaryConditionParameters:
@@ -32,13 +32,11 @@ class PotentialParameters:
 class LaserParameters:
     laser_count = 1
     laser_type: str = "continuous-gaussian"
-    wavelength: float = 800.0
-    intensity: float = 1e6
     P0: float = 1.0
     Pmax: float = 100.0
     x0: float = 0.0
     y0: float = 0.0
-    sigma_space: float = 1e-2
+    sigma_space: float = 10
     pulse_duration: float = 3e-2
 
 @dataclass
