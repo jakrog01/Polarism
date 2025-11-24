@@ -14,8 +14,8 @@ class PhysicsConstants:
     R: float = 1.0
     gamma_R: float = 0.05
     gamma_C: float = 1.0
-    g_C: float = 1.0
-    g_R: float = 2.0
+    g_C: float = 0.0
+    g_R: float = 0.0
 
 @dataclass
 class BoundaryConditionParameters:
@@ -30,13 +30,12 @@ class PotentialParameters:
 
 @dataclass
 class LaserParameters:
-    laser_count = 1
     laser_type: str = "continuous-gaussian"
-    P0: float = 1.0
+    P0: float = 0.2
     Pmax: float = 100.0
     x0: float = 0.0
     y0: float = 0.0
-    sigma_space: float = 10
+    sigma_space: float = 10.0
     pulse_duration: float = 3e-2
 
 @dataclass
@@ -58,3 +57,4 @@ class Config:
     laser: LaserParameters = field(default_factory=LaserParameters)
     reservoir: ReservoirParameters = field(default_factory=ReservoirParameters)
     solver: SolverParameters = field(default_factory=SolverParameters)
+
