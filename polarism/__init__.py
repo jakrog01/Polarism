@@ -6,3 +6,4 @@ from polarism.laser.laser_factory import LaserFactory
 from polarism.reservoir import create_reservoir
 from polarism.simulation_state import SimulationState
 from polarism.solver import create_solver
+from polarism.visualization import RealTimeVisualization
