@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 class GridParameters:
     nx: int = 256
     ny: int = 256
-    lx: float = 100.0
-    ly: float = 100.0
+    lx: float = 150.0
+    ly: float = 150.0
 
 @dataclass
 class PhysicsConstants:
@@ -30,6 +30,8 @@ class PotentialParameters:
 
 @dataclass
 class LaserParameters:
+    mode: str = "multiple"
+    config_file: str = "lasers_setup.yaml"
     laser_type: str = "continuous-gaussian"
     P0: float = 0.2
     Pmax: float = 100.0

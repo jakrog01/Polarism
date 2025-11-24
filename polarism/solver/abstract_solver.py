@@ -3,12 +3,12 @@ from polarism.config.simulation_parameters import Config
 
 class AbstractSolver(ABC):
     @abstractmethod
-    def __init__(self, state, config: Config, grid, potential, laser, reservoir, boundary_condition, visualizer):
+    def __init__(self, state, config: Config, grid, potential, lasers, reservoir, boundary_condition, visualizer):
         self.config = config
         self.physics = config.physics
         self.grid = grid
         self.potential = potential
-        self.laser = laser
+        self.lasers = lasers
         self.reservoir = reservoir
         self.boundary_condition = boundary_condition
         self.state = state

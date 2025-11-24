@@ -2,9 +2,9 @@ from abc import ABC, abstractmethod
 
 class AbstractLaser (ABC):
     def __init__(self, laser_config):
-        self.P0 = laser_config.P0
-        self.x0 = laser_config.x0
-        self.y0 = laser_config.y0
+        self.P0 = laser_config["P0"]
+        self.x0 = laser_config["x0"]
+        self.y0 = laser_config["y0"]
 
     @abstractmethod
     def P_space(self, X, Y): 
