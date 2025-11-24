@@ -1,0 +1,12 @@
+lasers:
+  - laser_type: continuous-gaussian
+    P0: 0.2
+    x0: 37.5
+    y0: -37.5
+    sigma_space: 10.0
+
+  - laser_type: continuous-gaussian
+    P0: 0.2
+    x0: -37.5
+    y0: 37.5
+    sigma_space: 10.0
