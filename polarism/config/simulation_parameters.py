@@ -30,15 +30,19 @@ class BoundaryConditionParameters:
 
 @dataclass
 class PotentialParameters:
+    real_time_view: bool = True
+    save_results: bool = False
     potential_type: str = "zero"
 
 @dataclass
 class LaserParameters:
-    mode: str = "single"
+    real_time_view: bool = True
+    save_results: bool = False
+    mode: str = "multiple"
     config_file: str = "lasers_setup.yaml"
     laser_type: str = "pulse-gaussian"
     P0: float = 10.0
-    Pmax: float = 10.0
+    Pmax: float = 20.0
     x0: float = 0.0
     y0: float = 0.0
     sigma_space: float = 10.0
@@ -48,6 +52,8 @@ class LaserParameters:
 
 @dataclass
 class ReservoirParameters:
+    real_timeview: bool = True
+    save_results: bool = False
     reservoir_type: str = "double"
 
 @dataclass
@@ -55,6 +61,14 @@ class SolverParameters:
     total_time: float = 100.0
     dt: float = 1e-3
     method: str = "split-step-fft"
+
+@dataclass
+class ResultParameters:
+    real_time_view: bool = True
+    save_results: bool = False
+    real_time_refresh_interval: float = 0.1
+    save_interval: int = 1
+    output_directory: str = "simulation_results"
 
 @dataclass
 class Config:

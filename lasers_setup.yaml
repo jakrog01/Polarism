@@ -1,12 +1,20 @@
 lasers:
-  - laser_type: continuous-gaussian
-    P0: 0.2
+  - laser_type: pulse-gaussian
+    P0: 10.0
+    Pmax: 10.0
     x0: 37.5
     y0: -37.5
     sigma_space: 10.0
+    sigma_time: 0.5
+    pulse_separation: 6.0
+    cutoff_sigma: 3.0
 
-  - laser_type: continuous-gaussian
-    P0: 0.2
+  - laser_type: pulse-gaussian
+    P0: 20.0
+    Pmax: 20.0
     x0: -37.5
     y0: 37.5
     sigma_space: 10.0
+    sigma_time: 0.2
+    pulse_separation: 2.0
+    cutoff_sigma: 3.0

@@ -15,6 +15,6 @@ class AbstractLaser (ABC):
     def P_time(self, t):
         raise NotImplementedError
     
-    def get_pump_power(self, X, Y, t):
+    def get_power(self, X, Y, t):
         self.P = self.P_space(X, Y) * self.P_time(t)
         return self.P
