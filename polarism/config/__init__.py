@@ -1,1 +1,7 @@
-from polarism.config.simulation_parameters import Config, GridParameters, PotentialParameters, BoundaryConditionParameters, PhysicsConstants
+from polarism.config.simulation_parameters import (
+    BoundaryConditionParameters,
+    Config,
+    GridParameters,
+    PhysicsConstants,
+    PotentialParameters,
+)

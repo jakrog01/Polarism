@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
-class AbstractLaser (ABC):
+
+class AbstractLaser(ABC):
     def __init__(self, laser_config):
         self.P0 = laser_config["P0"]
         self.x0 = laser_config["x0"]
@@ -8,13 +9,13 @@ class AbstractLaser (ABC):
         self.P = 0.0
 
     @abstractmethod
-    def P_space(self, X, Y): 
+    def P_space(self, X, Y):
         raise NotImplementedError
-    
+
     @abstractmethod
     def P_time(self, t):
         raise NotImplementedError
-    
+
     def get_power(self, X, Y, t):
         self.P = self.P_space(X, Y) * self.P_time(t)
         return self.P

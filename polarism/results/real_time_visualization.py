@@ -1,5 +1,6 @@
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+
 from polarism.results.result_groups import Results2D, ResultScalar, ResultScalarGroup
 
 
@@ -25,8 +26,7 @@ class RealTimeVisualization:
 
         self._scalar_data = {s.name: [] for s in scalars}
         self._group_data = {
-            g.name: {label: [] for label in g.labels}
-            for g in scalar_groups
+            g.name: {label: [] for label in g.labels} for g in scalar_groups
         }
 
         self._scalar_axes = {}
@@ -114,7 +114,7 @@ class RealTimeVisualization:
         col = 0
         for s in self.scalars:
             ax = self.axes[1, col]
-            line, = ax.plot([], [], color=s.color)
+            (line,) = ax.plot([], [], color=s.color)
             ax.set_title(s.name)
             self._lines[s.name] = line
             self._scalar_axes[s.name] = ax
@@ -124,7 +124,7 @@ class RealTimeVisualization:
             ax = self.axes[1, col]
             self._group_lines[g.name] = {}
             for label in g.labels:
-                line, = ax.plot([], [], label=label)
+                (line,) = ax.plot([], [], label=label)
                 self._group_lines[g.name][label] = line
             ax.legend()
             ax.set_title(g.name)

@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
+
 from polarism.config.simulation_parameters import Config
+
 
 class AbstractSolver(ABC):
     @abstractmethod

@@ -1,5 +1,6 @@
-from polarism.reservoir.single_reservoir import SingleReservoir
 from polarism.reservoir.double_reservoir import DoubleReservoir
+from polarism.reservoir.single_reservoir import SingleReservoir
+
 
 def create_reservoir(reservoir_config, physics, grid):
     if reservoir_config.reservoir_type == "single":

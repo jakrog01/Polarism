@@ -1,4 +1,5 @@
 import numpy as np
+
 import polarism as ps
 from polarism.results.result_groups import Results2D, ResultScalar, ResultScalarGroup
 
@@ -40,21 +41,24 @@ class SimulationController:
                 fields_2d.append(Results2D("nR", cmap="viridis"))
                 scalars.append(ResultScalar("nR_max"))
             else:
-                fields_2d.extend([
-                    Results2D("nA", cmap="viridis"),
-                    Results2D("nI", cmap="plasma"),
-                ])
-                scalars.extend([
-                    ResultScalar("nA_max"),
-                    ResultScalar("nI_max"),
-                ])
+                fields_2d.extend(
+                    [
+                        Results2D("nA", cmap="viridis"),
+                        Results2D("nI", cmap="plasma"),
+                    ]
+                )
+                scalars.extend(
+                    [
+                        ResultScalar("nA_max"),
+                        ResultScalar("nI_max"),
+                    ]
+                )
 
         if self.cfg.laser.expose_results:
             fields_2d.append(Results2D("P", cmap="inferno"))
             scalar_groups = [
                 ResultScalarGroup(
-                    "P_lasers",
-                    [f"L{i}" for i in range(len(self.lasers))]
+                    "P_lasers", [f"L{i}" for i in range(len(self.lasers))]
                 )
             ]
         else:
@@ -110,9 +114,7 @@ class SimulationController:
                 scalar_groups = {}
                 if self.cfg.laser.expose_results:
                     scalar_groups["P_lasers"] = {
-                        f"L{i}": np.sum(
-                            laser.get_power(self.grid.X, self.grid.Y, t)
-                        )
+                        f"L{i}": np.sum(laser.get_power(self.grid.X, self.grid.Y, t))
                         for i, laser in enumerate(self.lasers)
                     }
 
