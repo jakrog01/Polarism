@@ -13,3 +13,5 @@ class SingleReservoir(AbstractReservoir):
         Gamma = self.R * np.abs(psi)**2 + self.gamma_r
         self.nR = self.nR*np.exp(-Gamma*dt) + (Pxy/Gamma)*(1 - np.exp(-Gamma*dt))
        
+    def get_reservoir_density(self):
+        return self.nR
