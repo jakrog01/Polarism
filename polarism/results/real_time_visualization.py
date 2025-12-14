@@ -1,8 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from polarism.visualization.abstract_visualization import AbstractVisualization
 
-class RealTimeVisualization(AbstractVisualization):
+class RealTimeVisualization():
     def __init__(self):
         self._interactive_fig = None
         self._t_history = []
