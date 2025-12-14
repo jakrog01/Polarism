@@ -11,11 +11,15 @@ class GridParameters:
 class PhysicsConstants:
     hbar: float = 1.0
     m_eff: float = 1.0
-    R: float = 1.0
+    R: float = 0.5
     gamma_R: float = 0.05
     gamma_C: float = 1.0
-    g_C: float = 0.0
-    g_R: float = 0.0
+    g_C: float = 0.1
+    g_R: float = 0.1
+    gamma_I: float = 0.01   
+    gamma_A: float = 0.05  
+    R_IA: float = 0.05 
+    R_AI: float = 0.005 
 
 @dataclass
 class BoundaryConditionParameters:
@@ -33,7 +37,7 @@ class LaserParameters:
     mode: str = "multiple"
     config_file: str = "lasers_setup.yaml"
     laser_type: str = "continuous-gaussian"
-    P0: float = 0.2
+    P0: float = 10
     Pmax: float = 100.0
     x0: float = 0.0
     y0: float = 0.0
@@ -42,7 +46,7 @@ class LaserParameters:
 
 @dataclass
 class ReservoirParameters:
-    reservoir_type: str = "single"
+    reservoir_type: str = "double"
 
 @dataclass
 class SolverParameters:
