@@ -21,3 +21,6 @@ class DoubleReservoir(AbstractReservoir):
 
     def get_reservoir_density(self):
         return self.nA
+    
+    def get_reservoir_densities(self):
+        return self.nA, self.nI
