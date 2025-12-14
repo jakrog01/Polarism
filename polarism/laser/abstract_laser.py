@@ -5,6 +5,7 @@ class AbstractLaser (ABC):
         self.P0 = laser_config["P0"]
         self.x0 = laser_config["x0"]
         self.y0 = laser_config["y0"]
+        self.P = 0.0
 
     @abstractmethod
     def P_space(self, X, Y): 
@@ -14,5 +15,6 @@ class AbstractLaser (ABC):
     def P_time(self, t):
         raise NotImplementedError
     
-    def P(self, X, Y, t):
-        return self.P0 * self.P_space(X, Y) * self.P_time(t)
+    def get_pump_power(self, X, Y, t):
+        self.P = self.P0 * self.P_space(X, Y) * self.P_time(t)
+        return self.P
