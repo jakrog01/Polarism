@@ -26,7 +26,7 @@ class SplitStepFFTSolver(AbstractSolver):
         self._first_half_step_kinetic()
 
         if (self.steps_count % 100) == 0:
-            self.visualizer.plot(P_total, self.state.psi, self.state.nR, self.grid)
+            self.visualizer.plot(P_total, self.state.psi, self.reservoir.nR, self.grid)
 
         self.steps_count += 1
         self.state.t += self.config.solver.dt
@@ -37,7 +37,7 @@ class SplitStepFFTSolver(AbstractSolver):
         self.state.psi = np.fft.ifft2(psi_k)
     
     def _full_step_potential(self, P):
-        self.state.nR = self.reservoir.step(self.state.nR, self.config.solver.dt, self.state.psi, P)
-        eff_energy = self.potential + self.physics.g_C * np.abs(self.state.psi)**2 + self.physics.g_R * self.state.nR
-        gain_loss = (self.physics.R * self.state.nR - self.physics.gamma_C) / 2.0
+        self.reservoir.step(self.config.solver.dt, self.state.psi, P)
+        eff_energy = self.potential + self.physics.g_C * np.abs(self.state.psi)**2 + self.physics.g_R * self.reservoir.nR
+        gain_loss = (self.physics.R * self.reservoir.nR - self.physics.gamma_C) / 2.0
         self.state.psi = self.state.psi * np.exp(-1j * eff_energy * self.config.solver.dt / self.physics.hbar) * np.exp(gain_loss * self.config.solver.dt)
