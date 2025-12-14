@@ -19,7 +19,7 @@ class LaserFactory:
         laser_cls = available_lasers.get(laser_type)
         if laser_cls is None:
             raise ValueError(f"Unknown laser type: {laser_type}")
-        return laser_cls(cfg)
+        return [laser_cls(cfg)]
 
     @staticmethod
     def _create_multiple_lasers(laser_config):

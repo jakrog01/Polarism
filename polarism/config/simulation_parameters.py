@@ -34,15 +34,17 @@ class PotentialParameters:
 
 @dataclass
 class LaserParameters:
-    mode: str = "multiple"
+    mode: str = "single"
     config_file: str = "lasers_setup.yaml"
-    laser_type: str = "continuous-gaussian"
-    P0: float = 10
-    Pmax: float = 100.0
+    laser_type: str = "pulse-gaussian"
+    P0: float = 10.0
+    Pmax: float = 10.0
     x0: float = 0.0
     y0: float = 0.0
     sigma_space: float = 10.0
-    pulse_duration: float = 3e-2
+    sigma_time: float = 0.5
+    pulse_separation: float = 6.0
+    cutoff_sigma: float = 3.0
 
 @dataclass
 class ReservoirParameters:
