@@ -20,7 +20,7 @@ class SplitStepFFTSolver(AbstractSolver):
         self._first_half_step_kinetic()
         P_total = np.zeros_like(self.grid.X)
         for laser in self.lasers:
-            P_total += laser.P(self.grid.X, self.grid.Y, self.state.t)
+            P_total += laser.get_pump_power(self.grid.X, self.grid.Y, self.state.t)
         self._full_step_potential(P_total)
         self.state.psi = self.boundary_condition.after_step_action(self.state.psi)
         self._first_half_step_kinetic()
