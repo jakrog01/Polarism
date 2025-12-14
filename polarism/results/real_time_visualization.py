@@ -1,66 +1,135 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from polarism.results.result_groups import Results2D, ResultScalar, ResultScalarGroup
 
-class RealTimeVisualization():
-    def __init__(self):
-        self._interactive_fig = None
-        self._t_history = []
-        self._P_history = []
 
-    def plot(self, t, P, psi, nR, grid):
-        if self._interactive_fig is None:
-            self._init_interactive_plot(P, grid, nR, psi)
+class RealTimeVisualization:
+    def __init__(
+        self,
+        fields_2d: list[Results2D],
+        scalars: list[ResultScalar],
+        scalar_groups: list[ResultScalarGroup],
+        tmax: float,
+        grid_extent: list[float],
+        pause_s: float = 0.001,
+    ):
+        self.fields_2d = fields_2d
+        self.scalars = scalars
+        self.scalar_groups = scalar_groups
+        self.tmax = tmax
+        self.extent = grid_extent
+        self.pause_s = pause_s
 
-        self._t_history.append(t)
-        self._P_history.append(np.nanmax(P))
+        self._initialized = False
+        self._t = []
 
-        try:
-            self._im0.set_data(P)
-            self._im1.set_data(nR)
-            self._im2.set_data(np.abs(psi)**2)
+        self._scalar_data = {s.name: [] for s in scalars}
+        self._group_data = {
+            g.name: {label: [] for label in g.labels}
+            for g in scalar_groups
+        }
 
-            self._im0.set_clim(np.nanmin(P), np.nanmax(P))
-            self._im1.set_clim(np.nanmin(nR), np.nanmax(nR))
+        self._scalar_axes = {}
+        self._group_axes = {}
 
-            im2data = np.abs(psi)**2
-            self._im2.set_clim(np.nanmin(im2data), np.nanmax(im2data))
+    def update(self, t, fields=None, scalars=None, scalar_groups=None):
+        if not self._initialized:
+            self._init_figure()
+            self._initialized = True
 
-            self._lineP.set_data(self._t_history, self._P_history)
-            self._axP.relim()
-            self._axP.autoscale_view()
+        self._t.append(t)
+        frame_idx = len(self._t)
 
-            self._interactive_fig.canvas.draw_idle()
-            plt.pause(0.001)
-        except Exception:
-            fig, axes = plt.subplots(1, 4, figsize=(22, 5))
-            extent = [grid.X.min(), grid.X.max(), grid.Y.min(), grid.Y.max()]
+        if fields:
+            for name, data in fields.items():
+                if name in self._im:
+                    self._im[name].set_data(data)
+                    if self._clim_fixed[name] is False:
+                        vmin = float(np.nanmin(data))
+                        vmax = float(np.nanmax(data))
+                        if np.isfinite(vmin) and np.isfinite(vmax) and vmax > vmin:
+                            self._im[name].set_clim(vmin, vmax)
 
-            axes[0].imshow(P, extent=extent, origin="lower", cmap="inferno")
-            axes[1].imshow(nR, extent=extent, origin="lower", cmap="viridis")
-            axes[2].imshow(np.abs(psi)**2, extent=extent, origin="lower", cmap="magma")
-            axes[3].plot(self._t_history, self._P_history, color="red")
+        if scalars:
+            for name, value in scalars.items():
+                if name not in self._lines:
+                    continue
+                self._scalar_data[name].append(value)
+                line = self._lines[name]
+                line.set_data(self._t, self._scalar_data[name])
+                ax = self._scalar_axes[name]
+                ax.relim()
+                ax.autoscale_view(scaley=True)
 
-            plt.tight_layout()
-            plt.show()
+        if scalar_groups:
+            for gname, values in scalar_groups.items():
+                if gname not in self._group_lines:
+                    continue
+                for label, value in values.items():
+                    if label not in self._group_lines[gname]:
+                        continue
+                    self._group_data[gname][label].append(value)
+                    line = self._group_lines[gname][label]
+                    line.set_data(self._t, self._group_data[gname][label])
+                ax = self._group_axes[gname]
+                ax.relim()
+                ax.autoscale_view(scaley=True)
 
-    def _init_interactive_plot(self, P, grid, nR, psi):
-        self._interactive_fig, axes = plt.subplots(1, 4, figsize=(22, 5))
-        extent = [grid.X.min(), grid.X.max(), grid.Y.min(), grid.Y.max()]
+        plt.draw()
+        plt.pause(self.pause_s)
 
-        self._im0 = axes[0].imshow(P, extent=extent, origin="lower", cmap="inferno")
-        self._im1 = axes[1].imshow(nR, extent=extent, origin="lower", cmap="viridis")
-        self._im2 = axes[2].imshow(np.abs(psi)**2, extent=extent, origin="lower", cmap="magma")
+    def _init_figure(self):
+        ncols = len(self.fields_2d)
+        self.fig, self.axes = plt.subplots(2, ncols, figsize=(5 * ncols, 8))
 
-        self._axP = axes[3]
-        self._lineP, = self._axP.plot([], [], color="red")
-        self._axP.set_xlabel("t")
-        self._axP.set_ylabel("max P")
-        self._axP.set_title("P(t)")
-        self._axP.grid(True)
+        self._im = {}
+        self._clim_fixed = {}
 
-        self._interactive_fig.colorbar(self._im0, ax=axes[0], shrink=0.8)
-        self._interactive_fig.colorbar(self._im1, ax=axes[1], shrink=0.8)
-        self._interactive_fig.colorbar(self._im2, ax=axes[2], shrink=0.8)
+        for i, field in enumerate(self.fields_2d):
+            ax = self.axes[0, i]
+            im = ax.imshow(
+                np.zeros((10, 10)),
+                extent=self.extent,
+                origin="lower",
+                cmap=field.cmap,
+            )
+            ax.set_title(field.name)
+            self.fig.colorbar(im, ax=ax, shrink=0.8)
+
+            if field.clim is not None:
+                im.set_clim(*field.clim)
+                self._clim_fixed[field.name] = True
+            else:
+                self._clim_fixed[field.name] = False
+
+            self._im[field.name] = im
+
+        self._lines = {}
+        self._group_lines = {}
+
+        for ax in self.axes[1, :]:
+            ax.set_xlim(0, self.tmax)
+            ax.grid(True)
+
+        col = 0
+        for s in self.scalars:
+            ax = self.axes[1, col]
+            line, = ax.plot([], [], color=s.color)
+            ax.set_title(s.name)
+            self._lines[s.name] = line
+            self._scalar_axes[s.name] = ax
+            col += 1
+
+        for g in self.scalar_groups:
+            ax = self.axes[1, col]
+            self._group_lines[g.name] = {}
+            for label in g.labels:
+                line, = ax.plot([], [], label=label)
+                self._group_lines[g.name][label] = line
+            ax.legend()
+            ax.set_title(g.name)
+            self._group_axes[g.name] = ax
+            col += 1
 
         plt.tight_layout()
         plt.show(block=False)
