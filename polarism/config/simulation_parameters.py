@@ -1,11 +1,13 @@
 from dataclasses import dataclass, field
 
+
 @dataclass
 class GridParameters:
     nx: int = 256
     ny: int = 256
     lx: float = 150.0
     ly: float = 150.0
+
 
 @dataclass
 class PhysicsConstants:
@@ -16,10 +18,11 @@ class PhysicsConstants:
     gamma_C: float = 1.0
     g_C: float = 0.1
     g_R: float = 0.1
-    gamma_I: float = 0.01   
-    gamma_A: float = 0.05  
-    R_IA: float = 0.05 
-    R_AI: float = 0.005 
+    gamma_I: float = 0.01
+    gamma_A: float = 0.05
+    R_IA: float = 0.05
+    R_AI: float = 0.005
+
 
 @dataclass
 class BoundaryConditionParameters:
@@ -28,10 +31,12 @@ class BoundaryConditionParameters:
     absorption: str = "no-absorption"
     mask_width_percent: float = 0.1
 
+
 @dataclass
 class PotentialParameters:
     expose_results: bool = True
     potential_type: str = "zero"
+
 
 @dataclass
 class LaserParameters:
@@ -48,16 +53,19 @@ class LaserParameters:
     pulse_separation: float = 6.0
     cutoff_sigma: float = 3.0
 
+
 @dataclass
 class ReservoirParameters:
     expose_results: bool = True
     reservoir_type: str = "double"
+
 
 @dataclass
 class SolverParameters:
     total_time: float = 40.0
     dt: float = 1e-3
     method: str = "split-step-fft"
+
 
 @dataclass
 class ResultParameters:
@@ -67,14 +75,16 @@ class ResultParameters:
     save_interval: int = 1
     output_directory: str = "simulation_results"
 
+
 @dataclass
 class Config:
     grid: GridParameters = field(default_factory=GridParameters)
-    boundry_condition: BoundaryConditionParameters = field(default_factory=BoundaryConditionParameters)
+    boundry_condition: BoundaryConditionParameters = field(
+        default_factory=BoundaryConditionParameters
+    )
     potential: PotentialParameters = field(default_factory=PotentialParameters)
     physics: PhysicsConstants = field(default_factory=PhysicsConstants)
     laser: LaserParameters = field(default_factory=LaserParameters)
     reservoir: ReservoirParameters = field(default_factory=ReservoirParameters)
     solver: SolverParameters = field(default_factory=SolverParameters)
     result: ResultParameters = field(default_factory=ResultParameters)
-

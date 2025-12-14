@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 
+
 class AbstractReservoir(ABC):
     @abstractmethod
     def __init__(self, reservoir_config, physcis):

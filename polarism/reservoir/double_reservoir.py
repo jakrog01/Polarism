@@ -1,7 +1,6 @@
-from polarism.config.simulation_parameters import ReservoirParameters, PhysicsConstants
-from polarism.reservoir.abstract_reservoir import AbstractReservoir
-from polarism.simulation_grid_2D import SimulationGrid2D
 import numpy as np
+
+from polarism.reservoir.abstract_reservoir import AbstractReservoir
 
 
 class DoubleReservoir(AbstractReservoir):
@@ -15,12 +14,19 @@ class DoubleReservoir(AbstractReservoir):
         self.nA = np.zeros((grid.nx, grid.ny))
 
     def step(self, dt, psi, Pxy):
-        abs_psi2 = np.abs(psi)**2
-        self.nI += dt * (Pxy - self.gamma_I * self.nI - self.R_IA * self.nI + self.R_AI * self.nA)
-        self.nA += dt * (self.R_IA * self.nI - self.gamma_A * self.nA - self.R_AI * self.nA - self.R * abs_psi2 * self.nA)
+        abs_psi2 = np.abs(psi) ** 2
+        self.nI += dt * (
+            Pxy - self.gamma_I * self.nI - self.R_IA * self.nI + self.R_AI * self.nA
+        )
+        self.nA += dt * (
+            self.R_IA * self.nI
+            - self.gamma_A * self.nA
+            - self.R_AI * self.nA
+            - self.R * abs_psi2 * self.nA
+        )
 
     def get_reservoir_density(self):
         return self.nA
-    
+
     def get_reservoir_densities(self):
         return self.nA, self.nI
