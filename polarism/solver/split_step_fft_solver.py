@@ -26,7 +26,7 @@ class SplitStepFFTSolver(AbstractSolver):
         self._first_half_step_kinetic()
 
         if (self.steps_count % 100) == 0:
-            self.visualizer.plot(P_total, self.state.psi, self.reservoir.get_reservoir_density(), self.grid)
+            self.visualizer.plot(self.state.t, P_total, self.state.psi, self.reservoir.get_reservoir_density(), self.grid)
 
         self.steps_count += 1
         self.state.t += self.config.solver.dt
