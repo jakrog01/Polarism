@@ -1,20 +1,50 @@
 lasers:
   - laser_type: pulse-gaussian
     P0: 10.0
-    Pmax: 10.0
-    x0: 37.5
-    y0: -37.5
+    Pmax: 20.0
+    x0: 0
+    y0: 0
     sigma_space: 10.0
-    sigma_time: 0.5
-    pulse_separation: 6.0
+    sigma_time: 0.1
+    pulse_separation: 0.6
     cutoff_sigma: 3.0
 
   - laser_type: pulse-gaussian
-    P0: 20.0
+    P0: 2.0
     Pmax: 20.0
-    x0: -37.5
-    y0: 37.5
-    sigma_space: 10.0
-    sigma_time: 0.2
-    pulse_separation: 2.0
+    x0: 25
+    y0: 0
+    sigma_space: 5.0
+    sigma_time: 0.1
+    pulse_separation: 0.6
+    cutoff_sigma: 3.0
+
+  - laser_type: pulse-gaussian
+    P0: 2.0
+    Pmax: 25.0
+    x0: 0
+    y0: 20
+    sigma_space: 5.0
+    sigma_time: 0.1
+    pulse_separation: 0.6
+    cutoff_sigma: 3.0
+
+  - laser_type: pulse-gaussian
+    P0: 2.0
+    Pmax: 20.0
+    x0: -25
+    y0: 0
+    sigma_space: 5.0
+    sigma_time: 0.1
+    pulse_separation: 0.6
+    cutoff_sigma: 3.0
+
+  - laser_type: pulse-gaussian
+    P0: 2.0
+    Pmax: 20.0
+    x0: 0
+    y0: -25
+    sigma_space: 5.0
+    sigma_time: 0.1
+    pulse_separation: 0.6
     cutoff_sigma: 3.0

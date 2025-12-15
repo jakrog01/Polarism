@@ -8,3 +8,17 @@ from polarism.simulation_controller import SimulationController
 from polarism.simulation_grid_2D import SimulationGrid2D
 from polarism.simulation_state import SimulationState
 from polarism.solver import create_solver
+
+__version__ = "0.1.0"
+__all__ = [
+    "BoundaryCondition",
+    "Config",
+    "create_potential",
+    "create_reservoir",
+    "create_solver",
+    "LaserFactory",
+    "RealTimeVisualization",
+    "SimulationController",
+    "SimulationGrid2D",
+    "SimulationState",
+]

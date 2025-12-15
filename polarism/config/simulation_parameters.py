@@ -41,7 +41,7 @@ class PotentialParameters:
 @dataclass
 class LaserParameters:
     expose_results: bool = True
-    mode: str = "single"
+    mode: str = "multiple"
     config_file: str = "lasers_setup.yaml"
     laser_type: str = "pulse-gaussian"
     P0: float = 10.0
@@ -62,7 +62,7 @@ class ReservoirParameters:
 
 @dataclass
 class SolverParameters:
-    total_time: float = 40.0
+    total_time: float = 100.0
     dt: float = 1e-3
     method: str = "split-step-fft"
 

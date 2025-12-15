@@ -5,3 +5,11 @@ from polarism.config.simulation_parameters import (
     PhysicsConstants,
     PotentialParameters,
 )
+
+__all__ = [
+    "Config",
+    "GridParameters",
+    "PhysicsConstants",
+    "PotentialParameters",
+    "BoundaryConditionParameters",
+]
