@@ -10,3 +10,10 @@ from polarism.boundary_conditions.absorption.create_absorption_strategy import (
 from polarism.boundary_conditions.absorption.no_abosrption_strategy import (
     NoAbsorptionStrategy,
 )
+
+__all__ = [
+    "AbsorptionCapStrategy",
+    "AbsorptionMaskStrategy",
+    "create_absorption_strategy",
+    "NoAbsorptionStrategy",
+]
