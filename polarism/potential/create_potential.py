@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from polarism.boundary_conditions.absorption.absorption_strategy import (
     AbsorptionStrategy,
 )

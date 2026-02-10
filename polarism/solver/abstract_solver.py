@@ -1,6 +1,17 @@
-from abc import ABC, abstractmethod
+from __future__ import annotations
 
-from polarism.config.simulation_parameters import Config
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
+
+    from polarism.boundary_conditions.absorption.absorption_strategy import (
+        AbsorptionStrategy,
+    )
+    from polarism.boundary_conditions.boundary_condition import BoundaryCondition
+    from polarism.config.simulation_parameters import Config
+    from polarism.simulation_state import SimulationState
 
 
 class AbstractSolver(ABC):
@@ -10,5 +21,12 @@ class AbstractSolver(ABC):
         self.physics = config.physics
 
     @abstractmethod
-    def step(self, psi):
+    def step(
+        self,
+        potential: AbsorptionStrategy,
+        pump: np.ndarray,
+        reservoir,
+        boundary_condition: BoundaryCondition,
+        state: SimulationState,
+    ) -> None:
         pass

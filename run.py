@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import tyro
 
 import polarism as ps

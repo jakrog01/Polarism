@@ -1,10 +1,36 @@
+from __future__ import annotations
+
+import sys
+
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from matplotlib.image import AxesImage
 
 from polarism.results.result_groups import Results2D, ResultScalar, ResultScalarGroup
 
 
 class RealTimeVisualization:
+    _initialized: bool
+    _closed: bool
+    _t: list[float]
+    _scalar_data: dict[str, list[float]]
+    _group_data: dict[str, dict[str, list[float]]]
+    _scalar_axes: dict[str, Axes]
+    _group_axes: dict[str, Axes]
+    _im: dict[str, AxesImage]
+    _clim_fixed: dict[str, bool]
+
+    fields_2d: list[Results2D]
+    scalars: list[ResultScalar]
+    scalar_groups: list[ResultScalarGroup]
+    tmax: float
+    extent: list[float]
+    pause_s: float
+    axes: np.ndarray
+    fig: Figure
+
     def __init__(
         self,
         fields_2d: list[Results2D],
@@ -22,6 +48,7 @@ class RealTimeVisualization:
         self.pause_s = pause_s
 
         self._initialized = False
+        self._closed = False
         self._t = []
 
         self._scalar_data = {s.name: [] for s in scalars}
@@ -32,13 +59,25 @@ class RealTimeVisualization:
         self._scalar_axes = {}
         self._group_axes = {}
 
-    def update(self, t, fields=None, scalars=None, scalar_groups=None):
+    def update(
+        self,
+        t: float,
+        fields: dict[str, np.ndarray] | None = None,
+        scalars: dict[str, float] | None = None,
+        scalar_groups: dict[str, dict[str, float]] | None = None,
+    ) -> None:
+        if self._closed:
+            return
+
         if not self._initialized:
             self._init_figure()
             self._initialized = True
 
+        if not plt.fignum_exists(self.fig.number):
+            self._closed = True
+            return
+
         self._t.append(t)
-        frame_idx = len(self._t)
 
         if fields:
             for name, data in fields.items():
@@ -61,6 +100,17 @@ class RealTimeVisualization:
                 ax.relim()
                 ax.autoscale_view(scaley=True)
 
+                right = max(self._t) if self._t else 0.0
+                if right <= 0.0:
+                    ax.set_xlim(0, self.tmax)
+                else:
+                    ax.set_xlim(0, right)
+
+                nticks = min(6, max(2, len(self._t)))
+                xticks = np.linspace(0, ax.get_xlim()[1], nticks)
+                ax.set_xticks(xticks)
+                ax.set_xticklabels([f"{v:.2f}" for v in xticks])
+
         if scalar_groups:
             for gname, values in scalar_groups.items():
                 if gname not in self._group_lines:
@@ -75,12 +125,28 @@ class RealTimeVisualization:
                 ax.relim()
                 ax.autoscale_view(scaley=True)
 
-        plt.draw()
-        plt.pause(self.pause_s)
+                right = max(self._t) if self._t else 0.0
+                if right <= 0.0:
+                    ax.set_xlim(0, self.tmax)
+                else:
+                    ax.set_xlim(0, right)
 
-    def _init_figure(self):
+                nticks = min(6, max(2, len(self._t)))
+                xticks = np.linspace(0, ax.get_xlim()[1], nticks)
+                ax.set_xticks(xticks)
+                ax.set_xticklabels([f"{v:.2f}" for v in xticks])
+
+        try:
+            plt.draw()
+            plt.pause(self.pause_s)
+        except Exception:
+            self._closed = True
+
+    def _init_figure(self) -> None:
         ncols = len(self.fields_2d)
         self.fig, self.axes = plt.subplots(2, ncols, figsize=(5 * ncols, 8))
+
+        self.fig.canvas.mpl_connect("close_event", self._on_close)
 
         self._im = {}
         self._clim_fixed = {}
@@ -133,3 +199,8 @@ class RealTimeVisualization:
 
         plt.tight_layout()
         plt.show(block=False)
+
+    def _on_close(self, event) -> None:
+        self._closed = True
+        sys.stderr.write("Visualization window closed.\n")
+        sys.exit(2)

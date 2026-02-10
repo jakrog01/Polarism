@@ -1,47 +1,61 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import yaml
+
+from polarism.config.simulation_parameters import LaserParameters
 from polarism.laser.laser_registy import available_lasers
+
+if TYPE_CHECKING:
+    import numpy as np
+
+    from polarism.laser.abstract_laser import AbstractLaser
 
 
 class LaserFactory:
     @staticmethod
-    def create_laser(laser_config):
+    def create_laser(
+        laser_config: LaserParameters, X: np.ndarray, Y: np.ndarray
+    ) -> list[AbstractLaser]:
         if laser_config.mode == "multiple":
             if laser_config.config_file is None:
                 raise ValueError(
                     "config_file must be provided for multiple laser mode."
                 )
 
-            return LaserFactory._create_multiple_lasers(laser_config)
+            return LaserFactory._create_multiple_lasers(laser_config, X, Y)
 
-        return LaserFactory._create_single_laser(laser_config)
+        return LaserFactory._create_single_laser(laser_config, X, Y)
 
     @staticmethod
-    def _create_single_laser(laser_config):
-        cfg = normalize_config(laser_config)
-        laser_type = cfg["laser_type"]
-        laser_cls = available_lasers.get(laser_type)
+    def _create_single_laser(
+        laser_config: LaserParameters, X: np.ndarray, Y: np.ndarray
+    ) -> list[AbstractLaser]:
+        laser_type = laser_config.laser_type
+        laser_cls = available_lasers[laser_type]
         if laser_cls is None:
             raise ValueError(f"Unknown laser type: {laser_type}")
-        return [laser_cls(cfg)]
+        return [laser_cls(laser_config, X, Y)]
 
     @staticmethod
-    def _create_multiple_lasers(laser_config):
-        cfg = normalize_config(laser_config)
+    def _create_multiple_lasers(
+        laser_config: LaserParameters, X: np.ndarray, Y: np.ndarray
+    ) -> list[AbstractLaser]:
 
-        import yaml
-
-        with open(cfg["config_file"], "r") as f:
+        with open(laser_config.config_file, "r") as f:
             data = yaml.safe_load(f)
 
         lasers = []
         for item in data.get("lasers", []):
-            cfg = normalize_config(item)
-            laser_type = cfg["laser_type"]
+            laser_type = item["laser_type"]
             laser_cls = available_lasers[laser_type]
-            lasers.append(laser_cls(cfg))
+            individual_config = LaserParameters(**{**vars(laser_config), **item})
+            lasers.append(laser_cls(individual_config, X, Y))
         return lasers
 
 
-def normalize_config(cfg):
+def normalize_config(cfg: LaserParameters | dict) -> dict:
     if isinstance(cfg, dict):
         return cfg
     if hasattr(cfg, "__dict__"):
