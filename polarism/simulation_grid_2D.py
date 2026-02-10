@@ -1,9 +1,28 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
 
-from polarism.config.simulation_parameters import GridParameters
+if TYPE_CHECKING:
+    from polarism.config.simulation_parameters import GridParameters
 
 
 class SimulationGrid2D:
+    nx: int
+    ny: int
+    lx: float
+    ly: float
+    dx: float
+    dy: float
+    X: np.ndarray
+    Y: np.ndarray
+    kx: np.ndarray
+    ky: np.ndarray
+    KX: np.ndarray
+    KY: np.ndarray
+    k_squared: np.ndarray
+
     def __init__(self, cfg: GridParameters):
         self.nx, self.ny = cfg.nx, cfg.ny
         self.lx, self.ly = cfg.lx, cfg.ly

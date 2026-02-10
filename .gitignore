@@ -1,4 +1,4 @@
 *.pyc
 .venv
 __pycache__/
-polarism/boundary_conditions/absorption/__pycache__/__init__.cpython-313.pyc
+simulation_results/

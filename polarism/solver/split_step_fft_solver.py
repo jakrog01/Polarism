@@ -1,12 +1,25 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
 
+from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
+
+if TYPE_CHECKING:
+    from polarism.boundary_conditions.boundary_condition import BoundaryCondition
+    from polarism.config.simulation_parameters import Config
+    from polarism.reservoir.abstract_reservoir import AbstractReservoir
+    from polarism.simulation_grid_2D import SimulationGrid2D
 
 
 @register_solver("split-step-fft")
 class SplitStepFFTSolver(AbstractSolver):
-    def __init__(self, config, grid):
+    _kinetic_propagator: np.ndarray
+
+    def __init__(self, config: Config, grid: SimulationGrid2D):
         super().__init__(config)
         self._kinetic_propagator = np.exp(
             -1j
@@ -16,18 +29,31 @@ class SplitStepFFTSolver(AbstractSolver):
             / (2 * self.config.physics.m_eff)
         )
 
-    def step(self, potential, pump, reservoir, boundary_condition, state):
+    def step(
+        self,
+        potential: np.ndarray,
+        pump: np.ndarray,
+        reservoir: AbstractReservoir,
+        boundary_condition: BoundaryCondition,
+        state: SimulationState,
+    ) -> None:
         self._half_step_kinetic(state)
         self._full_step_potential(pump, reservoir, potential, state)
         state.psi = boundary_condition.after_step_action(state.psi)
         self._half_step_kinetic(state)
 
-    def _half_step_kinetic(self, state):
+    def _half_step_kinetic(self, state: SimulationState) -> None:
         psi_k = np.fft.fft2(state.psi)
         psi_k *= self._kinetic_propagator
         state.psi = np.fft.ifft2(psi_k)
 
-    def _full_step_potential(self, P, reservoir, potential, state):
+    def _full_step_potential(
+        self,
+        P: np.ndarray,
+        reservoir: AbstractReservoir,
+        potential: np.ndarray,
+        state: SimulationState,
+    ) -> None:
         reservoir.step(self.config.solver.dt, state.psi, P)
         eff_energy = (
             potential

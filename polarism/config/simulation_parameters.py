@@ -72,14 +72,17 @@ class ResultParameters:
     real_time_view: bool = True
     real_time_refresh_interval: float = 0.1
     save_results: bool = False
-    save_interval: int = 1
+    save_hdf5: bool = False
+    save_json: bool = False
+    save_npy: bool = False
+    batch_size: int = 10000
     output_directory: str = "simulation_results"
 
 
 @dataclass
 class Config:
     grid: GridParameters = field(default_factory=GridParameters)
-    boundry_condition: BoundaryConditionParameters = field(
+    boundary_condition: BoundaryConditionParameters = field(
         default_factory=BoundaryConditionParameters
     )
     potential: PotentialParameters = field(default_factory=PotentialParameters)

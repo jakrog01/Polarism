@@ -1,24 +1,31 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 
 import numpy as np
 
+from polarism.config.simulation_parameters import (
+    BoundaryConditionParameters,
+)
+
 
 class AbsorptionStrategy(ABC):
     @abstractmethod
-    def __init__(self, grid, absorption_cfg, physics_constants):
-        super().__init__()
+    def __init__(self):
         pass
 
     @abstractmethod
-    def get_potential_distribution(self):
+    def get_potential_distribution(self) -> np.ndarray:
         pass
 
     @abstractmethod
-    def apply_absorption(self, psi):
+    def apply_absorption(self, psi: np.ndarray) -> np.ndarray:
         return psi
 
 
-def create_absorption_profile(shape, cfg_absorption):
+def create_absorption_profile(
+    shape, cfg_absorption: BoundaryConditionParameters
+) -> np.ndarray:
     nx, ny = shape
 
     if cfg_absorption.mask_width_percent <= 0:
