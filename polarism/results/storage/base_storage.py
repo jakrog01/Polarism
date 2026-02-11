@@ -36,13 +36,13 @@ class BaseStorage(ABC):
             if not node.save:
                 continue
 
-            field, reduced = node.compute(**context)
             if node.is_field:
-                if isinstance(field, np.ndarray) and field.ndim == 2:
-                    if node.name not in self.field_buffers:
-                        self.field_buffers[node.name] = []
-                    self.field_buffers[node.name].append(field)
+                field = node.compute_field_cpu(**context)
+                if node.name not in self.field_buffers:
+                    self.field_buffers[node.name] = []
+                self.field_buffers[node.name].append(field)
             else:
+                reduced = node.compute_reduced_cpu(**context)
                 if node.name not in self.scalar_buffers:
                     self.scalar_buffers[node.name] = []
                 self.scalar_buffers[node.name].append(float(reduced))
