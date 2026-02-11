@@ -69,7 +69,7 @@ class SolverParameters:
 
 @dataclass
 class ResultParameters:
-    real_time_view: bool = False
+    real_time_view: bool = True
     real_time_refresh_interval: float = 0.1
     save_results: bool = False
     save_hdf5: bool = False
