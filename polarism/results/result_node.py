@@ -45,11 +45,16 @@ class ResultNode:
         self.cut = cut
         self.is_field = is_field if is_field is not None else (cmap is not None)
 
-    def compute(self, **context) -> tuple[np.ndarray, Any]:
+    def compute_cpu(self, **context) -> tuple[np.ndarray, Any]:
         field_raw = self.compute_fn(**context)
         reduced_raw = self.reduce_dim_fn(field_raw)
+        return compute_engine.to_cpu(field_raw), compute_engine.to_cpu(reduced_raw)
 
-        field_cpu = compute_engine.to_cpu(field_raw)
-        reduced_cpu = compute_engine.to_cpu(reduced_raw)
+    def compute_field_cpu(self, **context) -> np.ndarray:
+        field_raw = self.compute_fn(**context)
+        return compute_engine.to_cpu(field_raw)
 
-        return field_cpu, reduced_cpu
+    def compute_reduced_cpu(self, **context) -> Any:
+        field_raw = self.compute_fn(**context)
+        reduced_raw = self.reduce_dim_fn(field_raw)
+        return compute_engine.to_cpu(reduced_raw)

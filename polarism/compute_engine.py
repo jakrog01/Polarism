@@ -47,5 +47,4 @@ class ComputeEngine:
 
         return np.asarray(value)
 
-
 compute_engine = ComputeEngine()
