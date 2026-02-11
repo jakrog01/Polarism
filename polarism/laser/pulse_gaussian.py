@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import numpy as np
+from typing import TYPE_CHECKING, Union
 
 from polarism.config.simulation_parameters import LaserParameters
 from polarism.laser.abstract_laser import AbstractLaser
 from polarism.laser.laser_registy import register_laser
 
+if TYPE_CHECKING:
+    import numpy as np
+    import cupy as cp
 
 @register_laser("pulse-gaussian")
 class PulseGaussian(AbstractLaser):
@@ -17,7 +20,7 @@ class PulseGaussian(AbstractLaser):
     pulse_separation: float
     cutoff_sigma: float
 
-    def __init__(self, laser_config: LaserParameters, X: np.ndarray, Y: np.ndarray):
+    def __init__(self, laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]):
         super().__init__(laser_config, X, Y)
         self.sigma_space = laser_config.sigma_space
         self.Pmax = laser_config.Pmax
@@ -26,9 +29,9 @@ class PulseGaussian(AbstractLaser):
         self.P0 = laser_config.P0
         self.cutoff_sigma = laser_config.cutoff_sigma
 
-    def P_space(self, X: np.ndarray, Y: np.ndarray) -> np.ndarray:
+    def P_space(self, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]) -> Union[np.ndarray, cp.ndarray]:
         r2 = (X - self.x0) ** 2 + (Y - self.y0) ** 2
-        return np.exp(-0.5 * r2 / self.sigma_space**2)
+        return self.xp.exp(-0.5 * r2 / self.sigma_space**2)
 
     def P_time(self, t: float) -> float:
         n = round(t / self.pulse_separation)
@@ -37,4 +40,4 @@ class PulseGaussian(AbstractLaser):
         if abs(dt) > self.cutoff_sigma * self.sigma_time:
             return 0.0
 
-        return self.P0 * np.exp(-0.5 * (dt / self.sigma_time) ** 2)
+        return self.P0 * self.xp.exp(-0.5 * (dt / self.sigma_time) ** 2)

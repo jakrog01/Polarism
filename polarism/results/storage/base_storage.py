@@ -41,7 +41,7 @@ class BaseStorage(ABC):
                 if isinstance(field, np.ndarray) and field.ndim == 2:
                     if node.name not in self.field_buffers:
                         self.field_buffers[node.name] = []
-                    self.field_buffers[node.name].append(field.copy())
+                    self.field_buffers[node.name].append(field)
             else:
                 if node.name not in self.scalar_buffers:
                     self.scalar_buffers[node.name] = []

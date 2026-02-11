@@ -62,14 +62,14 @@ class ReservoirParameters:
 
 @dataclass
 class SolverParameters:
-    total_time: float = 100.0
+    total_time: float = 10.0
     dt: float = 1e-3
     method: str = "split-step-fft"
 
 
 @dataclass
 class ResultParameters:
-    real_time_view: bool = True
+    real_time_view: bool = False
     real_time_refresh_interval: float = 0.1
     save_results: bool = False
     save_hdf5: bool = False
@@ -77,6 +77,11 @@ class ResultParameters:
     save_npy: bool = False
     batch_size: int = 10000
     output_directory: str = "simulation_results"
+
+@dataclass
+class ComputeEngineParameters:
+    use_gpu: bool = False
+    gpu_device: int = 0
 
 
 @dataclass
@@ -91,3 +96,4 @@ class Config:
     reservoir: ReservoirParameters = field(default_factory=ReservoirParameters)
     solver: SolverParameters = field(default_factory=SolverParameters)
     result: ResultParameters = field(default_factory=ResultParameters)
+    compute_engine: ComputeEngineParameters = field(default_factory=ComputeEngineParameters)

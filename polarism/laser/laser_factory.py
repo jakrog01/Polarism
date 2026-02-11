@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 import yaml
 
@@ -9,14 +9,14 @@ from polarism.laser.laser_registy import available_lasers
 
 if TYPE_CHECKING:
     import numpy as np
-
+    import cupy as cp
     from polarism.laser.abstract_laser import AbstractLaser
 
 
 class LaserFactory:
     @staticmethod
     def create_laser(
-        laser_config: LaserParameters, X: np.ndarray, Y: np.ndarray
+        laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]
     ) -> list[AbstractLaser]:
         if laser_config.mode == "multiple":
             if laser_config.config_file is None:
@@ -30,7 +30,7 @@ class LaserFactory:
 
     @staticmethod
     def _create_single_laser(
-        laser_config: LaserParameters, X: np.ndarray, Y: np.ndarray
+        laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]
     ) -> list[AbstractLaser]:
         laser_type = laser_config.laser_type
         laser_cls = available_lasers[laser_type]
@@ -40,7 +40,7 @@ class LaserFactory:
 
     @staticmethod
     def _create_multiple_lasers(
-        laser_config: LaserParameters, X: np.ndarray, Y: np.ndarray
+        laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]
     ) -> list[AbstractLaser]:
 
         with open(laser_config.config_file, "r") as f:

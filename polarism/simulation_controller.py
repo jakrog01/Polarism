@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
-import numpy as np
 from tqdm import trange
 
 from polarism.boundary_conditions.absorption.absorption_strategy import (
     AbsorptionStrategy,
 )
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
+from polarism.compute_engine import compute_engine
 from polarism.laser.laser_factory import LaserFactory
 from polarism.potential.create_potential import create_potential
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
@@ -25,15 +25,20 @@ from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.create_solver import create_solver
 
 if TYPE_CHECKING:
+    import cupy as cp
+    import numpy as np
+
     from polarism.config.simulation_parameters import Config
 
 
 def _compute_density(**ctx):
-    return np.abs(ctx["state"].psi) ** 2
+    xp = compute_engine.xp
+    return xp.abs(ctx["state"].psi) ** 2
 
 
 def _compute_total_norm(**ctx):
-    return float((np.abs(ctx["state"].psi) ** 2).sum())
+    xp = compute_engine.xp
+    return float((xp.abs(ctx["state"].psi) ** 2).sum())
 
 
 def _compute_pump_field(**ctx):
@@ -56,6 +61,7 @@ class SimulationController:
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
+        self.xp = compute_engine.xp
 
         self.grid = SimulationGrid2D(cfg.grid)
         self.boundary_condition = BoundaryCondition(
@@ -202,19 +208,10 @@ class SimulationController:
                     self.state,
                 )
 
-                if self.storage_visitor:
-                    self.results_manager.step(
-                        t,
-                        state=self.state,
-                        P_total=P_total,
-                        scalar_groups=(
-                            self._get_scalar_groups(t)
-                            if self.cfg.laser.expose_results
-                            else {}
-                        ),
-                    )
+                should_save = self.storage_visitor is not None
+                should_viz = self.visualizer is not None and t >= self.next_viz_time
 
-                if self.visualizer and t >= self.next_viz_time:
+                if should_save or should_viz:
                     self.results_manager.step(
                         t,
                         state=self.state,
@@ -225,13 +222,14 @@ class SimulationController:
                             else {}
                         ),
                     )
-                    self.next_viz_time += self.cfg.result.real_time_refresh_interval
+                    if should_viz:
+                        self.next_viz_time += self.cfg.result.real_time_refresh_interval
         finally:
             if self.storage_visitor is not None:
                 self.storage_visitor.finalize()
 
-    def _compute_total_pump(self, t: float) -> np.ndarray:
-        P_total = np.zeros_like(self.grid.X)
+    def _compute_total_pump(self, t: float) -> Union[np.ndarray, cp.ndarray]:
+        P_total = self.xp.zeros_like(self.grid.X)
         for laser in self.lasers:
             P_total += laser.get_power(self.grid.X, self.grid.Y, t)
         return P_total
@@ -240,16 +238,22 @@ class SimulationController:
         scalar_groups = {}
         if self.cfg.laser.expose_results:
             scalar_groups["P_lasers"] = {
-                f"L{i}": float(np.sum(laser.get_power(self.grid.X, self.grid.Y, t)))
+                f"L{i}": float(
+                    self.xp.sum(laser.get_power(self.grid.X, self.grid.Y, t))
+                )
                 for i, laser in enumerate(self.lasers)
             }
         return scalar_groups
 
-    def _update_visualization(self, t: float, P_total: np.ndarray):
+    def _update_visualization(
+        self, t: float, P_total: Union[np.ndarray, cp.ndarray]
+    ) -> None:
         scalar_groups = {}
         if self.cfg.laser.expose_results:
             scalar_groups["P_lasers"] = {
-                f"L{i}": float(np.sum(laser.get_power(self.grid.X, self.grid.Y, t)))
+                f"L{i}": float(
+                    self.xp.sum(laser.get_power(self.grid.X, self.grid.Y, t))
+                )
                 for i, laser in enumerate(self.lasers)
             }
 

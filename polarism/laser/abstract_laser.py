@@ -1,32 +1,44 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Union
 
-import numpy as np
-
+from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import LaserParameters
+
+if TYPE_CHECKING:
+    import cupy as cp
+    import numpy as np
 
 
 class AbstractLaser(ABC):
     P0: float
     x0: float
     y0: float
-    P: np.ndarray
+    P: Union[np.ndarray, cp.ndarray]
 
     def __init__(self, laser_config: LaserParameters, X: np.ndarray, Y: np.ndarray):
+        self.xp = compute_engine.xp
         self.P0 = laser_config.P0
         self.x0 = laser_config.x0
         self.y0 = laser_config.y0
-        self.P = np.zeros_like(X)
+        self.P = self.xp.zeros_like(X)
 
     @abstractmethod
-    def P_space(self, X: np.ndarray, Y: np.ndarray) -> np.ndarray:
+    def P_space(
+        self, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]
+    ) -> Union[np.ndarray, cp.ndarray]:
         raise NotImplementedError
 
     @abstractmethod
-    def P_time(self, t: float) -> np.ndarray:
+    def P_time(self, t: float) -> Union[np.ndarray, cp.ndarray]:
         raise NotImplementedError
 
-    def get_power(self, X: np.ndarray, Y: np.ndarray, t: float) -> np.ndarray:
+    def get_power(
+        self,
+        X: Union[np.ndarray, cp.ndarray],
+        Y: Union[np.ndarray, cp.ndarray],
+        t: float,
+    ) -> Union[np.ndarray, cp.ndarray]:
         self.P = self.P_space(X, Y) * self.P_time(t)
         return self.P

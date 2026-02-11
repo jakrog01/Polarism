@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections import deque
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,13 +11,15 @@ from matplotlib.image import AxesImage
 
 from polarism.results.result_groups import Results2D, ResultScalar, ResultScalarGroup
 
+MAX_PLOT_POINTS = 2000
+
 
 class RealTimeVisualization:
     _initialized: bool
     _closed: bool
-    _t: list[float]
-    _scalar_data: dict[str, list[float]]
-    _group_data: dict[str, dict[str, list[float]]]
+    _t: deque[float]
+    _scalar_data: dict[str, deque[float]]
+    _group_data: dict[str, dict[str, deque[float]]]
     _scalar_axes: dict[str, Axes]
     _group_axes: dict[str, Axes]
     _im: dict[str, AxesImage]
@@ -49,11 +52,12 @@ class RealTimeVisualization:
 
         self._initialized = False
         self._closed = False
-        self._t = []
+        self._t = deque(maxlen=MAX_PLOT_POINTS)
 
-        self._scalar_data = {s.name: [] for s in scalars}
+        self._scalar_data = {s.name: deque(maxlen=MAX_PLOT_POINTS) for s in scalars}
         self._group_data = {
-            g.name: {label: [] for label in g.labels} for g in scalar_groups
+            g.name: {label: deque(maxlen=MAX_PLOT_POINTS) for label in g.labels}
+            for g in scalar_groups
         }
 
         self._scalar_axes = {}
@@ -78,6 +82,7 @@ class RealTimeVisualization:
             return
 
         self._t.append(t)
+        t_list = list(self._t)
 
         if fields:
             for name, data in fields.items():
@@ -95,18 +100,18 @@ class RealTimeVisualization:
                     continue
                 self._scalar_data[name].append(value)
                 line = self._lines[name]
-                line.set_data(self._t, self._scalar_data[name])
+                line.set_data(t_list, list(self._scalar_data[name]))
                 ax = self._scalar_axes[name]
                 ax.relim()
                 ax.autoscale_view(scaley=True)
 
-                right = max(self._t) if self._t else 0.0
+                right = max(t_list) if t_list else 0.0
                 if right <= 0.0:
                     ax.set_xlim(0, self.tmax)
                 else:
                     ax.set_xlim(0, right)
 
-                nticks = min(6, max(2, len(self._t)))
+                nticks = min(6, max(2, len(t_list)))
                 xticks = np.linspace(0, ax.get_xlim()[1], nticks)
                 ax.set_xticks(xticks)
                 ax.set_xticklabels([f"{v:.2f}" for v in xticks])
@@ -120,18 +125,18 @@ class RealTimeVisualization:
                         continue
                     self._group_data[gname][label].append(value)
                     line = self._group_lines[gname][label]
-                    line.set_data(self._t, self._group_data[gname][label])
+                    line.set_data(t_list, list(self._group_data[gname][label]))
                 ax = self._group_axes[gname]
                 ax.relim()
                 ax.autoscale_view(scaley=True)
 
-                right = max(self._t) if self._t else 0.0
+                right = max(t_list) if t_list else 0.0
                 if right <= 0.0:
                     ax.set_xlim(0, self.tmax)
                 else:
                     ax.set_xlim(0, right)
 
-                nticks = min(6, max(2, len(self._t)))
+                nticks = min(6, max(2, len(t_list)))
                 xticks = np.linspace(0, ax.get_xlim()[1], nticks)
                 ax.set_xticks(xticks)
                 ax.set_xticklabels([f"{v:.2f}" for v in xticks])
