@@ -1,0 +1,6 @@
+numpy 
+matplotlib
+tyro
+h5py
+PyYAML
+tqdm
