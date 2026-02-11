@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 from polarism.boundary_conditions.absorption.absorption_registry import (
     register_absorption,
@@ -11,6 +11,7 @@ from polarism.boundary_conditions.absorption.absorption_strategy import (
 
 if TYPE_CHECKING:
     import numpy as np
+    import cupy as cp
 
     from polarism.config.simulation_parameters import (
         BoundaryConditionParameters,
@@ -32,5 +33,5 @@ class NoAbsorptionStrategy(AbsorptionStrategy):
     def get_potential_distribution(self) -> float:
         return 0.0
 
-    def apply_absorption(self, psi: np.ndarray) -> np.ndarray:
+    def apply_absorption(self, psi: Union[np.ndarray, cp.ndarray]) -> Union[np.ndarray, cp.ndarray]:
         return psi

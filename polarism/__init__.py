@@ -24,7 +24,7 @@ from polarism.simulation_grid_2D import SimulationGrid2D
 from polarism.simulation_state import SimulationState
 from polarism.solver import AbstractSolver, create_solver
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "BoundaryCondition",
     "Config",

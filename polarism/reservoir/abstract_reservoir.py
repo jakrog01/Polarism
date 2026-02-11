@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Union
 
-import numpy as np
+from abc import ABC, abstractmethod
 
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
 from polarism.results.result_node import ResultNode
 from polarism.simulation_grid_2D import SimulationGrid2D
 
+if TYPE_CHECKING:
+    import numpy as np
+    import cupy as cp
 
 class AbstractReservoir(ABC):
     @abstractmethod
@@ -20,11 +23,11 @@ class AbstractReservoir(ABC):
         pass
 
     @abstractmethod
-    def step(self, dt: float, psi: np.ndarray, Pxy: np.ndarray) -> None:
+    def step(self, dt: float, psi: Union[np.ndarray, cp.ndarray], Pxy: Union[np.ndarray, cp.ndarray]) -> None:
         pass
 
     @abstractmethod
-    def get_reservoir_density(self) -> np.ndarray:
+    def get_reservoir_density(self) -> Union[np.ndarray, cp.ndarray]:
         pass
 
     @abstractmethod

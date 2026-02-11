@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-import numpy as np
+from typing import TYPE_CHECKING, Union
 
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
@@ -13,15 +11,16 @@ if TYPE_CHECKING:
     from polarism.config.simulation_parameters import Config
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
     from polarism.simulation_grid_2D import SimulationGrid2D
-
+    import numpy as np
+    import cupy as cp
 
 @register_solver("split-step-fft")
 class SplitStepFFTSolver(AbstractSolver):
-    _kinetic_propagator: np.ndarray
+    _kinetic_propagator: Union[np.ndarray, cp.ndarray]
 
     def __init__(self, config: Config, grid: SimulationGrid2D):
         super().__init__(config)
-        self._kinetic_propagator = np.exp(
+        self._kinetic_propagator = self.xp.exp(
             -1j
             * self.config.physics.hbar
             * grid.k_squared
@@ -31,8 +30,8 @@ class SplitStepFFTSolver(AbstractSolver):
 
     def step(
         self,
-        potential: np.ndarray,
-        pump: np.ndarray,
+        potential: Union[np.ndarray, cp.ndarray],
+        pump: Union[np.ndarray, cp.ndarray],
         reservoir: AbstractReservoir,
         boundary_condition: BoundaryCondition,
         state: SimulationState,
@@ -43,21 +42,21 @@ class SplitStepFFTSolver(AbstractSolver):
         self._half_step_kinetic(state)
 
     def _half_step_kinetic(self, state: SimulationState) -> None:
-        psi_k = np.fft.fft2(state.psi)
+        psi_k = self.xp.fft.fft2(state.psi)
         psi_k *= self._kinetic_propagator
-        state.psi = np.fft.ifft2(psi_k)
+        state.psi = self.xp.fft.ifft2(psi_k)
 
     def _full_step_potential(
         self,
-        P: np.ndarray,
+        P: Union[np.ndarray, cp.ndarray],
         reservoir: AbstractReservoir,
-        potential: np.ndarray,
+        potential: Union[np.ndarray, cp.ndarray],
         state: SimulationState,
     ) -> None:
         reservoir.step(self.config.solver.dt, state.psi, P)
         eff_energy = (
             potential
-            + self.config.physics.g_C * np.abs(state.psi) ** 2
+            + self.config.physics.g_C * self.xp.abs(state.psi) ** 2
             + self.config.physics.g_R * reservoir.get_reservoir_density()
         )
         gain_loss = (
@@ -66,8 +65,8 @@ class SplitStepFFTSolver(AbstractSolver):
         ) / 2.0
         state.psi = (
             state.psi
-            * np.exp(
+            * self.xp.exp(
                 -1j * eff_energy * self.config.solver.dt / self.config.physics.hbar
             )
-            * np.exp(gain_loss * self.config.solver.dt)
+            * self.xp.exp(gain_loss * self.config.solver.dt)
         )

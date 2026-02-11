@@ -1,7 +1,13 @@
 from __future__ import annotations
-from types import FunctionType
 
-import numpy as np
+from types import FunctionType
+from typing import TYPE_CHECKING, Any
+
+from polarism.compute_engine import compute_engine
+
+if TYPE_CHECKING:
+    import numpy as np
+
 
 class ResultNode:
     name: str
@@ -11,7 +17,7 @@ class ResultNode:
     scaling: str | None
     clim: tuple[float, float] | None
     expose: bool
-    save: bool 
+    save: bool
     cut: bool | None
     is_field: bool
 
@@ -39,7 +45,11 @@ class ResultNode:
         self.cut = cut
         self.is_field = is_field if is_field is not None else (cmap is not None)
 
-    def compute(self, **context) -> tuple[np.ndarray, np.ndarray]:
-        field = self.compute_fn(**context)
-        reduced = self.reduce_dim_fn(field)
-        return field, reduced
+    def compute(self, **context) -> tuple[np.ndarray, Any]:
+        field_raw = self.compute_fn(**context)
+        reduced_raw = self.reduce_dim_fn(field_raw)
+
+        field_cpu = compute_engine.to_cpu(field_raw)
+        reduced_cpu = compute_engine.to_cpu(reduced_raw)
+
+        return field_cpu, reduced_cpu
