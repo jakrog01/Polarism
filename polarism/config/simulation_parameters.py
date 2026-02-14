@@ -3,10 +3,10 @@ from dataclasses import dataclass, field
 
 @dataclass
 class GridParameters:
-    nx: int = 256
-    ny: int = 256
-    lx: float = 150.0
-    ly: float = 150.0
+    nx: int = 512
+    ny: int = 512
+    lx: float = 100.0
+    ly: float = 100.0
 
 
 @dataclass
@@ -62,17 +62,17 @@ class ReservoirParameters:
 
 @dataclass
 class SolverParameters:
-    total_time: float = 10.0
-    dt: float = 1e-3
-    method: str = "split-step-fft"
+    total_time: float = 5e-3
+    dt: float = 1e-4
+    method: str = "rk4-fdm"
 
 
 @dataclass
 class ResultParameters:
-    real_time_view: bool = True
-    real_time_refresh_interval: float = 0.1
-    save_results: bool = False
-    save_hdf5: bool = False
+    real_time_view: bool = False
+    real_time_refresh_interval: float = 0.01
+    save_results: bool = True
+    save_hdf5: bool = True
     save_json: bool = False
     save_npy: bool = False
     batch_size: int = 1000
