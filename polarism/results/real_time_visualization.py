@@ -77,7 +77,7 @@ class RealTimeVisualization:
             ax.set_title(field.name)
             self.fig.colorbar(im, ax=ax, shrink=0.8)
             if field.clim is not None:
-                im.set_clim(*field.clim)
+                im.set_clim(field.clim[0], field.clim[1])
                 self._clim_fixed[field.name] = True
             else:
                 self._clim_fixed[field.name] = False
@@ -110,6 +110,9 @@ class RealTimeVisualization:
             self.axes[1, i].axis("off")
         plt.tight_layout()
         plt.show(block=False)
+        plt.pause(0.001)
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
 
     def update(
         self,
@@ -133,8 +136,11 @@ class RealTimeVisualization:
                     self._im[name].set_data(data)
                     if not self._clim_fixed[name]:
                         vmin, vmax = float(np.nanmin(data)), float(np.nanmax(data))
-                        if np.isfinite(vmin) and np.isfinite(vmax) and vmax > vmin:
-                            self._im[name].set_clim(vmin, vmax)
+                        if np.isfinite(vmin) and np.isfinite(vmax):
+                            if vmax > vmin:
+                                self._im[name].set_clim(vmin, vmax)
+                            else:
+                                self._im[name].set_clim(vmin - 1e-10, vmax + 1e-10)
         if scalars:
             for name, value in scalars.items():
                 if name not in self._lines:

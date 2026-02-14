@@ -4,9 +4,6 @@ from typing import TYPE_CHECKING, Union
 
 from tqdm import trange
 
-from polarism.boundary_conditions.absorption.absorption_strategy import (
-    AbsorptionStrategy,
-)
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine
 from polarism.laser.laser_factory import LaserFactory
@@ -49,7 +46,7 @@ class SimulationController:
     cfg: Config
     grid: SimulationGrid2D
     boundary_condition: BoundaryCondition
-    potential: AbsorptionStrategy
+    potential: Union["np.ndarray", "cp.ndarray"]
     lasers: list
     reservoir: AbstractReservoir
     state: SimulationState
@@ -73,8 +70,11 @@ class SimulationController:
         self.state = SimulationState(self.grid)
         self.solver = create_solver(cfg, self.grid)
 
-        self.potential += self.boundary_condition.before_step_action()
-
+        cap = self.boundary_condition.before_step_action()
+        if self.xp.iscomplexobj(cap) and not self.xp.iscomplexobj(self.potential):
+            self.potential = self.potential.astype(self.state.psi.dtype)
+            cap = cap.astype(self.state.psi.dtype)
+        self.potential = self.potential + cap
         self.visualizer = None
         self.next_viz_time = 0.0
         self.results_manager = ResultsManager()
@@ -159,7 +159,7 @@ class SimulationController:
                 reduce_dim_fn=lambda v: v,
                 cmap=None,
                 scaling=None,
-                clim=None,
+                clim=(0, self.cfg.laser.Pmax),
                 expose=True,
                 save=True,
                 cut=None,
@@ -172,14 +172,14 @@ class SimulationController:
         if self.cfg.laser.expose_results:
             nodes.append(
                 ResultNode(
-                    name="P",
+                    name="Pump",
                     compute_fn=_compute_pump_field,
                     reduce_dim_fn=lambda f: (
                         float(f.sum()) if hasattr(f, "sum") else float(f)
                     ),
                     cmap="inferno",
                     scaling=None,
-                    clim=None,
+                    clim=(0, self.cfg.laser.Pmax),
                     expose=True,
                     save=True,
                     cut=None,

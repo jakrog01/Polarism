@@ -43,8 +43,27 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
             1 - self.xp.exp(-Gamma * dt)
         )
 
+    def step_frozen_psi(self, dt, psi, pump) -> None:
+        self.step(dt, psi, pump)
+
     def get_reservoir_density(self) -> Union[np.ndarray, cp.ndarray]:
         return self.nR
+
+    def get_state(self) -> tuple:
+        return (self.nR,)
+
+    def set_state(self, state: tuple) -> None:
+        (self.nR,) = state
+
+    def get_active_density(self, state: tuple):
+        (nR,) = state
+        return nR
+
+    def get_derivatives(self, psi, pump, state: tuple) -> tuple:
+        (nR,) = state
+        abs_psi2 = self.xp.abs(psi) ** 2
+        dnR = pump - (self.gamma_r + self.R * abs_psi2) * nR
+        return (dnR,)
 
     def make_result_nodes(self) -> list[ResultNode]:
         nodes = []
