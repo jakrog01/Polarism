@@ -38,10 +38,10 @@ class RK4FDMSolver(AbstractSolver):
 
     def step(
         self,
-        potential: Union["np.ndarray", "cp.ndarray"],
-        pump: Union["np.ndarray", "cp.ndarray"],
-        reservoir: "AbstractReservoir",
-        boundary_condition: "BoundaryCondition",
+        potential: Union[np.ndarray, cp.ndarray],
+        pump: Union[np.ndarray, cp.ndarray],
+        reservoir: AbstractReservoir,
+        boundary_condition: BoundaryCondition,
         state: SimulationState,
     ) -> None:
         dt = self.config.solver.dt
@@ -68,7 +68,6 @@ class RK4FDMSolver(AbstractSolver):
         psi_new = psi0 + (dt / 6.0) * (k1_psi + 2 * k2_psi + 2 * k3_psi + k4_psi)
         psi_new = boundary_condition.after_step_action(psi_new)
 
-
         res_new = tuple(
             r0 + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
             for r0, k1, k2, k3, k4 in zip(res0, k1_res, k2_res, k3_res, k4_res)
@@ -79,35 +78,34 @@ class RK4FDMSolver(AbstractSolver):
 
     def _rhs(
         self,
-        psi: Union["np.ndarray", "cp.ndarray"],
+        psi: Union[np.ndarray, cp.ndarray],
         res_state: tuple,
-        potential: Union["np.ndarray", "cp.ndarray"],
-        pump: Union["np.ndarray", "cp.ndarray"],
-        reservoir: "AbstractReservoir",
-    ) -> tuple[Union["np.ndarray", "cp.ndarray"], tuple]:
+        potential: Union[np.ndarray, cp.ndarray],
+        pump: Union[np.ndarray, cp.ndarray],
+        reservoir: AbstractReservoir,
+    ) -> tuple[Union[np.ndarray, cp.ndarray], tuple]:
         res_derivs = reservoir.get_derivatives(psi, pump, res_state)
         n_active = reservoir.get_active_density(res_state)
 
         lap = self._laplacian_buf
-
         if lap is None:
             raise RuntimeError("Buffers not initialized")
 
-        lap.fill(0)
-
-        lap[1:-1, :] += (psi[:-2, :] - 2 * psi[1:-1, :] + psi[2:, :]) / (self.dx**2)
-        lap[:, 1:-1] += (psi[:, :-2] - 2 * psi[:, 1:-1] + psi[:, 2:]) / (self.dy**2)
+        lap[:] = (
+            self.xp.roll(psi, -1, axis=0) - 2 * psi + self.xp.roll(psi, 1, axis=0)
+        ) / (self.dx**2) + (
+            self.xp.roll(psi, -1, axis=1) - 2 * psi + self.xp.roll(psi, 1, axis=1)
+        ) / (
+            self.dy**2
+        )
 
         kinetic = -(self.config.physics.hbar**2) / (2 * self.config.physics.m_eff) * lap
 
-        abs_psi2 = self.xp.abs(psi) ** 2
-
         eff_energy = (
             potential
-            + self.config.physics.g_C * abs_psi2
+            + self.config.physics.g_C * self.xp.abs(psi) ** 2
             + self.config.physics.g_R * n_active
         )
-
         gain_loss = (
             self.config.physics.R * n_active - self.config.physics.gamma_C
         ) / 2.0

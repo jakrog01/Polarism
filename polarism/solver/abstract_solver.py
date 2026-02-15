@@ -9,9 +9,6 @@ if TYPE_CHECKING:
     import numpy as np
     import cupy as cp
 
-    from polarism.boundary_conditions.absorption.absorption_strategy import (
-        AbsorptionStrategy,
-    )
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
     from polarism.simulation_state import SimulationState
@@ -27,7 +24,7 @@ class AbstractSolver(ABC):
     @abstractmethod
     def step(
         self,
-        potential: AbsorptionStrategy,
+        potential: Union[np.ndarray, cp.ndarray],
         pump: Union[np.ndarray, cp.ndarray],
         reservoir,
         boundary_condition: BoundaryCondition,

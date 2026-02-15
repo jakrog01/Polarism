@@ -40,10 +40,6 @@ class AbstractReservoir(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def step_frozen_psi(self, dt, psi, pump) -> None:
-        self.step(dt, psi, pump)
-
-    @abstractmethod
     def get_state(self) -> tuple:
         raise NotImplementedError
 
