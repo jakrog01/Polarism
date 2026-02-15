@@ -69,6 +69,7 @@ class SimulationController:
         self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid)
         self.state = SimulationState(self.grid)
         self.solver = create_solver(cfg, self.grid)
+        self.max_laser_power = self._compute_max_laser_power()
 
         cap = self.boundary_condition.before_step_action()
         if self.xp.iscomplexobj(cap) and not self.xp.iscomplexobj(self.potential):
@@ -86,6 +87,15 @@ class SimulationController:
         if cfg.result.save_results:
             self._init_storage()
 
+    def _compute_max_laser_power(self) -> float:
+        max_power = 0.0
+        for laser in self.lasers:
+            if hasattr(laser, 'Pmax'):
+                max_power = max(max_power, laser.Pmax)
+            elif hasattr(laser, 'P0'):
+                max_power = max(max_power, laser.P0)
+        return max_power if max_power > 0 else self.cfg.laser.Pmax
+    
     def _init_visualizer(self) -> None:
         extent = [
             self.grid.X.min(),
@@ -159,7 +169,7 @@ class SimulationController:
                 reduce_dim_fn=lambda v: v,
                 cmap=None,
                 scaling=None,
-                clim=(0, self.cfg.laser.Pmax),
+                clim=None,
                 expose=True,
                 save=True,
                 cut=None,
@@ -179,7 +189,7 @@ class SimulationController:
                     ),
                     cmap="inferno",
                     scaling=None,
-                    clim=(0, self.cfg.laser.Pmax),
+                    clim=(0, self.max_laser_power),
                     expose=True,
                     save=True,
                     cut=None,
