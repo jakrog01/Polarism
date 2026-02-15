@@ -29,15 +29,21 @@ class PulseGaussian(AbstractLaser):
         self.P0 = laser_config.P0
         self.cutoff_sigma = laser_config.cutoff_sigma
 
-    def P_space(self, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]) -> Union[np.ndarray, cp.ndarray]:
+    def _amplitude(self, t: float) -> float:
+        n = int(t / self.pulse_separation)
+        if n == 0:
+            return self.P0
+        return min(self.P0 + n * (self.Pmax - self.P0), self.Pmax)
+
+    def _P_space(self, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]) -> Union[np.ndarray, cp.ndarray]:
         r2 = (X - self.x0) ** 2 + (Y - self.y0) ** 2
         return self.xp.exp(-0.5 * r2 / self.sigma_space**2)
 
-    def P_time(self, t: float) -> float:
+    def _P_time(self, t: float) -> float:
         n = round(t / self.pulse_separation)
         dt = t - n * self.pulse_separation
 
         if abs(dt) > self.cutoff_sigma * self.sigma_time:
             return 0.0
 
-        return self.P0 * self.xp.exp(-0.5 * (dt / self.sigma_time) ** 2)
+        return self.xp.exp(-0.5 * (dt / self.sigma_time) ** 2)

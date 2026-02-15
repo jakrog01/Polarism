@@ -25,13 +25,17 @@ class AbstractLaser(ABC):
         self.P = self.xp.zeros_like(X)
 
     @abstractmethod
-    def P_space(
+    def _amplitude(self, t: float) -> Union[np.ndarray, cp.ndarray]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def _P_space(
         self, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]
     ) -> Union[np.ndarray, cp.ndarray]:
         raise NotImplementedError
 
     @abstractmethod
-    def P_time(self, t: float) -> Union[np.ndarray, cp.ndarray]:
+    def _P_time(self, t: float) -> Union[np.ndarray, cp.ndarray]:
         raise NotImplementedError
 
     def get_power(
@@ -40,5 +44,5 @@ class AbstractLaser(ABC):
         Y: Union[np.ndarray, cp.ndarray],
         t: float,
     ) -> Union[np.ndarray, cp.ndarray]:
-        self.P = self.P_space(X, Y) * self.P_time(t)
+        self.P = self._amplitude(t) * self._P_space(X, Y) * self._P_time(t)
         return self.P

@@ -17,9 +17,12 @@ class ContinuousGaussian(AbstractLaser):
         super().__init__(laser_config, X, Y)
         self.sigma_space = laser_config.sigma_space
 
-    def P_space(self, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]) -> Union[np.ndarray, cp.ndarray]:
+    def _amplitude(self, t: float) -> Union[np.ndarray, cp.ndarray]:
+        return self.P0
+
+    def _P_space(self, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]) -> Union[np.ndarray, cp.ndarray]:
         r2 = (X - self.x0) ** 2 + (Y - self.y0) ** 2
         return self.xp.exp(-0.5 * r2 / self.sigma_space**2)
 
-    def P_time(self, t: float) -> float:
+    def _P_time(self, t: float) -> float:
         return 1.0
