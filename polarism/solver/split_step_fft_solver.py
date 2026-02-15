@@ -7,12 +7,14 @@ from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
 
 if TYPE_CHECKING:
+    import cupy as cp
+    import numpy as np
+
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
     from polarism.simulation_grid_2D import SimulationGrid2D
-    import numpy as np
-    import cupy as cp
+
 
 @register_solver("split-step-fft")
 class SplitStepFFTSolver(AbstractSolver):
@@ -54,15 +56,13 @@ class SplitStepFFTSolver(AbstractSolver):
         state: SimulationState,
     ) -> None:
         reservoir.step(self.config.solver.dt, state.psi, P)
+        nR = reservoir.get_reservoir_density()
         eff_energy = (
             potential
             + self.config.physics.g_C * self.xp.abs(state.psi) ** 2
-            + self.config.physics.g_R * reservoir.get_reservoir_density()
+            + self.config.physics.g_R * nR
         )
-        gain_loss = (
-            self.config.physics.R * reservoir.get_reservoir_density()
-            - self.config.physics.gamma_C
-        ) / 2.0
+        gain_loss = (self.config.physics.R * nR - self.config.physics.gamma_C) / 2.0
         state.psi = (
             state.psi
             * self.xp.exp(

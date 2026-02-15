@@ -21,6 +21,10 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
     gamma_A: float
     R_IA: float
     R_AI: float
+    D_I: float
+    D_A: float
+    dx: float
+    dy: float
     nI: Union[np.ndarray, cp.ndarray]
     nA: Union[np.ndarray, cp.ndarray]
 
@@ -37,13 +41,63 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         self.gamma_A = physics.gamma_A
         self.R_IA = physics.R_IA
         self.R_AI = physics.R_AI
-        self.nI = self.xp.zeros((grid.nx, grid.ny))
-        self.nA = self.xp.zeros((grid.nx, grid.ny))
+        self.D_A = physics.D_A
+        self.D_I = physics.D_I
+        self.dx = grid.dx
+        self.dy = grid.dy
+        self.nI = self.xp.zeros((grid.nx, grid.ny), dtype=self.xp.float32)
+        self.nA = self.xp.zeros((grid.nx, grid.ny), dtype=self.xp.float32)
 
-    def _derivs(self, nI, nA, abs_psi2, Pxy):
+    def get_state(
+        self,
+    ) -> tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]]:
+        return (self.nA, self.nI)
+
+    def set_state(
+        self, state: tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]]
+    ) -> None:
+        self.nA = self.xp.maximum(state[0], 0)
+        self.nI = self.xp.maximum(state[1], 0)
+
+    def get_active_density(
+        self,
+        state: tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]],
+    ) -> Union[np.ndarray, cp.ndarray]:
+        return state[0]
+
+    def get_derivatives(
+        self,
+        psi: Union[np.ndarray, cp.ndarray],
+        Pxy: Union[np.ndarray, cp.ndarray],
+        state: tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]],
+    ) -> tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]]:
+        nA, nI = state
+        abs_psi2 = self.xp.abs(psi) ** 2
+
         dnI = Pxy - (self.gamma_I + self.R_IA) * nI + self.R_AI * nA
         dnA = self.R_IA * nI - (self.gamma_A + self.R_AI + self.R * abs_psi2) * nA
-        return dnI, dnA
+
+        if self.D_I != 0.0:
+            lapI = (
+                self.xp.roll(nI, -1, axis=0) - 2 * nI + self.xp.roll(nI, 1, axis=0)
+            ) / (self.dx**2) + (
+                self.xp.roll(nI, -1, axis=1) - 2 * nI + self.xp.roll(nI, 1, axis=1)
+            ) / (
+                self.dy**2
+            )
+            dnI = dnI + self.D_I * lapI
+
+        if self.D_A != 0.0:
+            lapA = (
+                self.xp.roll(nA, -1, axis=0) - 2 * nA + self.xp.roll(nA, 1, axis=0)
+            ) / (self.dx**2) + (
+                self.xp.roll(nA, -1, axis=1) - 2 * nA + self.xp.roll(nA, 1, axis=1)
+            ) / (
+                self.dy**2
+            )
+            dnA = dnA + self.D_A * lapA
+
+        return (dnA, dnI)
 
     def step(
         self,
@@ -51,18 +105,11 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         psi: Union[np.ndarray, cp.ndarray],
         Pxy: Union[np.ndarray, cp.ndarray],
     ) -> None:
-        abs_psi2 = self.xp.abs(psi) ** 2
-
-        k1_I, k1_A = self._derivs(self.nI, self.nA, abs_psi2, Pxy)
-        nI_mid = self.nI + 0.5 * dt * k1_I
-        nA_mid = self.nA + 0.5 * dt * k1_A
-        k2_I, k2_A = self._derivs(nI_mid, nA_mid, abs_psi2, Pxy)
-
-        self.nI = self.nI + dt * k2_I
-        self.nA = self.nA + dt * k2_A
-
-    def step_frozen_psi(self, dt, psi, pump) -> None:
-        self.step(dt, psi, pump)
+        s0 = self.get_state()
+        k1 = self.get_derivatives(psi, Pxy, s0)
+        s_mid = (s0[0] + 0.5 * dt * k1[0], s0[1] + 0.5 * dt * k1[1])
+        k2 = self.get_derivatives(psi, Pxy, s_mid)
+        self.set_state((s0[0] + dt * k2[0], s0[1] + dt * k2[1]))
 
     def get_reservoir_density(self) -> Union[np.ndarray, cp.ndarray]:
         return self.nA
@@ -71,22 +118,6 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         self,
     ) -> tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]]:
         return self.nA, self.nI
-
-    def get_state(self) -> tuple:
-        return (self.nI, self.nA)
-
-    def set_state(self, state: tuple) -> None:
-        self.nI, self.nA = state
-
-    def get_active_density(self, state: tuple):
-        _, nA = state
-        return nA
-
-    def get_derivatives(self, psi, pump, state: tuple) -> tuple:
-        nI, nA = state
-        abs_psi2 = self.xp.abs(psi) ** 2
-        dnI, dnA = self._derivs(nI, nA, abs_psi2, pump)
-        return (dnI, dnA)
 
     def make_result_nodes(self) -> list[ResultNode]:
         nodes = []

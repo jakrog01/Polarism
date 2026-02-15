@@ -3,33 +3,36 @@ from dataclasses import dataclass, field
 
 @dataclass
 class GridParameters:
-    nx: int = 512
-    ny: int = 512
-    lx: float = 100.0
-    ly: float = 100.0
+    nx: int = 400
+    ny: int = 400
+    lx: float = 400.0
+    ly: float = 400.0
 
 
 @dataclass
 class PhysicsConstants:
-    hbar: float = 1.0
-    m_eff: float = 1.0
-    R: float = 0.5
-    gamma_R: float = 0.05
-    gamma_C: float = 1.0
-    g_C: float = 0.1
-    g_R: float = 0.1
-    gamma_I: float = 0.01
-    gamma_A: float = 0.05
-    R_IA: float = 0.05
-    R_AI: float = 0.005
+    hbar: float = 0.6582119514 #mev * ps
+    m_eff: float = 0.284 #meV * ps**2 / um**2
+    gamma_R: float = 0.005
+    gamma_C: float = 0.083
+    g_C: float = 0.001
+    g_R: float = 0.002
+    gamma_I: float = 0.001
+    gamma_A: float = 0.005
+    R: float = 0.02
+    R_IA: float = 5e-2
+    R_AI: float = 2.5e-3
+    D: float = 0.0
+    D_I: float = 1e-5
+    D_A: float = 1e-3
 
 
 @dataclass
 class BoundaryConditionParameters:
     profile_type: str = "sin2"
     strength: float = 1.0
-    absorption: str = "no-absorption"
-    mask_width_percent: float = 0.1
+    absorption: str = "cap"
+    mask_width_percent: float = 0.2
 
 
 @dataclass
@@ -44,8 +47,8 @@ class LaserParameters:
     mode: str = "multiple"
     config_file: str = "lasers_setup.yaml"
     laser_type: str = "pulse-gaussian"
-    P0: float = 10.0
-    Pmax: float = 20.0
+    P0: float = 0.4
+    Pmax: float = 1.2
     x0: float = 0.0
     y0: float = 0.0
     sigma_space: float = 10.0
@@ -62,17 +65,17 @@ class ReservoirParameters:
 
 @dataclass
 class SolverParameters:
-    total_time: float = 5e-3
-    dt: float = 1e-4
-    method: str = "rk4-fdm"
+    total_time: float = 50.0
+    dt: float = 1e-3
+    method: str = "split-step-fft"
 
 
 @dataclass
 class ResultParameters:
-    real_time_view: bool = False
-    real_time_refresh_interval: float = 0.01
-    save_results: bool = True
-    save_hdf5: bool = True
+    real_time_view: bool = True
+    real_time_refresh_interval: float = 0.1
+    save_results: bool = False
+    save_hdf5: bool = False
     save_json: bool = False
     save_npy: bool = False
     batch_size: int = 1000

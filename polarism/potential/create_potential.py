@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-from polarism.boundary_conditions.absorption.absorption_strategy import (
-    AbsorptionStrategy,
-)
+from typing import TYPE_CHECKING, Union
+
 from polarism.config.simulation_parameters import PotentialParameters
 from polarism.potential.potential_registy import available_potentials
 from polarism.simulation_grid_2D import SimulationGrid2D
 
+if TYPE_CHECKING:
+    import cupy as cp
+    import numpy as np
+
 
 def create_potential(
     potential_config: PotentialParameters, grid: SimulationGrid2D
-) -> AbsorptionStrategy:
+) -> Union[np.ndarray, cp.ndarray]:
     if potential_config.potential_type not in available_potentials:
         raise ValueError(
             f"Unknown potential: '{potential_config.potential_type}'. "
