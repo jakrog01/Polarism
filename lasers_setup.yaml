@@ -4,7 +4,7 @@ lasers:
     Pmax: 20.0
     x0: 0.0
     y0: 0.0
-    sigma_space: 10.0
+    sigma_space: 20.0
     sigma_time: 0.5
     pulse_separation: 3.0
     cutoff_sigma: 3.0

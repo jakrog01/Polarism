@@ -40,8 +40,8 @@ class SplitStepFFTSolver(AbstractSolver):
     ) -> None:
         self._half_step_kinetic(state)
         self._full_step_potential(pump, reservoir, potential, state)
-        state.psi = boundary_condition.after_step_action(state.psi)
         self._half_step_kinetic(state)
+        state.psi = boundary_condition.after_step_action(state.psi)
 
     def _half_step_kinetic(self, state: SimulationState) -> None:
         psi_k = self.xp.fft.fft2(state.psi)
