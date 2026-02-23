@@ -10,8 +10,8 @@ from polarism.boundary_conditions.absorption.absorption_strategy import (
 )
 
 if TYPE_CHECKING:
-    import numpy as np
     import cupy as cp
+    import numpy as np
 
     from polarism.config.simulation_parameters import (
         BoundaryConditionParameters,
@@ -30,8 +30,10 @@ class NoAbsorptionStrategy(AbsorptionStrategy):
     ):
         super().__init__()
 
-    def get_potential_distribution(self) -> float:
+    def get_potential_distribution(self) -> Union[np.ndarray, cp.ndarray]:
         return 0.0
 
-    def apply_absorption(self, psi: Union[np.ndarray, cp.ndarray]) -> Union[np.ndarray, cp.ndarray]:
+    def apply_absorption(
+        self, psi: Union[np.ndarray, cp.ndarray]
+    ) -> Union[np.ndarray, cp.ndarray]:
         return psi
