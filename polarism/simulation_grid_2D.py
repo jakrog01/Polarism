@@ -32,9 +32,9 @@ class SimulationGrid2D:
 
         x = (xp.arange(self.nx) - self.nx // 2) * self.dx
         y = (xp.arange(self.ny) - self.ny // 2) * self.dy
-        self.X, self.Y = xp.meshgrid(x, y, indexing="ij")
+        self.X, self.Y = xp.meshgrid(x, y, indexing="xy")
 
         self.kx = 2 * xp.pi * xp.fft.fftfreq(self.nx, d=self.dx)
         self.ky = 2 * xp.pi * xp.fft.fftfreq(self.ny, d=self.dy)
-        self.KX, self.KY = xp.meshgrid(self.kx, self.ky, indexing="ij")
+        self.KX, self.KY = xp.meshgrid(self.kx, self.ky, indexing="xy")
         self.k_squared = self.KX**2 + self.KY**2
