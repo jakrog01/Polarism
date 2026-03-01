@@ -20,4 +20,4 @@ def create_potential(
             f"Available: {list(available_potentials.keys())}"
         )
 
-    return available_potentials[potential_config.potential_type](grid.X)
+    return available_potentials[potential_config.potential_type](grid.X, grid.Y, potential_config)

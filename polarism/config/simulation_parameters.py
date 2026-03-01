@@ -3,16 +3,16 @@ from dataclasses import dataclass, field
 
 @dataclass
 class GridParameters:
-    nx: int = 400
-    ny: int = 400
-    lx: float = 400.0
-    ly: float = 400.0
+    nx: int = 128
+    ny: int = 128
+    lx: float = 20.0
+    ly: float = 20.0
 
 
 @dataclass
 class PhysicsConstants:
-    hbar: float = 0.6582119514 #mev * ps
-    m_eff: float = 0.284 #meV * ps**2 / um**2
+    hbar: float = 0.6582119514  # mev * ps
+    m_eff: float = 0.284  # meV * ps**2 / um**2
     gamma_R: float = 0.005
     gamma_C: float = 0.083
     g_C: float = 0.001
@@ -31,14 +31,23 @@ class PhysicsConstants:
 class BoundaryConditionParameters:
     profile_type: str = "sin2"
     strength: float = 1.0
-    absorption: str = "cap"
+    absorption: str = "no-absorption"
     mask_width_percent: float = 0.2
 
 
 @dataclass
 class PotentialParameters:
     expose_results: bool = True
-    potential_type: str = "zero"
+    potential_type: str = "double-well-supergaussian"
+    x1: float = -2.0
+    y1: float = 0.0
+    x2: float = 2.0
+    y2: float = 0.0
+    V1: float = -2.0
+    V2: float = -2.2
+    w1: float = 1.5
+    w2: float = 1.5
+    order: float = 2.0
 
 
 @dataclass
@@ -60,7 +69,7 @@ class LaserParameters:
 @dataclass
 class ReservoirParameters:
     expose_results: bool = True
-    reservoir_type: str = "double"
+    reservoir_type: str = "single"
 
 
 @dataclass
@@ -81,6 +90,7 @@ class ResultParameters:
     batch_size: int = 1000
     output_directory: str = "simulation_results"
 
+
 @dataclass
 class ComputeEngineParameters:
     use_gpu: bool = False
@@ -99,4 +109,6 @@ class Config:
     reservoir: ReservoirParameters = field(default_factory=ReservoirParameters)
     solver: SolverParameters = field(default_factory=SolverParameters)
     result: ResultParameters = field(default_factory=ResultParameters)
-    compute_engine: ComputeEngineParameters = field(default_factory=ComputeEngineParameters)
+    compute_engine: ComputeEngineParameters = field(
+        default_factory=ComputeEngineParameters
+    )

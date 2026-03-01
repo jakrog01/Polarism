@@ -36,7 +36,7 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         self.D = physics.D 
         self.dx = grid.dx
         self.dy = grid.dy
-        self.nR = self.xp.zeros((grid.nx, grid.ny), dtype=self.xp.float32)
+        self.nR = self.xp.zeros((grid.ny, grid.nx), dtype=self.xp.float32)
 
     def get_state(self) -> tuple[Union[np.ndarray, cp.ndarray]]:
         return (self.nR,)
@@ -61,10 +61,10 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         if self.D != 0.0:
             lap = (
                 self.xp.roll(nR, -1, axis=0) - 2 * nR + self.xp.roll(nR, 1, axis=0)
-            ) / (self.dx**2) + (
+            ) / (self.dy**2) + (
                 self.xp.roll(nR, -1, axis=1) - 2 * nR + self.xp.roll(nR, 1, axis=1)
             ) / (
-                self.dy**2
+                self.dx**2
             )
             dnR = dnR + self.D * lap
         return (dnR,)

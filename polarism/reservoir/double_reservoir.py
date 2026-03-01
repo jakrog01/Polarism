@@ -45,8 +45,8 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         self.D_I = physics.D_I
         self.dx = grid.dx
         self.dy = grid.dy
-        self.nI = self.xp.zeros((grid.nx, grid.ny), dtype=self.xp.float32)
-        self.nA = self.xp.zeros((grid.nx, grid.ny), dtype=self.xp.float32)
+        self.nI = self.xp.zeros((grid.ny, grid.nx), dtype=self.xp.float32)
+        self.nA = self.xp.zeros((grid.ny, grid.nx), dtype=self.xp.float32)
 
     def get_state(
         self,
@@ -80,20 +80,20 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         if self.D_I != 0.0:
             lapI = (
                 self.xp.roll(nI, -1, axis=0) - 2 * nI + self.xp.roll(nI, 1, axis=0)
-            ) / (self.dx**2) + (
+            ) / (self.dy**2) + (
                 self.xp.roll(nI, -1, axis=1) - 2 * nI + self.xp.roll(nI, 1, axis=1)
             ) / (
-                self.dy**2
+                self.dx**2
             )
             dnI = dnI + self.D_I * lapI
 
         if self.D_A != 0.0:
             lapA = (
                 self.xp.roll(nA, -1, axis=0) - 2 * nA + self.xp.roll(nA, 1, axis=0)
-            ) / (self.dx**2) + (
+            ) / (self.dy**2) + (
                 self.xp.roll(nA, -1, axis=1) - 2 * nA + self.xp.roll(nA, 1, axis=1)
             ) / (
-                self.dy**2
+                self.dx**2
             )
             dnA = dnA + self.D_A * lapA
 
