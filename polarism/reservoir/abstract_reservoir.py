@@ -4,8 +4,8 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Union
 
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
+from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.results.result_node import ResultNode
-from polarism.simulation_grid_2D import SimulationGrid2D
 
 if TYPE_CHECKING:
     import cupy as cp
@@ -26,8 +26,8 @@ class AbstractReservoir(ABC):
     def step(
         self,
         dt: float,
-        psi: Union[np.ndarray, cp.ndarray],
-        Pxy: Union[np.ndarray, cp.ndarray],
+        psi_mid: Union[np.ndarray, cp.ndarray],
+        pump: Union[np.ndarray, cp.ndarray],
     ) -> None:
         raise NotImplementedError
 
@@ -51,6 +51,5 @@ class AbstractReservoir(ABC):
     def get_derivatives(self, psi, pump, state: tuple) -> tuple:
         raise NotImplementedError
 
-    @abstractmethod
     def get_active_density(self, state: tuple):
         return state[0]

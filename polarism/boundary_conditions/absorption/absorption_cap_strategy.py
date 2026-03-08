@@ -13,7 +13,7 @@ from polarism.config.simulation_parameters import (
     BoundaryConditionParameters,
     PhysicsConstants,
 )
-from polarism.simulation_grid_2D import SimulationGrid2D
+from polarism.grid.simulation_grid_2d import SimulationGrid2D
 
 
 @register_absorption("cap")

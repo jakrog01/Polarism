@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "compliance: marks solver compliance tests (run with '-m compliance')",
+]
+addopts = "-m 'not slow and not compliance'"

@@ -6,6 +6,8 @@ from tqdm import trange
 
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine
+from polarism.grid.create_grid import create_grid
+from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.laser.laser_factory import LaserFactory
 from polarism.potential.create_potential import create_potential
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
@@ -16,10 +18,10 @@ from polarism.results.result_node import ResultNode
 from polarism.results.results_manager import ResultsManager
 from polarism.results.visitors.storage_visitor import StorageVisitor
 from polarism.results.visitors.visualization_visitor import VisualizationVisitor
-from polarism.simulation_grid_2D import SimulationGrid2D
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.create_solver import create_solver
+from polarism.solver.solver_compatibility import check_solver_compatibility
 
 if TYPE_CHECKING:
     import cupy as cp
@@ -60,15 +62,16 @@ class SimulationController:
         self.cfg = cfg
         self.xp = compute_engine.xp
 
-        self.grid = SimulationGrid2D(cfg.grid)
+        self.grid = create_grid(cfg.grid)
         self.boundary_condition = BoundaryCondition(
             self.grid, cfg.boundary_condition, cfg.physics
         )
         self.potential = create_potential(cfg.potential, self.grid)
         self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self.grid.Y)
         self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid)
-        self.state = SimulationState(self.grid)
+        self.state = SimulationState(self.grid, cfg.physics.init_eps)
         self.solver = create_solver(cfg, self.grid)
+        check_solver_compatibility(cfg)
         self.max_laser_power = self._compute_max_laser_power()
 
         cap = self.boundary_condition.before_step_action()
@@ -90,12 +93,12 @@ class SimulationController:
     def _compute_max_laser_power(self) -> float:
         max_power = 0.0
         for laser in self.lasers:
-            if hasattr(laser, 'Pmax'):
+            if hasattr(laser, "Pmax"):
                 max_power = max(max_power, laser.Pmax)
-            elif hasattr(laser, 'P0'):
+            elif hasattr(laser, "P0"):
                 max_power = max(max_power, laser.P0)
         return max_power if max_power > 0 else self.cfg.laser.Pmax
-    
+
     def _init_visualizer(self) -> None:
         extent = [
             self.grid.X.min(),
@@ -185,7 +188,7 @@ class SimulationController:
                     name="Pump",
                     compute_fn=_compute_pump_field,
                     reduce_dim_fn=lambda f: (
-                        float(f.sum()) if hasattr(f, "sum") else float(f)
+                        float(f.max()) if hasattr(f, "max") else float(f)
                     ),
                     cmap="inferno",
                     scaling=None,
@@ -206,7 +209,6 @@ class SimulationController:
         try:
             for step in trange(n_steps, desc="Simulating"):
                 t = step * dt
-                self.state.t = t
 
                 P_total = self._compute_total_pump(t)
 
@@ -218,16 +220,33 @@ class SimulationController:
                     self.state,
                 )
 
-                should_save = self.storage_visitor is not None
-                should_viz = self.visualizer is not None and t >= self.next_viz_time
+                # After stepping, state represents time (step+1)*dt
+                t_after = (step + 1) * dt
+                self.state.t = t_after
+
+                save_interval = max(1, self.cfg.result.save_interval)
+                should_save = (
+                    self.storage_visitor is not None
+                    and step % save_interval == 0
+                )
+                should_viz = (
+                    self.visualizer is not None and t_after >= self.next_viz_time
+                )
+
+                if self.visualizer is not None and self.visualizer._closed:
+                    print(
+                        f"\nVisualization closed at t={t_after:.3f}, "
+                        "stopping simulation."
+                    )
+                    break
 
                 if should_save or should_viz:
                     self.results_manager.step(
-                        t,
+                        t_after,
                         state=self.state,
                         P_total=P_total,
                         scalar_groups=(
-                            self._get_scalar_groups(t)
+                            self._get_scalar_groups(t_after)
                             if self.cfg.laser.expose_results
                             else {}
                         ),
@@ -249,7 +268,7 @@ class SimulationController:
         if self.cfg.laser.expose_results:
             scalar_groups["P_lasers"] = {
                 f"L{i}": float(
-                    self.xp.sum(laser.get_power(self.grid.X, self.grid.Y, t))
+                    self.xp.max(laser.get_power(self.grid.X, self.grid.Y, t))
                 )
                 for i, laser in enumerate(self.lasers)
             }
@@ -262,7 +281,7 @@ class SimulationController:
         if self.cfg.laser.expose_results:
             scalar_groups["P_lasers"] = {
                 f"L{i}": float(
-                    self.xp.sum(laser.get_power(self.grid.X, self.grid.Y, t))
+                    self.xp.max(laser.get_power(self.grid.X, self.grid.Y, t))
                 )
                 for i, laser in enumerate(self.lasers)
             }

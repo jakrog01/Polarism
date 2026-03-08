@@ -20,7 +20,7 @@ from polarism.results import (
     npy_storage,
 )
 from polarism.simulation_controller import SimulationController
-from polarism.simulation_grid_2D import SimulationGrid2D
+from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.simulation_state import SimulationState
 from polarism.solver import AbstractSolver, create_solver
 

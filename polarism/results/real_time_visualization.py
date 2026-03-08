@@ -69,13 +69,15 @@ class RealTimeVisualization:
         self.fig.canvas.mpl_connect("close_event", self._on_close)
         self._im = {}
         self._clim_fixed = {}
+        self._colorbars = {}
         for i, field in enumerate(self.fields_2d):
             ax = self.axes[0, i]
             im = ax.imshow(
                 np.zeros((10, 10)), extent=self.extent, origin="lower", cmap=field.cmap
             )
             ax.set_title(field.name)
-            self.fig.colorbar(im, ax=ax, shrink=0.8)
+            cbar = self.fig.colorbar(im, ax=ax, shrink=0.8)
+            self._colorbars[field.name] = cbar
             if field.clim is not None:
                 im.set_clim(field.clim[0], field.clim[1])
                 self._clim_fixed[field.name] = True
@@ -140,7 +142,11 @@ class RealTimeVisualization:
                             if vmax > vmin:
                                 self._im[name].set_clim(vmin, vmax)
                             else:
-                                self._im[name].set_clim(vmin - 1e-10, vmax + 1e-10)
+                                self._im[name].set_clim(
+                                    vmin - abs(vmin) * 0.1 - 1e-30,
+                                    vmax + abs(vmax) * 0.1 + 1e-30,
+                                )
+                            self._colorbars[name].update_normal(self._im[name])
         if scalars:
             for name, value in scalars.items():
                 if name not in self._lines:
@@ -180,5 +186,3 @@ class RealTimeVisualization:
 
     def _on_close(self, event) -> None:
         self._closed = True
-        if "ipykernel" not in sys.modules:
-            sys.exit(0)

@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Union
 from polarism.compute_engine import compute_engine
 
 if TYPE_CHECKING:
-    import numpy as np
     import cupy as cp
+    import numpy as np
 
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config

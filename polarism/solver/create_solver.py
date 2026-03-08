@@ -6,7 +6,7 @@ from polarism.solver.solver_registry import available_solvers
 
 if TYPE_CHECKING:
     from polarism.config.simulation_parameters import Config
-    from polarism.simulation_grid_2D import SimulationGrid2D
+    from polarism.grid.simulation_grid_2d import SimulationGrid2D
     from polarism.solver.abstract_solver import AbstractSolver
 
 

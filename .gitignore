@@ -5,3 +5,4 @@ simulation_results/
 test_results/
 .pytest_cache/
 .vscode/
+data/

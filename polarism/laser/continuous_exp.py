@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 @register_laser("continuous-exp")
 class ContinuousExponentialPump(AbstractLaser):
     w: float
+    cutoff_sigma: float
 
     def __init__(
         self,
@@ -23,6 +24,7 @@ class ContinuousExponentialPump(AbstractLaser):
     ):
         super().__init__(laser_config, X, Y)
         self.w = laser_config.sigma_space
+        self.cutoff_sigma = laser_config.cutoff_sigma
 
     def _amplitude(self, t: float) -> float:
         return self.P0
@@ -34,7 +36,9 @@ class ContinuousExponentialPump(AbstractLaser):
     ) -> Union[np.ndarray, cp.ndarray]:
         r2 = (X - self.x0) ** 2 + (Y - self.y0) ** 2
         r = self.xp.sqrt(r2)
-        return self.xp.exp(-r / (self.w**2))
+        profile = self.xp.exp(-r / (self.w**2))
+        #profile = self.xp.where(r <= self.cutoff_sigma * self.w, profile, 0.0)
+        return profile
 
     def _P_time(self, t: float) -> float:
         return 1.0

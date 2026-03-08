@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
+    from polarism.grid.simulation_grid_2d import SimulationGrid2D
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
-    from polarism.simulation_grid_2D import SimulationGrid2D
 
 
 @register_solver("rk4-fdm")
@@ -22,6 +22,9 @@ class RK4FDMSolver(AbstractSolver):
         super().__init__(config)
         self.dx = grid.dx
         self.dy = grid.dy
+        self.nx = grid.nx
+        self.ny = grid.ny
+        self.grid_type = getattr(config.grid, "grid_type", "periodic")
         self._laplacian_buf = None
 
     @staticmethod
@@ -35,6 +38,63 @@ class RK4FDMSolver(AbstractSolver):
             or self._laplacian_buf.dtype != psi.dtype
         ):
             self._laplacian_buf = self.xp.zeros_like(psi)
+
+    def _laplacian_periodic(self, psi, out) -> None:
+        out[:] = (
+            self.xp.roll(psi, -1, axis=0) - 2 * psi + self.xp.roll(psi, 1, axis=0)
+        ) / (self.dy**2) + (
+            self.xp.roll(psi, -1, axis=1) - 2 * psi + self.xp.roll(psi, 1, axis=1)
+        ) / (
+            self.dx**2
+        )
+
+    def _laplacian_closed_interval_neumann(self, psi, out) -> None:
+        out.fill(0)
+
+        if self.ny > 2 and self.nx > 2:
+            out[1:-1, 1:-1] = (psi[2:, 1:-1] - 2 * psi[1:-1, 1:-1] + psi[:-2, 1:-1]) / (
+                self.dy**2
+            ) + (psi[1:-1, 2:] - 2 * psi[1:-1, 1:-1] + psi[1:-1, :-2]) / (self.dx**2)
+
+        if self.nx > 2:
+            out[0, 1:-1] = 2 * (psi[1, 1:-1] - psi[0, 1:-1]) / (self.dy**2) + (
+                psi[0, 2:] - 2 * psi[0, 1:-1] + psi[0, :-2]
+            ) / (self.dx**2)
+            out[-1, 1:-1] = 2 * (psi[-2, 1:-1] - psi[-1, 1:-1]) / (self.dy**2) + (
+                psi[-1, 2:] - 2 * psi[-1, 1:-1] + psi[-1, :-2]
+            ) / (self.dx**2)
+
+        if self.ny > 2:
+            out[1:-1, 0] = (psi[2:, 0] - 2 * psi[1:-1, 0] + psi[:-2, 0]) / (
+                self.dy**2
+            ) + 2 * (psi[1:-1, 1] - psi[1:-1, 0]) / (self.dx**2)
+            out[1:-1, -1] = (psi[2:, -1] - 2 * psi[1:-1, -1] + psi[:-2, -1]) / (
+                self.dy**2
+            ) + 2 * (psi[1:-1, -2] - psi[1:-1, -1]) / (self.dx**2)
+
+        out[0, 0] = 2 * (psi[1, 0] - psi[0, 0]) / (self.dy**2) + 2 * (
+            psi[0, 1] - psi[0, 0]
+        ) / (self.dx**2)
+        out[0, -1] = 2 * (psi[1, -1] - psi[0, -1]) / (self.dy**2) + 2 * (
+            psi[0, -2] - psi[0, -1]
+        ) / (self.dx**2)
+        out[-1, 0] = 2 * (psi[-2, 0] - psi[-1, 0]) / (self.dy**2) + 2 * (
+            psi[-1, 1] - psi[-1, 0]
+        ) / (self.dx**2)
+        out[-1, -1] = 2 * (psi[-2, -1] - psi[-1, -1]) / (self.dy**2) + 2 * (
+            psi[-1, -2] - psi[-1, -1]
+        ) / (self.dx**2)
+
+    def _laplacian(self, psi, out) -> None:
+        if self.grid_type == "periodic":
+            self._laplacian_periodic(psi, out)
+            return
+
+        if self.grid_type == "closed-interval":
+            self._laplacian_closed_interval_neumann(psi, out)
+            return
+
+        raise ValueError(f"Unknown grid_type: {self.grid_type}")
 
     def step(
         self,
@@ -91,13 +151,7 @@ class RK4FDMSolver(AbstractSolver):
         if lap is None:
             raise RuntimeError("Buffers not initialized")
 
-        lap[:] = (
-            self.xp.roll(psi, -1, axis=0) - 2 * psi + self.xp.roll(psi, 1, axis=0)
-        ) / (self.dx**2) + (
-            self.xp.roll(psi, -1, axis=1) - 2 * psi + self.xp.roll(psi, 1, axis=1)
-        ) / (
-            self.dy**2
-        )
+        self._laplacian(psi, lap)
 
         kinetic = -(self.config.physics.hbar**2) / (2 * self.config.physics.m_eff) * lap
 
