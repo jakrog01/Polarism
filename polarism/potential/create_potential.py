@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Union
 
 from polarism.config.simulation_parameters import PotentialParameters
 from polarism.potential.potential_registy import available_potentials
-from polarism.simulation_grid_2D import SimulationGrid2D
+from polarism.grid.simulation_grid_2d import SimulationGrid2D
 
 if TYPE_CHECKING:
     import cupy as cp

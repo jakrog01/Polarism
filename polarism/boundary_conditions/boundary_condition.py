@@ -12,11 +12,8 @@ if TYPE_CHECKING:
     import cupy as cp
     import numpy as np
 
-    from polarism.config.simulation_parameters import (
-        BoundaryConditionParameters,
-        PhysicsConstants,
-    )
-    from polarism.simulation_grid_2D import SimulationGrid2D
+    from polarism.config.simulation_parameters import BoundaryConditionParameters
+    from polarism.grid.simulation_grid_2d import SimulationGrid2D
 
 
 class BoundaryCondition:

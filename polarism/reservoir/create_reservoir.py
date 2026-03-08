@@ -4,7 +4,7 @@ from polarism.config.simulation_parameters import PhysicsConstants, ReservoirPar
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
 from polarism.reservoir.double_reservoir import DoubleReservoir
 from polarism.reservoir.single_reservoir import SingleReservoir
-from polarism.simulation_grid_2D import SimulationGrid2D
+from polarism.grid.simulation_grid_2d import SimulationGrid2D
 
 
 def create_reservoir(

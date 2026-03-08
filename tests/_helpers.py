@@ -7,7 +7,9 @@ from types import SimpleNamespace
 import matplotlib.pyplot as plt
 import numpy as np
 
-from polarism.simulation_grid_2D import SimulationGrid2D
+import polarism.laser  # noqa: F401
+from polarism.grid.create_grid import create_grid
+from polarism.grid.simulation_grid_2d import SimulationGrid2D
 
 
 @dataclass(frozen=True)
@@ -16,6 +18,7 @@ class GridCfg:
     ny: int = 100
     lx: float = 200.0
     ly: float = 200.0
+    grid_type: str = "periodic"
 
 
 class NoBoundaryCondition:
@@ -34,7 +37,7 @@ class State:
 
 class NullReservoir:
     def __init__(self, grid: SimulationGrid2D):
-        self._n0 = np.zeros((grid.nx, grid.ny), dtype=np.float64)
+        self._n0 = np.zeros((grid.ny, grid.nx), dtype=np.float64)
         self._state = (self._n0,)
 
     def step(self, dt: float, psi, Pxy) -> None:
@@ -63,7 +66,7 @@ class NullReservoir:
 
 
 def make_grid(cfg: GridCfg | None = None) -> SimulationGrid2D:
-    return SimulationGrid2D(cfg or GridCfg())
+    return create_grid(cfg or GridCfg())
 
 
 def make_reservoir_cfg(expose_results: bool = False):
@@ -112,8 +115,13 @@ def make_physics_linear(**overrides):
     return SimpleNamespace(**base)
 
 
-def make_config(dt: float, physics):
-    return SimpleNamespace(solver=SimpleNamespace(dt=float(dt)), physics=physics)
+def make_config(dt: float, physics, grid_type: str = "periodic"):
+    return SimpleNamespace(
+        solver=SimpleNamespace(dt=float(dt)),
+        physics=physics,
+        grid=SimpleNamespace(grid_type=grid_type),
+        reservoir=SimpleNamespace(reservoir_type="single"),
+    )
 
 
 def pump_uniform(P0: float, X: np.ndarray) -> np.ndarray:
@@ -137,7 +145,7 @@ def potential_periodic(grid: SimulationGrid2D, V0: float = 0.7) -> np.ndarray:
 def initial_uniform(
     grid: SimulationGrid2D, amp: float, phase: float = 0.0
 ) -> np.ndarray:
-    return (amp * np.exp(1j * phase)) * np.ones((grid.nx, grid.ny), dtype=np.complex128)
+    return (amp * np.exp(1j * phase)) * np.ones((grid.ny, grid.nx), dtype=np.complex128)
 
 
 def initial_packet(

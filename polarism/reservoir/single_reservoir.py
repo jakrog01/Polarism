@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING, Union
 
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
+from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
 from polarism.results.result_node import ResultNode
 from polarism.results.result_provider import ResultProvider
-from polarism.simulation_grid_2D import SimulationGrid2D
 
 if TYPE_CHECKING:
     import cupy as cp
@@ -18,9 +18,6 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
     config: ReservoirParameters
     R: float
     gamma_r: float
-    D: float
-    dx: float
-    dy: float
     nR: Union[np.ndarray, cp.ndarray]
 
     def __init__(
@@ -33,10 +30,7 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         self.config = reservoir_config
         self.R = physics.R
         self.gamma_r = physics.gamma_R
-        self.D = physics.D 
-        self.dx = grid.dx
-        self.dy = grid.dy
-        self.nR = self.xp.zeros((grid.ny, grid.nx), dtype=self.xp.float32)
+        self.nR = self.xp.zeros((grid.ny, grid.nx), dtype=self.xp.float64)
 
     def get_state(self) -> tuple[Union[np.ndarray, cp.ndarray]]:
         return (self.nR,)
@@ -58,15 +52,6 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         nR = state[0]
         abs_psi2 = self.xp.abs(psi) ** 2
         dnR = Pxy - (self.gamma_r + self.R * abs_psi2) * nR
-        if self.D != 0.0:
-            lap = (
-                self.xp.roll(nR, -1, axis=0) - 2 * nR + self.xp.roll(nR, 1, axis=0)
-            ) / (self.dy**2) + (
-                self.xp.roll(nR, -1, axis=1) - 2 * nR + self.xp.roll(nR, 1, axis=1)
-            ) / (
-                self.dx**2
-            )
-            dnR = dnR + self.D * lap
         return (dnR,)
 
     def step(

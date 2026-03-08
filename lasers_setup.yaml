@@ -1,12 +1,50 @@
 lasers:
-  - laser_type: continuous-exp
-    P0: 8.0
-    x0: -2.0
-    y0: 0.0
-    sigma_space: 1.0
+  - laser_type: pulse-gaussian
+    P0: 10.0
+    Pmax: 10.0
+    x0: 0
+    y0: 0
+    sigma_space: 10.0
+    sigma_time: 0.5
+    pulse_separation: 4.0
+    cutoff_sigma: 3.0
 
-  - laser_type: continuous-exp
-    P0: 12.0
-    x0: 2.0
-    y0: 0.0
-    sigma_space: 1.0
+  - laser_type: pulse-gaussian
+    P0: 1.0
+    Pmax: 1.0
+    x0: 25
+    y0: 0
+    sigma_space: 5.0
+    sigma_time: 0.1
+    pulse_separation: 0.6
+    cutoff_sigma: 3.0
+
+  - laser_type: pulse-gaussian
+    P0: 1.0
+    Pmax: 1.0
+    x0: 0
+    y0: 20
+    sigma_space: 5.0
+    sigma_time: 0.1
+    pulse_separation: 0.6
+    cutoff_sigma: 3.0
+
+  - laser_type: pulse-gaussian
+    P0: 1.0
+    Pmax: 1.0
+    x0: -25
+    y0: 0
+    sigma_space: 5.0
+    sigma_time: 0.1
+    pulse_separation: 0.6
+    cutoff_sigma: 3.0
+
+  - laser_type: pulse-gaussian
+    P0: 1.0
+    Pmax: 1.0
+    x0: 0
+    y0: -25
+    sigma_space: 5.0
+    sigma_time: 0.1
+    pulse_separation: 0.6
+    cutoff_sigma: 3.0

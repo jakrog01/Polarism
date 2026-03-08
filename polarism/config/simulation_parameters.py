@@ -3,10 +3,11 @@ from dataclasses import dataclass, field
 
 @dataclass
 class GridParameters:
-    nx: int = 128
-    ny: int = 128
-    lx: float = 20.0
-    ly: float = 20.0
+    nx: int = 256
+    ny: int = 256
+    lx: float = 100.0
+    ly: float = 100.0
+    grid_type: str = "periodic"
 
 
 @dataclass
@@ -22,9 +23,7 @@ class PhysicsConstants:
     R: float = 0.02
     R_IA: float = 5e-2
     R_AI: float = 2.5e-3
-    D: float = 0.0
-    D_I: float = 1e-5
-    D_A: float = 1e-3
+    init_eps: float = 1e-3
 
 
 @dataclass
@@ -38,13 +37,13 @@ class BoundaryConditionParameters:
 @dataclass
 class PotentialParameters:
     expose_results: bool = True
-    potential_type: str = "double-well-supergaussian"
+    potential_type: str = "zero"
     x1: float = -2.0
     y1: float = 0.0
     x2: float = 2.0
     y2: float = 0.0
-    V1: float = -2.0
-    V2: float = -2.2
+    V1: float = -2.0e-3
+    V2: float = -2.2e-3
     w1: float = 1.5
     w2: float = 1.5
     order: float = 2.0
@@ -55,7 +54,7 @@ class LaserParameters:
     expose_results: bool = True
     mode: str = "multiple"
     config_file: str = "lasers_setup.yaml"
-    laser_type: str = "pulse-gaussian"
+    laser_type: str = "continuous-gaussian"
     P0: float = 0.4
     Pmax: float = 1.2
     x0: float = 0.0
@@ -63,20 +62,21 @@ class LaserParameters:
     sigma_space: float = 10.0
     sigma_time: float = 0.5
     pulse_separation: float = 6.0
-    cutoff_sigma: float = 3.0
+    cutoff_sigma: float = 2.5
 
 
 @dataclass
 class ReservoirParameters:
     expose_results: bool = True
-    reservoir_type: str = "single"
+    reservoir_type: str = "double"
 
 
 @dataclass
 class SolverParameters:
-    total_time: float = 50.0
+    total_time: float = 500.0
     dt: float = 1e-3
     method: str = "split-step-fft"
+    precision: str = "double"  # "single" (float32) or "double" (float64)
 
 
 @dataclass
@@ -87,6 +87,7 @@ class ResultParameters:
     save_hdf5: bool = False
     save_json: bool = False
     save_npy: bool = False
+    save_interval: int = 1 
     batch_size: int = 1000
     output_directory: str = "simulation_results"
 

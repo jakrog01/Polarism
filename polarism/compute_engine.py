@@ -1,10 +1,17 @@
 import sys
-from typing import Union, Any
+from typing import Any, Union
 
 import numpy as np
-import cupy as cp
 
 from polarism.config.simulation_parameters import ComputeEngineParameters
+
+try:
+    import cupy as cp
+
+    CUPY_AVAILABLE = True
+except ImportError:
+    cp = None
+    CUPY_AVAILABLE = False
 
 
 class ComputeEngine:
@@ -20,13 +27,10 @@ class ComputeEngine:
     def configure(self, config: ComputeEngineParameters):
         self.config = config
         if self.config.use_gpu:
-            try:
-                import cupy as cp
-
+            if CUPY_AVAILABLE:
                 self.xp = cp
                 self.use_gpu = True
-
-            except ImportError:
+            else:
                 sys.stderr.write(
                     "CuPy is not installed. Falling back to CPU computation.\n"
                 )
@@ -36,15 +40,18 @@ class ComputeEngine:
     def to_gpu(self, array: Union[np.ndarray, Any]) -> Union[np.ndarray, Any]:
         return self.xp.asarray(array)
 
-    def to_cpu(self, value: Union[np.ndarray, cp.ndarray]) -> np.ndarray:
-        if self.use_gpu and isinstance(value, cp.ndarray):
-            if hasattr(value, 'get'):
+    def to_cpu(self, value: Any) -> np.ndarray:
+
+        if self.use_gpu and CUPY_AVAILABLE:
+            if isinstance(value, cp.ndarray):
                 return value.get()
-            return np.array(value)
-        
+            if hasattr(value, "get"):
+                return np.asarray(value.get())
+
         if isinstance(value, (int, float, complex)):
             return np.array(value)
 
         return np.asarray(value)
+
 
 compute_engine = ComputeEngine()

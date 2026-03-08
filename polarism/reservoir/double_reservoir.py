@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING, Union
 
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
+from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
 from polarism.results.result_node import ResultNode
 from polarism.results.result_provider import ResultProvider
-from polarism.simulation_grid_2D import SimulationGrid2D
 
 if TYPE_CHECKING:
     import cupy as cp
@@ -21,10 +21,6 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
     gamma_A: float
     R_IA: float
     R_AI: float
-    D_I: float
-    D_A: float
-    dx: float
-    dy: float
     nI: Union[np.ndarray, cp.ndarray]
     nA: Union[np.ndarray, cp.ndarray]
 
@@ -41,12 +37,8 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         self.gamma_A = physics.gamma_A
         self.R_IA = physics.R_IA
         self.R_AI = physics.R_AI
-        self.D_A = physics.D_A
-        self.D_I = physics.D_I
-        self.dx = grid.dx
-        self.dy = grid.dy
-        self.nI = self.xp.zeros((grid.ny, grid.nx), dtype=self.xp.float32)
-        self.nA = self.xp.zeros((grid.ny, grid.nx), dtype=self.xp.float32)
+        self.nI = self.xp.zeros((grid.ny, grid.nx), dtype=self.xp.float64)
+        self.nA = self.xp.zeros((grid.ny, grid.nx), dtype=self.xp.float64)
 
     def get_state(
         self,
@@ -76,26 +68,6 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
 
         dnI = Pxy - (self.gamma_I + self.R_IA) * nI + self.R_AI * nA
         dnA = self.R_IA * nI - (self.gamma_A + self.R_AI + self.R * abs_psi2) * nA
-
-        if self.D_I != 0.0:
-            lapI = (
-                self.xp.roll(nI, -1, axis=0) - 2 * nI + self.xp.roll(nI, 1, axis=0)
-            ) / (self.dy**2) + (
-                self.xp.roll(nI, -1, axis=1) - 2 * nI + self.xp.roll(nI, 1, axis=1)
-            ) / (
-                self.dx**2
-            )
-            dnI = dnI + self.D_I * lapI
-
-        if self.D_A != 0.0:
-            lapA = (
-                self.xp.roll(nA, -1, axis=0) - 2 * nA + self.xp.roll(nA, 1, axis=0)
-            ) / (self.dy**2) + (
-                self.xp.roll(nA, -1, axis=1) - 2 * nA + self.xp.roll(nA, 1, axis=1)
-            ) / (
-                self.dx**2
-            )
-            dnA = dnA + self.D_A * lapA
 
         return (dnA, dnI)
 
