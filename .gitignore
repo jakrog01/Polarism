@@ -6,3 +6,5 @@ test_results/
 .pytest_cache/
 .vscode/
 data/
+.claude/
+slurm.env

@@ -10,6 +10,7 @@ class GridParameters:
     grid_type: str = "periodic"
 
 
+
 @dataclass
 class PhysicsConstants:
     hbar: float = 0.6582119514  # mev * ps
@@ -54,15 +55,16 @@ class LaserParameters:
     expose_results: bool = True
     mode: str = "multiple"
     config_file: str = "lasers_setup.yaml"
-    laser_type: str = "continuous-gaussian"
+    laser_type: str = "pulse-gaussian"
     P0: float = 0.4
     Pmax: float = 1.2
     x0: float = 0.0
     y0: float = 0.0
-    sigma_space: float = 10.0
-    sigma_time: float = 0.5
-    pulse_separation: float = 6.0
-    cutoff_sigma: float = 2.5
+    sigma_space: float = 15.0
+    sigma_time: float = 0.1
+    pulse_separation: float = 0.6
+    cutoff_sigma: float = 3.0
+    delay: float = 0.0
 
 
 @dataclass
@@ -73,10 +75,10 @@ class ReservoirParameters:
 
 @dataclass
 class SolverParameters:
-    total_time: float = 500.0
+    total_time: float = 5.0
     dt: float = 1e-3
-    method: str = "split-step-fft"
-    precision: str = "double"  # "single" (float32) or "double" (float64)
+    method: str = "rk4-cuda"
+    precision: str = "double"
 
 
 @dataclass
@@ -94,7 +96,7 @@ class ResultParameters:
 
 @dataclass
 class ComputeEngineParameters:
-    use_gpu: bool = False
+    use_gpu: bool = True
     gpu_device: int = 0
 
 
