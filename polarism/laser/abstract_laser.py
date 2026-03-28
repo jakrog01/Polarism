@@ -22,6 +22,7 @@ class AbstractLaser(ABC):
         self.P0 = laser_config.P0
         self.x0 = laser_config.x0
         self.y0 = laser_config.y0
+        self.delay = laser_config.delay
         self.P = self.xp.zeros_like(X)
 
     @abstractmethod
@@ -44,5 +45,9 @@ class AbstractLaser(ABC):
         Y: Union[np.ndarray, cp.ndarray],
         t: float,
     ) -> Union[np.ndarray, cp.ndarray]:
-        self.P = self._amplitude(t) * self._P_space(X, Y) * self._P_time(t)
+        if t < self.delay:
+            self.P = self.xp.zeros_like(X)
+            return self.P
+        t_eff = t - self.delay
+        self.P = self._amplitude(t_eff) * self._P_space(X, Y) * self._P_time(t_eff)
         return self.P
