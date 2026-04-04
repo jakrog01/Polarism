@@ -1,0 +1,90 @@
+site_name: Polarism
+site_description: High-performance documentation for the Polarism Gross-Pitaevskii solver
+site_url: https://jakrog01.github.io/PolaritonSNN/
+docs_dir: docs
+strict: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - getting-started/index.md
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+  - User Guide:
+      - Grid and Parameters: user-guide/grid-and-parameters.md
+      - Potentials and Pumps: user-guide/potentials-and-pumps.md
+      - Time Evolution: user-guide/time-evolution.md
+      - Output and Visualization: user-guide/output-and-visualization.md
+  - Examples:
+      - examples/index.md
+      - pump_multi_comparison Pipeline: examples/pump-multi-comparison.md
+  - API Reference:
+      - Overview: api/overview.md
+      - Option Matrix: api/option-matrix.md
+      - Top-Level Package: api/polarism.md
+      - Configuration: api/configuration.md
+      - Controller and Backend: api/controller-and-backend.md
+      - Model Components: api/model-components.md
+      - Solvers: api/solvers.md
+      - Results: api/results.md
+  - Development and Theory:
+      - Physics Background: development/physics-background.md
+      - Testing and CI: development/testing-and-ci.md
+      - Contributing: development/contributing.md
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.indexes
+    - navigation.tracking
+    - navigation.top
+    - navigation.tabs
+    - navigation.sections
+    - search.highlight
+    - search.suggest
+    - toc.follow
+    - content.code.copy
+  palette:
+    - scheme: slate
+      primary: deep purple
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
+    - scheme: default
+      primary: deep purple
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to dark mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - pymdownx.arithmatex:
+      generic: true
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+plugins:
+  - search
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js

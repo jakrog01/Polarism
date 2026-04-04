@@ -9,3 +9,10 @@ slurm.env
 *.md
 !README.md
 !gitignore
+!docs/
+!docs/*.md
+!docs/**/*.md
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
+site/
