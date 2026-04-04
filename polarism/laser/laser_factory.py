@@ -33,10 +33,12 @@ class LaserFactory:
         laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]
     ) -> list[AbstractLaser]:
         laser_type = laser_config.laser_type
-        laser_cls = available_lasers[laser_type]
-        if laser_cls is None:
-            raise ValueError(f"Unknown laser type: {laser_type}")
-        return [laser_cls(laser_config, X, Y)]
+        if laser_type not in available_lasers:
+            raise ValueError(
+                f"Unknown laser type: '{laser_type}'. "
+                f"Available: {list(available_lasers.keys())}"
+            )
+        return [available_lasers[laser_type](laser_config, X, Y)]
 
     @staticmethod
     def _create_multiple_lasers(
@@ -47,11 +49,21 @@ class LaserFactory:
             data = yaml.safe_load(f)
 
         lasers = []
-        for item in data.get("lasers", []):
-            laser_type = item["laser_type"]
-            laser_cls = available_lasers[laser_type]
+        for i, item in enumerate(data.get("lasers", [])):
+            laser_type = item.get("laser_type")
+            if laser_type is None:
+                raise ValueError(
+                    f"Laser entry {i} in '{laser_config.config_file}' "
+                    f"is missing 'laser_type'."
+                )
+            if laser_type not in available_lasers:
+                raise ValueError(
+                    f"Unknown laser type '{laser_type}' in entry {i} of "
+                    f"'{laser_config.config_file}'. "
+                    f"Available: {list(available_lasers.keys())}"
+                )
             individual_config = LaserParameters(**{**vars(laser_config), **item})
-            lasers.append(laser_cls(individual_config, X, Y))
+            lasers.append(available_lasers[laser_type](individual_config, X, Y))
         return lasers
 
 

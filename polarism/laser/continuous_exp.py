@@ -36,9 +36,7 @@ class ContinuousExponentialPump(AbstractLaser):
     ) -> Union[np.ndarray, cp.ndarray]:
         r2 = (X - self.x0) ** 2 + (Y - self.y0) ** 2
         r = self.xp.sqrt(r2)
-        profile = self.xp.exp(-r / (self.w**2))
-        #profile = self.xp.where(r <= self.cutoff_sigma * self.w, profile, 0.0)
-        return profile
+        return self.xp.exp(-r / (self.w**2))
 
     def _P_time(self, t: float) -> float:
         return 1.0
