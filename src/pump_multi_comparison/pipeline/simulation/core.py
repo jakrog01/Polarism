@@ -1,54 +1,67 @@
+"""Physics simulation kernel — GPU execution of the GPE/reservoir model.
+
+This module is the physics layer.  It knows nothing about Slurm, config
+files, or the pipeline directory layout.  All I/O paths are passed
+explicitly by callers.
+
+Public API
+----------
+run_simulation_from_config(routine_name, lasers, cfg, batch_size, output_dir)
+    Run the simulation and write an HDF5 output file.
+compute_batch_size(ny, nx)
+    Estimate a safe HDF5 write-buffer depth for the current GPU.
+check_condensation_kspace(psi, xp)
+    FFT-based k=0 power-fraction condensation check.
+AsyncBatchWriter
+    Double-buffered GPU→CPU→HDF5 async writer.
+"""
+from __future__ import annotations
+
 import math
 import os
-import sys
 import traceback
 
 import h5py
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-
-from tqdm import trange
+import numpy as np
 
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine
-from polarism.config.simulation_parameters import (
-    BoundaryConditionParameters,
-    ComputeEngineParameters,
-    Config,
-    GridParameters,
-    LaserParameters,
-    PhysicsConstants,
-    PotentialParameters,
-    ReservoirParameters,
-    ResultParameters,
-    SolverParameters,
-)
+from polarism.config.simulation_parameters import Config
 from polarism.grid.create_grid import create_grid
-from polarism.laser.pulse_gaussian import PulseGaussian
 from polarism.potential.create_potential import create_potential
 from polarism.reservoir.create_reservoir import create_reservoir
 from polarism.simulation_state import SimulationState
 from polarism.solver.create_solver import create_solver
+from tqdm import trange
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# ── Simulation constants ──────────────────────────────────────────────────────
 
-RECORD_STRIDE = 100
-COND_GROWTH_FACTOR = 1e6
-CHECK_EVERY = 50
-MIN_CHECK_TIME = 50.0
-RESERVED_GPU_GB = 4.0
-RNG_SEED = 42
+RECORD_STRIDE = 100          # Record one frame every N steps.
+COND_GROWTH_FACTOR = 1e6     # |ψ|² growth ratio to flag condensation.
+CHECK_EVERY = 50             # Check condensation every N steps.
+MIN_CHECK_TIME = 50.0        # ps — ignore condensation checks before this time.
+RESERVED_GPU_GB = 4.0        # GB reserved for non-simulation GPU allocations.
+RNG_SEED = 42                # Reproducible initial noise.
 
+
+# ── HDF5 async writer ─────────────────────────────────────────────────────────
 
 class AsyncBatchWriter:
-    def __init__(self, filepath, batch_size, ny, nx):
+    """Double-buffered GPU→CPU→HDF5 async frame writer.
+
+    Uses CuPy pinned memory and non-blocking streams to overlap host-to-
+    device transfer with the simulation step, avoiding GPU stalls.
+    Falls back to synchronous copy when pinned memory is unavailable.
+    """
+
+    def __init__(self, filepath: str, batch_size: int, ny: int, nx: int) -> None:
         self.xp = compute_engine.xp
         self.use_gpu = compute_engine.use_gpu
         self.batch_size = batch_size
         self.ny = ny
         self.nx = nx
         self.h5 = h5py.File(filepath, "w")
-        self.datasets = {}
+        self.datasets: dict = {}
         self.total = 0
 
         self._cnames = ["psi"]
@@ -66,7 +79,7 @@ class AsyncBatchWriter:
                     (batch_size, ny, nx), dtype=self.xp.float64
                 )
 
-        self._host = {}
+        self._host: dict = {}
         self._pinned = False
         if self.use_gpu:
             try:
@@ -97,19 +110,19 @@ class AsyncBatchWriter:
         self._count = 0
         self._transfer_pending = False
         self._pending_n = 0
-        self._time_buf = []
-        self._mode_buf = []
-        self._scalar_bufs = {}
+        self._time_buf: list = []
+        self._mode_buf: list = []
+        self._scalar_bufs: dict = {}
         self._pend_time = None
         self._pend_mode = None
         self._pend_scalars = None
         self._writes_since_flush = 0
         self._flush_every = 10
 
-    def register_scalar(self, name):
+    def register_scalar(self, name: str) -> None:
         self._scalar_bufs[name] = []
 
-    def record(self, t, fields, scalars, mode=0):
+    def record(self, t: float, fields: dict, scalars: dict, mode: int = 0) -> None:
         if self._transfer_pending:
             self._wait_and_write()
 
@@ -127,7 +140,7 @@ class AsyncBatchWriter:
         if self._count >= self.batch_size:
             self._start_transfer()
 
-    def _start_transfer(self):
+    def _start_transfer(self) -> None:
         n = self._count
         buf = self._gpu[self._active]
 
@@ -152,7 +165,7 @@ class AsyncBatchWriter:
         for k in self._scalar_bufs:
             self._scalar_bufs[k] = []
 
-    def _wait_and_write(self):
+    def _wait_and_write(self) -> None:
         if self._pinned:
             self._event.synchronize()
 
@@ -173,7 +186,7 @@ class AsyncBatchWriter:
             self.h5.flush()
             self._writes_since_flush = 0
 
-    def _append(self, name, data, scalar):
+    def _append(self, name: str, data: np.ndarray, scalar: bool) -> None:
         if name not in self.datasets:
             if scalar:
                 self.datasets[name] = self.h5.create_dataset(
@@ -197,7 +210,7 @@ class AsyncBatchWriter:
             ds.resize(old + data.shape[0], axis=0)
             ds[old:] = data
 
-    def close(self):
+    def close(self) -> None:
         if self._transfer_pending:
             self._wait_and_write()
         if self._count > 0:
@@ -213,7 +226,11 @@ class AsyncBatchWriter:
                     pass
         self.h5.close()
 
-def check_condensation_kspace(psi, xp):
+
+# ── Condensation check ────────────────────────────────────────────────────────
+
+def check_condensation_kspace(psi: object, xp: object) -> float:
+    """Return the k=0 power fraction of *psi* (FFT-based)."""
     psi_k = xp.fft.fft2(psi)
     power = xp.abs(psi_k) ** 2
     k0_power = float(power[0, 0])
@@ -223,55 +240,50 @@ def check_condensation_kspace(psi, xp):
     return k0_power / total_power
 
 
-def compute_batch_size(ny, nx):
+# ── Batch-size heuristic ──────────────────────────────────────────────────────
+
+def compute_batch_size(ny: int, nx: int) -> int:
+    """Estimate a safe HDF5 write-buffer depth for the current GPU.
+
+    Conservative by design: uses 75 % of free GPU memory after reserving
+    ``RESERVED_GPU_GB`` GB for other allocations.  Falls back to small
+    values on shared GPUs or when CUDA is unavailable.
+
+    Parameters
+    ----------
+    ny, nx : int
+        Spatial grid dimensions.
+
+    Returns
+    -------
+    int
+        Batch depth in frames, clamped to [100, 10000].
+    """
     xp = compute_engine.xp
     if not hasattr(xp, "cuda"):
-        return 2000
+        return 500  # CPU path: memory is not a constraint but keep it moderate.
     free = xp.cuda.Device().mem_info[0]
-    usable = free - int(RESERVED_GPU_GB * 1024**3)
-    frame_bytes = ny * nx * (16 + 8 + 8 + 8)
-    batch = usable // (2 * frame_bytes)
-    return max(500, min(int(batch), 15000))
+    usable = max(0, free - int(RESERVED_GPU_GB * 1024**3))
+    if usable == 0:
+        return 100  # Extremely memory-constrained — last resort.
+    frame_bytes = ny * nx * (16 + 8 + 8 + 8)  # psi(c128) + nI,nA,Pump(f64)
+    # Double-buffer with 0.75 safety margin for fragmentation.
+    batch = int(usable * 0.75) // (2 * frame_bytes)
+    return max(100, min(batch, 10000))
 
 
-def build_base_config(opt):
-    return Config(
-        grid=GridParameters(
-            nx=opt["nx"],
-            ny=opt["ny"],
-            lx=opt["lx"],
-            ly=opt["ly"],
-            grid_type="periodic",
-        ),
-        boundary_condition=BoundaryConditionParameters(absorption="cap"),
-        potential=PotentialParameters(potential_type="zero"),
-        physics=PhysicsConstants(),
-        laser=LaserParameters(
-            mode="single",
-            laser_type="pulse-gaussian",
-            P0=opt["P_optimal"],
-            Pmax=opt["P_optimal"],
-            x0=0.0,
-            y0=0.0,
-            sigma_space=opt["sigma_space"],
-            sigma_time=opt["sigma_time"],
-            pulse_separation=opt["pulse_separation"],
-            cutoff_sigma=opt["cutoff_sigma"],
-        ),
-        reservoir=ReservoirParameters(reservoir_type="double"),
-        solver=SolverParameters(
-            total_time=opt["t_max"], dt=opt["dt"], method="rk4-cuda"
-        ),
-        result=ResultParameters(real_time_view=False, save_results=False),
-        compute_engine=ComputeEngineParameters(use_gpu=True),
-    )
+# ── Internal pump helpers ─────────────────────────────────────────────────────
 
-
-def _precompute_spatial_profiles(lasers, grid):
+def _precompute_spatial_profiles(lasers: list, grid: object) -> list:
     return [laser._P_space(grid.X, grid.Y) for laser in lasers]
 
 
-def _p_time_pure(t, pulse_separation, cutoff_sigma, sigma_time):
+def _p_time_pure(
+    t: float,
+    pulse_separation: float,
+    cutoff_sigma: float,
+    sigma_time: float,
+) -> float:
     n = round(t / pulse_separation)
     dt_val = t - n * pulse_separation
     if abs(dt_val) > cutoff_sigma * sigma_time:
@@ -279,37 +291,72 @@ def _p_time_pure(t, pulse_separation, cutoff_sigma, sigma_time):
     return math.exp(-0.5 * (dt_val / sigma_time) ** 2)
 
 
-def _precompute_spatial_maxes(profiles, xp):
+def _precompute_spatial_maxes(profiles: list, xp: object) -> list:
     return [float(xp.max(p)) for p in profiles]
 
 
-def _compute_pump_fast(lasers, profiles, spatial_maxes, t, xp, P_zero):
+def _compute_pump_fast(
+    lasers: list,
+    profiles: list,
+    spatial_maxes: list,
+    t: float,
+    xp: object,
+    P_zero: object,
+) -> tuple:
     P_total = P_zero.copy()
     per_laser_max = []
-
     for i, laser in enumerate(lasers):
         t_eff = t - laser.delay
         if t_eff < 0:
             per_laser_max.append(0.0)
             continue
-
         amp = laser._amplitude(t_eff)
         pt = _p_time_pure(t_eff, laser.pulse_separation, laser.cutoff_sigma, laser.sigma_time)
         temporal = float(amp) * pt
         if temporal == 0.0:
             per_laser_max.append(0.0)
             continue
-
         P_total += temporal * profiles[i]
         per_laser_max.append(temporal * spatial_maxes[i])
-
     return P_total, per_laser_max
 
 
-def run_simulation(routine_name, lasers, opt, batch_size, output_dir=None):
-    cfg = build_base_config(opt)
+# ── Main simulation entry point ───────────────────────────────────────────────
+
+def run_simulation_from_config(
+    routine_name: str,
+    lasers: list,
+    cfg: Config,
+    batch_size: int,
+    output_dir: str,
+) -> float | None:
+    """Run a simulation with an explicit ``Config`` object.
+
+    Parameters
+    ----------
+    routine_name : str
+        Output filename stem — HDF5 is written as ``<output_dir>/<routine_name>.h5``.
+    lasers : list
+        Laser instances (e.g. ``PulseGaussian``).
+    cfg : Config
+        Fully constructed simulation config from :mod:`pipeline.config.builder`.
+    batch_size : int
+        HDF5 write-buffer depth in frames; use :func:`compute_batch_size`.
+    output_dir : str
+        Directory for the output HDF5 file.  Must already exist.
+
+    Returns
+    -------
+    float or None
+        Condensation time in ps, or ``None`` if no condensation detected.
+
+    Raises
+    ------
+    Exception
+        Any simulation-loop exception is logged and re-raised so the calling
+        Slurm job exits nonzero.
+    """
     xp = compute_engine.xp
-    out_base = output_dir if output_dir else SCRIPT_DIR
 
     grid = create_grid(cfg.grid)
     bc = BoundaryCondition(grid, cfg.boundary_condition, cfg.physics)
@@ -337,10 +384,9 @@ def run_simulation(routine_name, lasers, opt, batch_size, output_dir=None):
 
     n_steps = int(cfg.solver.total_time / cfg.solver.dt)
     dt = cfg.solver.dt
+    print(f"    n_steps={n_steps:,}, dt={dt}")
 
-    print(f"    n_steps={n_steps}, dt={dt}")
-
-    out_path = os.path.join(out_base, f"{routine_name}.h5")
+    out_path = os.path.join(output_dir, f"{routine_name}.h5")
     writer = AsyncBatchWriter(out_path, batch_size, grid.ny, grid.nx)
 
     scalar_names = ["psi_sq_max", "nI_max", "nA_max", "k0_frac", "P_max"]
@@ -357,6 +403,7 @@ def run_simulation(routine_name, lasers, opt, batch_size, output_dir=None):
     t_cond = None
     condensed = False
     last_t = 0.0
+    step = 0
 
     try:
         for step in trange(n_steps, desc=f"  {routine_name}"):
@@ -366,7 +413,6 @@ def run_simulation(routine_name, lasers, opt, batch_size, output_dir=None):
             P_total, per_laser_max = _compute_pump_fast(
                 lasers, spatial_profiles, spatial_maxes, t, xp, P_zero
             )
-
             solver.step(potential, P_total, reservoir, bc, state)
 
             if (
@@ -389,7 +435,6 @@ def run_simulation(routine_name, lasers, opt, batch_size, output_dir=None):
                     if step % CHECK_EVERY == 0
                     else 0.0
                 )
-
                 scalars = {
                     "psi_sq_max": float(xp.max(psi_sq)),
                     "nI_max": float(xp.max(nI)),
@@ -399,7 +444,6 @@ def run_simulation(routine_name, lasers, opt, batch_size, output_dir=None):
                 }
                 for li, lp in enumerate(per_laser_max):
                     scalars[f"P_max_{li}"] = lp
-
                 writer.record(
                     (step + 1) * dt,
                     {"psi": state.psi, "nI": nI, "nA": nA, "Pump": P_total},
@@ -408,6 +452,7 @@ def run_simulation(routine_name, lasers, opt, batch_size, output_dir=None):
     except Exception as e:
         print(f"\n    ERROR at step {step}, t={last_t:.2f} ps: {e}")
         traceback.print_exc()
+        raise
     finally:
         writer.close()
 
@@ -416,5 +461,3 @@ def run_simulation(routine_name, lasers, opt, batch_size, output_dir=None):
         f"last_t={last_t:.1f} ps, t_cond={t_cond})"
     )
     return t_cond
-
-

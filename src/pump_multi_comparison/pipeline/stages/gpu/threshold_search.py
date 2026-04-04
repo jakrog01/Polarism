@@ -1,3 +1,13 @@
+"""GPU stage: threshold search.
+
+Scans the (power, sigma_time, pulse_separation) parameter space for the
+minimum pump power that drives condensation.  Outputs
+``threshold_result.json`` to the run directory.
+
+Invoked by Slurm as:
+    python -m pipeline.stages.gpu.threshold_search \\
+        --config <run_dir>/config.yaml --run-dir <run_dir>
+"""
 from __future__ import annotations
 
 import argparse
@@ -6,12 +16,10 @@ import math
 import os
 import sys
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-
-from config_loader import get_threshold_search_cfg, load_config, make_dataclass
-
+from pipeline.config.loader import get_threshold_search_cfg, load_config, make_dataclass
+from pipeline.manifest.io import atomic_write_json, set_manifest_field
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import (
@@ -33,68 +41,54 @@ from polarism.reservoir.create_reservoir import create_reservoir
 from polarism.simulation_state import SimulationState
 from polarism.solver.create_solver import create_solver
 
-if TYPE_CHECKING:
-    pass
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-
 COND_GROWTH_FACTOR = 1e6
 CHECK_EVERY = 500
 MIN_CHECK_TIME = 50.0
 RNG_SEED = 42
 
 
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
 def _build_config(global_cfg: dict[str, Any], t_max: float, dt: float) -> Config:
+    """Build a Config sized for the threshold search (coarser dt, shorter time)."""
     defaults = global_cfg.get("laser_defaults", {})
     return Config(
         grid=make_dataclass(GridParameters, global_cfg.get("grid", {})),
         boundary_condition=make_dataclass(
-            BoundaryConditionParameters,
-            global_cfg.get("boundary_condition", {}),
+            BoundaryConditionParameters, global_cfg.get("boundary_condition", {})
         ),
         potential=PotentialParameters(potential_type="zero"),
         physics=make_dataclass(PhysicsConstants, global_cfg.get("physics", {})),
         laser=LaserParameters(
             mode="single",
             laser_type="pulse-gaussian",
-            P0=1.0,
-            Pmax=1.0,
-            x0=0.0,
-            y0=0.0,
+            P0=1.0, Pmax=1.0, x0=0.0, y0=0.0,
             sigma_space=defaults.get("sigma_space", 5.0),
             sigma_time=1.0,
             pulse_separation=10.0,
             cutoff_sigma=defaults.get("cutoff_sigma", 3.0),
         ),
-        reservoir=make_dataclass(
-            ReservoirParameters,
-            global_cfg.get("reservoir", {}),
-        ),
-        solver=SolverParameters(
-            total_time=t_max,
-            dt=dt,
-            method=global_cfg.get("solver", {}).get("method", "rk4-cuda"),
-        ),
+        reservoir=make_dataclass(ReservoirParameters, global_cfg.get("reservoir", {})),
+        solver=SolverParameters(total_time=t_max, dt=dt,
+                                method=global_cfg.get("solver", {}).get("method", "rk4-cuda")),
         result=ResultParameters(real_time_view=False, save_results=False),
         compute_engine=ComputeEngineParameters(use_gpu=True),
     )
 
 
 class _SearchInfra:
-    xp: Any
-    n_steps: int
-    dt: float
-    N_initial: float
+    """Reusable simulation infrastructure for the threshold scan.
+
+    Grid, solver, boundary conditions and potential are built once and
+    shared across all parameter evaluations.  A fresh wavefunction state
+    is generated per evaluation via :meth:`fresh_state`.
+    """
 
     def __init__(self, global_cfg: dict[str, Any], t_max: float, dt: float) -> None:
         cfg = _build_config(global_cfg, t_max, dt)
         self.xp = compute_engine.xp
         self.grid = create_grid(cfg.grid)
-        self.bc = BoundaryCondition(
-            self.grid,
-            cfg.boundary_condition,
-            cfg.physics,
-        )
+        self.bc = BoundaryCondition(self.grid, cfg.boundary_condition, cfg.physics)
         self.solver = create_solver(cfg, self.grid)
         self.physics = cfg.physics
         self.reservoir_kw = global_cfg.get("reservoir", {})
@@ -126,12 +120,8 @@ class _SearchInfra:
         return state
 
 
-def _p_time_pure(
-    t: float,
-    pulse_separation: float,
-    cutoff_sigma: float,
-    sigma_time: float,
-) -> float:
+def _p_time_pure(t: float, pulse_separation: float,
+                 cutoff_sigma: float, sigma_time: float) -> float:
     n = round(t / pulse_separation)
     dt_val = t - n * pulse_separation
     if abs(dt_val) > cutoff_sigma * sigma_time:
@@ -147,6 +137,14 @@ def evaluate_threshold(
     sigma_space: float,
     cutoff_sigma: float,
 ) -> dict[str, Any]:
+    """Evaluate one parameter combination for condensation.
+
+    Returns
+    -------
+    dict
+        Keys: ``condensed`` (bool), and either ``t_cond`` (float) or
+        ``reason`` (str).
+    """
     xp = infra.xp
     grid = infra.grid
     dt = infra.dt
@@ -155,16 +153,10 @@ def evaluate_threshold(
         return {"condensed": False, "reason": "pulses_overlap"}
 
     laser_cfg = LaserParameters(
-        mode="single",
-        laser_type="pulse-gaussian",
-        P0=power,
-        Pmax=power,
-        x0=0.0,
-        y0=0.0,
-        sigma_space=sigma_space,
-        sigma_time=sigma_time,
-        pulse_separation=pulse_sep,
-        cutoff_sigma=cutoff_sigma,
+        mode="single", laser_type="pulse-gaussian",
+        P0=power, Pmax=power, x0=0.0, y0=0.0,
+        sigma_space=sigma_space, sigma_time=sigma_time,
+        pulse_separation=pulse_sep, cutoff_sigma=cutoff_sigma,
     )
     laser = PulseGaussian(laser_cfg, grid.X, grid.Y)
     spatial_profile = laser._P_space(grid.X, grid.Y)
@@ -173,8 +165,7 @@ def evaluate_threshold(
     state = infra.fresh_state()
     reservoir = create_reservoir(
         make_dataclass(ReservoirParameters, infra.reservoir_kw),
-        infra.physics,
-        grid,
+        infra.physics, grid,
     )
 
     for step in range(infra.n_steps):
@@ -182,29 +173,29 @@ def evaluate_threshold(
         amp = laser._amplitude(t)
         pt = _p_time_pure(t, pulse_sep, cutoff_sigma, sigma_time)
         temporal = float(amp) * pt
-
         P_total = P_zero if temporal == 0.0 else temporal * spatial_profile
         infra.solver.step(infra.potential, P_total, reservoir, infra.bc, state)
 
         if step > 0 and step % CHECK_EVERY == 0:
             t_now = (step + 1) * dt
             N_total = float(xp.sum(xp.abs(state.psi) ** 2))
-
             if math.isnan(N_total) or math.isinf(N_total):
                 return {"condensed": False, "reason": "diverged"}
-
-            if (
-                t_now >= MIN_CHECK_TIME
-                and N_total > infra.N_initial * COND_GROWTH_FACTOR
-            ):
+            if t_now >= MIN_CHECK_TIME and N_total > infra.N_initial * COND_GROWTH_FACTOR:
                 return {"condensed": True, "t_cond": t_now}
 
     return {"condensed": False, "reason": "no_condensation"}
 
 
+# ── Stage entrypoint ──────────────────────────────────────────────────────────
+
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, required=True)
+    parser = argparse.ArgumentParser(description="GPU threshold search stage")
+    parser.add_argument("--config", required=True)
+    parser.add_argument(
+        "--run-dir", required=True,
+        help="Run directory; threshold_result.json is written here.",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -222,7 +213,6 @@ def main() -> None:
 
     sigma_space: float = defaults.get("sigma_space", 5.0)
     cutoff_sigma: float = defaults.get("cutoff_sigma", 3.0)
-
     power_values = sorted(ts["power_values"])
     sigma_time_values: list[float] = ts["sigma_time_values"]
     pulse_sep_values = sorted(ts["pulse_separation_values"], reverse=True)
@@ -232,18 +222,15 @@ def main() -> None:
     print("=" * 60)
     print(" Threshold Search")
     print("=" * 60)
-    print(
-        f"  t_max (search) : {search_t_max:.1f} ps  "
-        f"({cond_frac * 100:.0f}% of {total_time:.0f} ps)"
-    )
+    print(f"  Run dir        : {args.run_dir}")
+    print(f"  t_max (search) : {search_t_max:.1f} ps  ({cond_frac * 100:.0f}% of {total_time:.0f} ps)")
     print(f"  dt (search)    : {search_dt}")
     print(f"  Wall-clock cap : {ts['max_runtime_minutes']} min")
-    print(f"  Powers (asc)   : {power_values}")
-    print(f"  Pulse seps (d) : {pulse_sep_values}")
+    print(f"  Powers         : {power_values}")
+    print(f"  Pulse seps     : {pulse_sep_values}")
     print(f"  sigma_times    : {sigma_time_values}")
     print()
 
-    print("  Building search infrastructure...")
     infra = _SearchInfra(g, search_t_max, search_dt)
     print(f"  Grid {infra.grid.nx}x{infra.grid.ny}, {infra.n_steps} steps\n")
 
@@ -262,24 +249,16 @@ def main() -> None:
                 if elapsed > max_wall:
                     print(f"\n  Wall-clock limit reached ({elapsed:.0f}s)")
                     break
-
                 if cutoff_sigma * sigma_time >= pulse_sep / 2.0:
                     continue
 
                 tested += 1
-                label = (
-                    f"T_sep={pulse_sep:5.1f}  P={power:6.1f}  "
-                    f"sigma_t={sigma_time:.2f}"
-                )
+                label = (f"T_sep={pulse_sep:5.1f}  P={power:6.1f}  "
+                         f"sigma_t={sigma_time:.2f}")
                 print(f"  [{tested:3d}] {label} ... ", end="", flush=True)
 
                 result = evaluate_threshold(
-                    infra,
-                    power,
-                    sigma_time,
-                    pulse_sep,
-                    sigma_space,
-                    cutoff_sigma,
+                    infra, power, sigma_time, pulse_sep, sigma_space, cutoff_sigma
                 )
 
                 if result["condensed"]:
@@ -317,16 +296,24 @@ def main() -> None:
         print("\n  ERROR: no parameter combination achieved condensation!")
         print("  Consider increasing power range or condensation_fraction.")
 
-    out_path = os.path.join(SCRIPT_DIR, "threshold_result.json")
-    with open(out_path, "w") as f:
-        json.dump(output, f, indent=2)
-
+    out_path = os.path.join(args.run_dir, "threshold_result.json")
+    atomic_write_json(out_path, output)
     print(f"\n  Saved: {out_path}")
+
     if best:
         print(f"  P_threshold   = {best['P_threshold']:.1f}")
         print(f"  sigma_time    = {best['sigma_time']:.2f} ps")
         print(f"  pulse_sep     = {best['pulse_separation']:.1f} ps")
         print(f"  t_cond        = {best['t_cond']:.1f} ps")
+        try:
+            set_manifest_field(args.run_dir, "threshold_complete", True)
+            set_manifest_field(args.run_dir, "threshold_result", {
+                "P_threshold": best["P_threshold"],
+                "sigma_time": best["sigma_time"],
+                "pulse_separation": best["pulse_separation"],
+            })
+        except Exception as exc:
+            print(f"  WARNING: could not update manifest: {exc}", file=sys.stderr)
 
     sys.exit(0 if best else 1)
 
