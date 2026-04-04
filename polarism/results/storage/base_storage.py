@@ -30,19 +30,19 @@ class BaseStorage(ABC):
         self.scalar_group_buffers = {}
 
     def add_to_batch(self, t: float, nodes: list, **context) -> None:
+        cached = context.get("cached", {})
         self.time_buffer.append(t)
 
         for node in nodes:
             if not node.save:
                 continue
 
+            field, reduced = cached[node.name]
             if node.is_field:
-                field = node.compute_field_cpu(**context)
                 if node.name not in self.field_buffers:
                     self.field_buffers[node.name] = []
                 self.field_buffers[node.name].append(field)
             else:
-                reduced = node.compute_reduced_cpu(**context)
                 if node.name not in self.scalar_buffers:
                     self.scalar_buffers[node.name] = []
                 self.scalar_buffers[node.name].append(float(reduced))

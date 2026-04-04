@@ -12,12 +12,15 @@ class VisualizationVisitor(ResultVisitor):
         self.visualizer = visualizer
 
     def visit_all(self, nodes: list[ResultNode], **context):
+        cached = context.get("cached", {})
         fields = {}
         scalars = {}
         scalar_groups = {}
 
         for node in nodes:
-            field, reduced = node.compute_cpu(**context)
+            if not node.expose:
+                continue
+            field, reduced = cached[node.name]
             if getattr(node, "cmap", None) is not None:
                 fields[node.name] = field
             else:
