@@ -30,13 +30,12 @@ class AbsorptionStrategy(ABC):
 
 
 def create_absorption_profile(
-    shape, cfg_absorption: BoundaryConditionParameters
+    ny: int, nx: int, cfg_absorption: BoundaryConditionParameters
 ) -> Union[np.ndarray, cp.ndarray]:
-    nx, ny = shape
     xp = compute_engine.xp
 
     if cfg_absorption.mask_width_percent <= 0:
-        return xp.zeros(shape)
+        return xp.zeros((ny, nx))
 
     width_x = max(1, int(nx * cfg_absorption.mask_width_percent))
     width_y = max(1, int(ny * cfg_absorption.mask_width_percent))
@@ -65,6 +64,6 @@ def create_absorption_profile(
     profile_y[:width_y] = ramp_y_1d[::-1]
     profile_y[-width_y:] = ramp_y_1d
 
-    profile_2d = xp.maximum(profile_x[:, xp.newaxis], profile_y[xp.newaxis, :])
+    profile_2d = xp.maximum(profile_y[:, xp.newaxis], profile_x[xp.newaxis, :])
 
     return profile_2d
