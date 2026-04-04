@@ -26,8 +26,7 @@ class AbsorptionMaskStrategy(AbsorptionStrategy):
         absorption_cfg: BoundaryConditionParameters,
         physics_constants: PhysicsConstants | None = None
     ):
-        shape = (grid.nx, grid.ny)
-        self.absorption_profile = create_absorption_profile(shape, absorption_cfg)
+        self.absorption_profile = create_absorption_profile(grid.ny, grid.nx, absorption_cfg)
         self.mask = 1.0 - self.absorption_profile
 
     def get_potential_distribution(self):

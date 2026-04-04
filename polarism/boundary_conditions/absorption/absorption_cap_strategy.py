@@ -28,8 +28,7 @@ class AbsorptionCapStrategy(AbsorptionStrategy):
         absorption_cfg: BoundaryConditionParameters,
         physics_constants: PhysicsConstants,
     ):
-        shape = (grid.nx, grid.ny)
-        self.absorption_profile = create_absorption_profile(shape, absorption_cfg)
+        self.absorption_profile = create_absorption_profile(grid.ny, grid.nx, absorption_cfg)
         self.potential_dist = (
             -0.5j
             * physics_constants.hbar

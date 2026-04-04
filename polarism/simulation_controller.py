@@ -37,7 +37,8 @@ def _compute_density(**ctx):
 
 def _compute_total_norm(**ctx):
     xp = compute_engine.xp
-    return float((xp.abs(ctx["state"].psi) ** 2).sum())
+    grid = ctx["grid"]
+    return float((xp.abs(ctx["state"].psi) ** 2).sum()) * grid.dx * grid.dy
 
 
 def _compute_pump_field(**ctx):
@@ -60,7 +61,10 @@ class SimulationController:
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
+        compute_engine.configure(cfg.compute_engine)
         self.xp = compute_engine.xp
+
+        check_solver_compatibility(cfg)
 
         self.grid = create_grid(cfg.grid)
         self.boundary_condition = BoundaryCondition(
@@ -71,7 +75,6 @@ class SimulationController:
         self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid)
         self.state = SimulationState(self.grid, cfg.physics.init_eps)
         self.solver = create_solver(cfg, self.grid)
-        check_solver_compatibility(cfg)
         self.max_laser_power = self._compute_max_laser_power()
 
         cap = self.boundary_condition.before_step_action()
@@ -220,7 +223,6 @@ class SimulationController:
                     self.state,
                 )
 
-                # After stepping, state represents time (step+1)*dt
                 t_after = (step + 1) * dt
                 self.state.t = t_after
 
@@ -241,9 +243,11 @@ class SimulationController:
                     break
 
                 if should_save or should_viz:
+                    P_total = self._compute_total_pump(t_after)
                     self.results_manager.step(
                         t_after,
                         state=self.state,
+                        grid=self.grid,
                         P_total=P_total,
                         scalar_groups=(
                             self._get_scalar_groups(t_after)
