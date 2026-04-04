@@ -1,3 +1,4 @@
+"""Legacy scenario runner."""
 from __future__ import annotations
 
 import argparse
@@ -46,6 +47,7 @@ _original_build_base_config = simulate.build_base_config
 
 
 def _patched_build_base_config(opt: dict[str, Any]) -> Any:
+    """Patch the legacy base config with overrides."""
     cfg = _original_build_base_config(opt)
     for attr, key in [
         (cfg.physics, "_physics_overrides"),
@@ -62,6 +64,7 @@ def _patched_build_base_config(opt: dict[str, Any]) -> Any:
 
 
 def load_threshold_result() -> dict[str, Any]:
+    """Load the saved threshold-search result."""
     path = os.path.join(SCRIPT_DIR, "threshold_result.json")
     with open(path) as f:
         return json.load(f)
@@ -72,6 +75,7 @@ def build_opt_dict(
     threshold: dict[str, Any],
     scenario: dict[str, Any],
 ) -> dict[str, Any]:
+    """Build the legacy option dict for one scenario."""
     g = cfg["global"]
     defaults = get_laser_defaults(cfg)
     return {
@@ -112,6 +116,7 @@ def build_scenario_lasers(
     grid: SimulationGrid2D,
     rng: np.random.Generator,
 ) -> tuple[list[Any], list[float]]:
+    """Build the lasers for one scenario."""
     defaults = get_laser_defaults(cfg)
     p_th: float = threshold["P_threshold"]
     th_sigma_time: float = threshold.get("sigma_time", 1.0)
@@ -149,6 +154,7 @@ def build_scenario_lasers(
 
 
 def setup_workdir() -> str:
+    """Create a scratch work directory."""
     tmpdir = os.environ.get("TMPDIR")
     scratch = os.environ.get("SCRATCH")
     if tmpdir and os.path.isdir(tmpdir):
@@ -164,6 +170,7 @@ def setup_workdir() -> str:
 
 
 def copy_back(work_dir: str, scenario_name: str) -> None:
+    """Copy result files back from the work directory."""
     if work_dir == SCRIPT_DIR:
         return
     print(f"\n  Copying results back to {SCRIPT_DIR} ...")
@@ -187,6 +194,7 @@ def copy_back(work_dir: str, scenario_name: str) -> None:
 
 
 def run_visualization(scenario_name: str, extent: list[float]) -> None:
+    """Render the legacy scenario outputs."""
     visualize.DATA_DIR = SCRIPT_DIR
     visualize.RESULTS_DIR = os.path.join(SCRIPT_DIR, "results")
 
@@ -207,6 +215,7 @@ def run_visualization(scenario_name: str, extent: list[float]) -> None:
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--scenario", type=str, required=True)

@@ -1,3 +1,4 @@
+"""CUDA RK4 solver kernels and driver code."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -307,6 +308,7 @@ def build_kernel_source_1d(
     combine_preamble: str = COMBINE_PREAMBLE_1D,
     launch_bounds: str = "",
 ) -> tuple[str, str, str]:
+    """Build the 1D CUDA kernel source."""
     neighbor_code = (
         _NEUMANN_NEIGHBORS if bc_type == "closed-interval" else _PERIODIC_NEIGHBORS
     )
@@ -334,6 +336,7 @@ def build_kernel_source_1d(
 
 
 def _auto_tune_block_size(kern_rhs, _N: int) -> int:
+    """Pick a CUDA block size for the kernel."""
     candidates = [128, 256, 512]
     best_block = 256
     best_occupancy = 0
@@ -353,6 +356,7 @@ class RK4CudaSolver(AbstractSolver):
     """Generic fused RK4 CUDA solver with overridable kernel and launch hooks."""
 
     def __init__(self, config: Config, grid: SimulationGrid2D):
+        """Set up the rk 4 cuda solver."""
         super().__init__(config)
         self.nx = grid.nx
         self.ny = grid.ny
@@ -434,17 +438,21 @@ class RK4CudaSolver(AbstractSolver):
     def _build_kernel_source(
         self, bc_type: str, real_type: str, reservoir_type: str
     ) -> tuple[str, str, str]:
+        """Build the CUDA kernel source."""
         return build_kernel_source_1d(bc_type, real_type, reservoir_type)
 
     def _select_block_size(self) -> int:
+        """Pick the CUDA block size."""
         return _auto_tune_block_size(self._kern_rhs, self.N)
 
     def _make_launch_dims(self, block_size: int) -> None:
+        """Set the CUDA launch dimensions."""
         grid = (self.N + block_size - 1) // block_size
         self._k_grid = (grid,)
         self._k_block = (block_size,)
 
     def _compile_kernels(self) -> None:
+        """Compile the CUDA kernels."""
         import cupy as cp
 
         rhs_src, fused_src, combine_src = self._build_kernel_source(
@@ -464,6 +472,7 @@ class RK4CudaSolver(AbstractSolver):
         self._make_launch_dims(block)
 
     def _init_gpu_buffers(self) -> None:
+        """Allocate GPU work buffers."""
         xp = self.xp
         N = self.N
 
@@ -507,6 +516,7 @@ class RK4CudaSolver(AbstractSolver):
         return arr
 
     def _gpu_rhs(self, psi, nR, V, pump, out_dpsi, out_dnR):
+        """Compute the right-hand side."""
         self._kern_rhs(
             self._k_grid, self._k_block,
             (
@@ -520,6 +530,7 @@ class RK4CudaSolver(AbstractSolver):
         )
 
     def _gpu_fused_stage_rhs(self, psi0, k_psi, nR0, k_nR, c_dt, V, pump, out_dpsi, out_dnR):
+        """Compute one staged right-hand side on the GPU."""
         self._kern_fused(
             self._k_grid, self._k_block,
             (
@@ -536,6 +547,7 @@ class RK4CudaSolver(AbstractSolver):
     def _gpu_combine(
         self, psi0, k1p, k2p, k3p, k4p, nR0, k1n, k2n, k3n, k4n, psi_out, nR_out
     ):
+        """Combine RK4 stages on the GPU."""
         self._kern_combine(
             self._k_grid, self._k_block,
             (
@@ -548,6 +560,7 @@ class RK4CudaSolver(AbstractSolver):
         )
 
     def _step_gpu(self, V, pump, nR_buf, psi_buf):
+        """Run one RK4 step on the GPU."""
         psi0 = self._psi0
         nR0 = self._nA0
 
@@ -576,6 +589,7 @@ class RK4CudaSolver(AbstractSolver):
         )
 
     def _gpu_rhs_double(self, psi, nA, nI, V, pump, out_dpsi, out_dnA, out_dnI):
+        """Compute the right-hand side."""
         self._kern_rhs(
             self._k_grid, self._k_block,
             (
@@ -594,6 +608,7 @@ class RK4CudaSolver(AbstractSolver):
         self, psi0, k_psi, nA0, k_nA, nI0, k_nI, c_dt, V, pump,
         out_dpsi, out_dnA, out_dnI,
     ):
+        """Compute one staged right-hand side on the GPU."""
         self._kern_fused(
             self._k_grid, self._k_block,
             (
@@ -616,6 +631,7 @@ class RK4CudaSolver(AbstractSolver):
         nI0, k1i, k2i, k3i, k4i,
         psi_out, nA_out, nI_out,
     ):
+        """Combine RK4 stages on the GPU."""
         self._kern_combine(
             self._k_grid, self._k_block,
             (
@@ -629,6 +645,7 @@ class RK4CudaSolver(AbstractSolver):
         )
 
     def _step_gpu_double(self, V, pump, nA_buf, nI_buf, psi_buf):
+        """Run one RK4 step on the GPU."""
         psi0 = self._psi0
         nA0 = self._nA0
         nI0 = self._nI0
@@ -667,6 +684,7 @@ class RK4CudaSolver(AbstractSolver):
         )
 
     def _cpu_laplacian(self, psi, out):
+        """Apply the CPU Laplacian stencil."""
         xp = self.xp
         inv_dx2 = self._inv_dx2
         inv_dy2 = self._inv_dy2
@@ -720,6 +738,7 @@ class RK4CudaSolver(AbstractSolver):
         )
 
     def _cpu_psi_rhs(self, psi, n_active, V):
+        """Compute the psi right-hand side on the CPU."""
         xp = self.xp
         lap = xp.empty_like(psi)
         self._cpu_laplacian(psi, lap)
@@ -730,12 +749,14 @@ class RK4CudaSolver(AbstractSolver):
         return (-1j * self._inv_hbar) * (kinetic + eff * psi) + gl * psi
 
     def _cpu_rhs(self, psi, nR, V, pump):
+        """Compute the right-hand side."""
         dpsi = self._cpu_psi_rhs(psi, nR, V)
         rho = self.xp.abs(psi) ** 2
         dnR = pump - (self._gamma_R + self._R * rho) * nR
         return dpsi, dnR
 
     def _cpu_rhs_double(self, psi, nA, nI, V, pump):
+        """Compute the right-hand side."""
         dpsi = self._cpu_psi_rhs(psi, nA, V)
         rho = self.xp.abs(psi) ** 2
         dnI = pump - (self._gamma_I + self._R_IA) * nI + self._R_AI * nA
@@ -743,6 +764,7 @@ class RK4CudaSolver(AbstractSolver):
         return dpsi, dnA, dnI
 
     def _step_cpu(self, V, pump, reservoir, boundary_condition, state):
+        """Run one RK4 step on the CPU."""
         dt = self._dt
         psi0 = state.psi.copy()
         nR0 = reservoir.get_reservoir_density().copy()
@@ -758,6 +780,7 @@ class RK4CudaSolver(AbstractSolver):
         reservoir.set_state((nR_new,))
 
     def _step_cpu_double(self, V, pump, reservoir, boundary_condition, state):
+        """Run one RK4 step on the CPU."""
         dt = self._dt
         xp = self.xp
         psi0 = state.psi.copy()
@@ -791,6 +814,7 @@ class RK4CudaSolver(AbstractSolver):
         boundary_condition: BoundaryCondition,
         state: SimulationState,
     ) -> None:
+        """Advance the solver by one time step."""
         if not self._use_gpu:
             if self._reservoir_type == "double":
                 self._step_cpu_double(potential, pump, reservoir, boundary_condition, state)

@@ -1,3 +1,4 @@
+"""Public package exports for polarism."""
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.config import Config
 from polarism.laser.laser_factory import LaserFactory

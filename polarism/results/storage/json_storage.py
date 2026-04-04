@@ -1,3 +1,4 @@
+"""JSON result storage."""
 from __future__ import annotations
 
 import json
@@ -7,14 +8,17 @@ from polarism.results.storage.base_storage import BaseStorage
 
 
 class JSONStorage(BaseStorage):
+    """Store result batches in JSON files."""
     output_dir: Path
     batch_number: int
 
     def __init__(self, output_dir: Path, batch_size: int):
+        """Set up JSON batch storage."""
         super().__init__(output_dir, batch_size)
         self.batch_number = 0
 
     def dump_batch(self) -> None:
+        """Write the current batch to JSON."""
         if not self.time_buffer:
             return
 
@@ -45,5 +49,6 @@ class JSONStorage(BaseStorage):
         self._clear_buffers()
 
     def finalize(self) -> None:
+        """Flush remaining data and close JSON storage."""
         if self.batch_count > 0:
             self.dump_batch()

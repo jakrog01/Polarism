@@ -42,6 +42,7 @@ def _check_artifacts(run_dir: str, scenarios: list[str]) -> list[str]:
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description="CPU finalize / cross-scenario summary")
     parser.add_argument("--run-dir", required=True)
     args = parser.parse_args()

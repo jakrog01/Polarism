@@ -1,19 +1,7 @@
-"""Physics simulation kernel — GPU execution of the GPE/reservoir model.
+"""Physics simulation kernel for the GPE and reservoir model.
 
-This module is the physics layer.  It knows nothing about Slurm, config
-files, or the pipeline directory layout.  All I/O paths are passed
-explicitly by callers.
-
-Public API
-----------
-run_simulation_from_config(routine_name, lasers, cfg, batch_size, output_dir)
-    Run the simulation and write an HDF5 output file.
-compute_batch_size(ny, nx)
-    Estimate a safe HDF5 write-buffer depth for the current GPU.
-check_condensation_kspace(psi, xp)
-    FFT-based k=0 power-fraction condensation check.
-AsyncBatchWriter
-    Double-buffered GPU→CPU→HDF5 async writer.
+This module only handles the simulation work. It does not know about
+Slurm, config-file layout, or pipeline directories.
 """
 from __future__ import annotations
 
@@ -47,14 +35,14 @@ RNG_SEED = 42                # Reproducible initial noise.
 # ── HDF5 async writer ─────────────────────────────────────────────────────────
 
 class AsyncBatchWriter:
-    """Double-buffered GPU→CPU→HDF5 async frame writer.
+    """Write HDF5 frames with double buffering.
 
-    Uses CuPy pinned memory and non-blocking streams to overlap host-to-
-    device transfer with the simulation step, avoiding GPU stalls.
-    Falls back to synchronous copy when pinned memory is unavailable.
+    On GPU runs it uses pinned host buffers and a non-blocking stream when
+    that path is available. Otherwise it falls back to a normal copy.
     """
 
     def __init__(self, filepath: str, batch_size: int, ny: int, nx: int) -> None:
+        """Set up batch buffers and the HDF5 file."""
         self.xp = compute_engine.xp
         self.use_gpu = compute_engine.use_gpu
         self.batch_size = batch_size
@@ -120,9 +108,11 @@ class AsyncBatchWriter:
         self._flush_every = 10
 
     def register_scalar(self, name: str) -> None:
+        """Register one scalar series for output."""
         self._scalar_bufs[name] = []
 
     def record(self, t: float, fields: dict, scalars: dict, mode: int = 0) -> None:
+        """Record one frame in the active batch."""
         if self._transfer_pending:
             self._wait_and_write()
 
@@ -141,6 +131,7 @@ class AsyncBatchWriter:
             self._start_transfer()
 
     def _start_transfer(self) -> None:
+        """Start copying the active batch to host memory."""
         n = self._count
         buf = self._gpu[self._active]
 
@@ -166,6 +157,7 @@ class AsyncBatchWriter:
             self._scalar_bufs[k] = []
 
     def _wait_and_write(self) -> None:
+        """Wait for a pending copy and write it to disk."""
         if self._pinned:
             self._event.synchronize()
 
@@ -187,6 +179,7 @@ class AsyncBatchWriter:
             self._writes_since_flush = 0
 
     def _append(self, name: str, data: np.ndarray, scalar: bool) -> None:
+        """Append data to one HDF5 dataset."""
         if name not in self.datasets:
             if scalar:
                 self.datasets[name] = self.h5.create_dataset(
@@ -211,6 +204,7 @@ class AsyncBatchWriter:
             ds[old:] = data
 
     def close(self) -> None:
+        """Flush pending data and close the writer."""
         if self._transfer_pending:
             self._wait_and_write()
         if self._count > 0:
@@ -275,6 +269,7 @@ def compute_batch_size(ny: int, nx: int) -> int:
 # ── Internal pump helpers ─────────────────────────────────────────────────────
 
 def _precompute_spatial_profiles(lasers: list, grid: object) -> list:
+    """Precompute the spatial pump profile for each laser."""
     return [laser._P_space(grid.X, grid.Y) for laser in lasers]
 
 
@@ -284,6 +279,7 @@ def _p_time_pure(
     cutoff_sigma: float,
     sigma_time: float,
 ) -> float:
+    """Return the pulse envelope at time t."""
     n = round(t / pulse_separation)
     dt_val = t - n * pulse_separation
     if abs(dt_val) > cutoff_sigma * sigma_time:
@@ -292,6 +288,7 @@ def _p_time_pure(
 
 
 def _precompute_spatial_maxes(profiles: list, xp: object) -> list:
+    """Precompute the peak value of each spatial profile."""
     return [float(xp.max(p)) for p in profiles]
 
 
@@ -303,6 +300,7 @@ def _compute_pump_fast(
     xp: object,
     P_zero: object,
 ) -> tuple:
+    """Build the total pump field and per-laser peaks."""
     P_total = P_zero.copy()
     per_laser_max = []
     for i, laser in enumerate(lasers):
@@ -335,7 +333,8 @@ def run_simulation_from_config(
     Parameters
     ----------
     routine_name : str
-        Output filename stem — HDF5 is written as ``<output_dir>/<routine_name>.h5``.
+        Output filename stem. HDF5 is written as
+        ``<output_dir>/<routine_name>.h5``.
     lasers : list
         Laser instances (e.g. ``PulseGaussian``).
     cfg : Config

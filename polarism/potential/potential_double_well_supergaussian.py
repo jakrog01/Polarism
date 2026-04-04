@@ -1,3 +1,4 @@
+"""Double-well potential helpers."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -17,9 +18,11 @@ def potential_double_well_supergaussian(
     Y: "np.ndarray | cp.ndarray",
     cfg: PotentialParameters,
 ) -> "np.ndarray | cp.ndarray":
+    """Return the double-well super-Gaussian potential."""
     xp = compute_engine.xp
 
     def well(x0: float, y0: float, V0: float, w: float, order: float):
+        """Return one super-Gaussian well."""
         r2 = (X - x0) ** 2 + (Y - y0) ** 2
         return V0 * xp.exp(-((r2 / (w**2)) ** order))
 

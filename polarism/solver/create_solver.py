@@ -1,3 +1,4 @@
+"""Solver factory helpers."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -11,6 +12,7 @@ if TYPE_CHECKING:
 
 
 def create_solver(config: Config, grid: SimulationGrid2D) -> AbstractSolver:
+    """Create solver."""
     if config.solver.method not in available_solvers:
         raise ValueError(
             f"Unknown solver method: '{config.solver.method}'. "

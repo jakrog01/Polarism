@@ -1,3 +1,4 @@
+"""Uniform laser model."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -14,22 +15,27 @@ if TYPE_CHECKING:
 
 @register_laser("uniform")
 class UniformLaser(AbstractLaser):
+    """Represent an uniform laser."""
     def __init__(
         self,
         laser_config: LaserParameters,
         X: Union[np.ndarray, cp.ndarray],
         Y: Union[np.ndarray, cp.ndarray],
     ):
+        """Set up the uniform laser."""
         super().__init__(laser_config, X, Y)
 
     def _amplitude(self, t: float) -> float:
+        """Return the base laser amplitude at time t."""
         return self.P0
 
     def _P_space(
         self, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]
     ) -> Union[np.ndarray, cp.ndarray]:
+        """Return the spatial pump profile."""
         xp = compute_engine.xp
         return xp.ones_like(X, dtype=xp.float64)
 
     def _P_time(self, t: float) -> float:
+        """Return the time profile of the pump."""
         return 1.0

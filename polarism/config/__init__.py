@@ -1,3 +1,4 @@
+"""Public config exports."""
 from polarism.config.simulation_parameters import (
     BoundaryConditionParameters,
     Config,

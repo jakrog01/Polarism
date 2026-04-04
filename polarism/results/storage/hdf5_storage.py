@@ -1,3 +1,4 @@
+"""HDF5 result storage."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,17 +10,20 @@ from polarism.results.storage.base_storage import BaseStorage
 
 
 class HDF5Storage(BaseStorage):
+    """Store result batches in HDF5 files."""
     h5_path: Path
     h5_file: h5py.File
     h5_datasets: dict[str, h5py.Dataset]
 
     def __init__(self, output_dir: Path, batch_size: int):
+        """Open the HDF5 output file."""
         super().__init__(output_dir, batch_size)
         self.h5_path = self.output_dir / "results.h5"
         self.h5_file = h5py.File(self.h5_path, "w")
         self.h5_datasets = {}
 
     def dump_batch(self) -> None:
+        """Write the current batch to HDF5."""
         if not self.time_buffer:
             return
 
@@ -48,6 +52,7 @@ class HDF5Storage(BaseStorage):
         self.h5_file.flush()
 
     def _write_dataset(self, name: str, data: np.ndarray, is_scalar: bool) -> None:
+        """Write one dataset to the HDF5 file."""
         if name not in self.h5_datasets:
             if is_scalar:
                 self.h5_datasets[name] = self.h5_file.create_dataset(
@@ -77,6 +82,7 @@ class HDF5Storage(BaseStorage):
             ds[old_size:new_size] = data
 
     def finalize(self) -> None:
+        """Flush remaining data and close the HDF5 file."""
         if self.batch_count > 0:
             self.dump_batch()
 

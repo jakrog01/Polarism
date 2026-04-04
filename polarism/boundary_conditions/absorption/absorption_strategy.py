@@ -1,3 +1,4 @@
+"""Boundary absorption interfaces and helpers."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -14,24 +15,29 @@ if TYPE_CHECKING:
 
 
 class AbsorptionStrategy(ABC):
+    """Define the interface for boundary absorption."""
     @abstractmethod
     def __init__(self):
+        """Set up the absorption strategy."""
         pass
 
     @abstractmethod
     def get_potential_distribution(self) -> Union[np.ndarray, cp.ndarray]:
+        """Return potential distribution."""
         pass
 
     @abstractmethod
     def apply_absorption(
         self, psi: Union[np.ndarray, cp.ndarray]
     ) -> Union[np.ndarray, cp.ndarray]:
+        """Apply absorption."""
         return psi
 
 
 def create_absorption_profile(
     ny: int, nx: int, cfg_absorption: BoundaryConditionParameters
 ) -> Union[np.ndarray, cp.ndarray]:
+    """Create absorption profile."""
     xp = compute_engine.xp
 
     if cfg_absorption.mask_width_percent <= 0:

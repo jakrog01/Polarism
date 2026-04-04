@@ -1,3 +1,4 @@
+"""Interaction-picture RK4 solver."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -18,7 +19,9 @@ if TYPE_CHECKING:
 
 @register_solver("ip-rk4")
 class IPRK4Solver(AbstractSolver):
+    """Solve the model with interaction-picture RK4."""
     def __init__(self, config: Config, grid: SimulationGrid2D):
+        """Set up the iprk 4 solver."""
         super().__init__(config)
         dt = self.config.solver.dt
         hbar = self.config.physics.hbar
@@ -48,6 +51,7 @@ class IPRK4Solver(AbstractSolver):
         self._idctn = None
 
     def _load_dct(self):
+        """Load DCT helpers for closed-interval grids."""
         if self._dctn is None:
             try:
                 from scipy.fft import dctn, idctn
@@ -92,6 +96,7 @@ class IPRK4Solver(AbstractSolver):
         return self.xp.fft.ifft2(psi_k)
 
     def _nonlinear_rhs(self, psi, nR, potential):
+        """Compute the nonlinear right-hand side."""
         hbar = self.config.physics.hbar
         g_C = self.config.physics.g_C
         g_R = self.config.physics.g_R
@@ -112,6 +117,7 @@ class IPRK4Solver(AbstractSolver):
         boundary_condition: BoundaryCondition,
         state: SimulationState,
     ) -> None:
+        """Advance the solver by one time step."""
         dt = self.config.solver.dt
 
         psi0 = state.psi

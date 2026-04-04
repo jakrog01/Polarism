@@ -2,7 +2,7 @@
 
 Responsible for: reading YAML, resolving power expressions, extracting
 named sections from the config dict.  No validation, no dataclass
-construction — those live in validator.py and builder.py respectively.
+construction. Those live in validator.py and builder.py.
 """
 from __future__ import annotations
 

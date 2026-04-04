@@ -22,6 +22,7 @@ from pipeline.stages.cpu.viz_engine import FIELD_SPECS, generate_animation, gene
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description="CPU visualization for one scenario")
     parser.add_argument("--run-dir", required=True)
     parser.add_argument(

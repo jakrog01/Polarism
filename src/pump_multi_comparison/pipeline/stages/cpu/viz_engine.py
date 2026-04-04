@@ -1,20 +1,7 @@
-"""Visualization engine — pure rendering functions, no pipeline state.
+"""Pure rendering helpers for scenario outputs.
 
-All public functions accept explicit ``data_dir`` and ``results_dir``
-arguments.  There are no module-level directory globals that callers need
-to set.  This makes the engine testable and re-entrant.
-
-Rendering functions
--------------------
-generate_field_png(routine, field_key, extent, data_dir, results_dir)
-generate_animation(routine, extent, data_dir, results_dir)
-generate_summary(extent, routines, data_dir, results_dir)
-
-Low-level helpers
------------------
-open_h5(routine, data_dir)
-routine_dir(routine, results_dir)
-load_sorted_order(h5)
+All public functions take explicit data and result directories. The module
+does not keep pipeline state in globals.
 """
 from __future__ import annotations
 
@@ -35,6 +22,7 @@ from matplotlib.gridspec import GridSpec
 # ── ffmpeg detection ──────────────────────────────────────────────────────────
 
 def _find_ffmpeg() -> bool:
+    """Check whether ffmpeg is available."""
     import subprocess
 
     try:
@@ -95,10 +83,12 @@ def open_h5(routine: str, data_dir: str) -> h5py.File:
 
 
 def load_sorted_order(h5: h5py.File) -> np.ndarray:
+    """Load the frame order stored in the file."""
     return np.argsort(h5["time"][:], kind="stable")
 
 
 def _read_field_frame(h5: h5py.File, spec: dict, idx: int) -> np.ndarray:
+    """Read one field frame from the file."""
     raw = h5[f"fields/{spec['source']}"][idx]
     if spec["transform"] == "abs2":
         return np.abs(raw) ** 2
@@ -106,12 +96,14 @@ def _read_field_frame(h5: h5py.File, spec: dict, idx: int) -> np.ndarray:
 
 
 def pick_indices(n: int, count: int = SNAPSHOT_COUNT) -> list[int]:
+    """Pick evenly spaced snapshot indices."""
     if n <= count:
         return list(range(n))
     return [int(i * (n - 1) / (count - 1)) for i in range(count)]
 
 
 def _make_norm(spec: dict, vmin: float, vmax: float):
+    """Build the color normalization for a plot."""
     if spec.get("norm") == "power":
         return PowerNorm(gamma=PUMP_NORM_GAMMA, vmin=max(vmin, 1e-12), vmax=vmax)
     return None
@@ -270,6 +262,7 @@ def generate_animation(
     title_text = fig.suptitle("", fontsize=12, fontweight="bold")
 
     def update(frame_num: int):
+        """Redraw one animation frame."""
         idx = anim_indices[frame_num]
         for k in field_keys:
             images[k].set_data(preloaded[k][frame_num])

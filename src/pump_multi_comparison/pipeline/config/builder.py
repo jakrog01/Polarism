@@ -1,12 +1,7 @@
-"""Explicit simulation Config construction — no monkey-patching.
+"""Build typed ``Config`` objects for pipeline runs.
 
-Builds polarism ``Config`` objects from the pipeline config dict and
-threshold search results.  This is the authoritative place for translating
-YAML config + runtime results into typed dataclasses consumed by the
-simulation kernel.
-
-Separating this from the simulation kernel ensures the kernel never needs
-to know about the config-file schema.
+This module turns pipeline config data and threshold-search results into
+the dataclasses used by the simulation code.
 """
 from __future__ import annotations
 

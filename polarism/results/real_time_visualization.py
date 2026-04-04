@@ -1,3 +1,4 @@
+"""Live result plotting."""
 from __future__ import annotations
 
 import sys
@@ -13,6 +14,7 @@ from polarism.results.result_groups import Results2D, ResultScalar, ResultScalar
 
 
 class RealTimeVisualization:
+    """Plot fields and scalars during a run."""
     _initialized: bool
     _closed: bool
     _t: list[float]
@@ -43,6 +45,7 @@ class RealTimeVisualization:
         grid_extent: list[float],
         pause_s: float = 0.001,
     ):
+        """Set up live plots for the requested results."""
         self.fields_2d = fields_2d
         self.scalars = scalars
         self.scalar_groups = scalar_groups
@@ -60,6 +63,7 @@ class RealTimeVisualization:
         self._group_axes = {}
 
     def _init_figure(self) -> None:
+        """Create the matplotlib figure and artists."""
         n_fields = len(self.fields_2d)
         n_scalars = len(self.scalars) + len(self.scalar_groups)
         ncols = max(1, max(n_fields, n_scalars))
@@ -123,6 +127,7 @@ class RealTimeVisualization:
         scalars: dict[str, float] | None = None,
         scalar_groups: dict[str, dict[str, float]] | None = None,
     ) -> None:
+        """Update the plots with new fields and scalars."""
         if self._closed:
             return
         if not self._initialized:
@@ -185,4 +190,5 @@ class RealTimeVisualization:
             self._closed = True
 
     def _on_close(self, event) -> None:
+        """Mark the window as closed."""
         self._closed = True

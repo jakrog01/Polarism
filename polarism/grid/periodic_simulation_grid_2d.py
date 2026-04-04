@@ -1,3 +1,4 @@
+"""Periodic 2D simulation grids."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
 
 
 class PeriodicSimulationGrid2D:
+    """Store a periodic 2D simulation grid."""
     nx: int
     ny: int
     lx: float
@@ -27,6 +29,7 @@ class PeriodicSimulationGrid2D:
     k_squared: Union["np.ndarray", "cp.ndarray"]
 
     def __init__(self, cfg: GridParameters):
+        """Set up the periodic simulation grid 2 d."""
         xp = compute_engine.xp
 
         self.nx = cfg.nx

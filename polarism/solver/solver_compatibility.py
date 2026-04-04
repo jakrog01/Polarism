@@ -1,3 +1,4 @@
+"""Solver compatibility checks."""
 from __future__ import annotations
 
 import warnings
@@ -11,6 +12,7 @@ _SPECTRAL_SOLVERS = {"split-step-fft", "ip-rk4", "etd-rk2"}
 
 
 class _SolverCaps(TypedDict):
+    """Store capability flags for each solver."""
     grid_types: set[str]
     supports_potential: bool
     boundary_types: set[str]
@@ -87,6 +89,7 @@ class SolverCompatibilityError(RuntimeError):
 
 
 def check_solver_compatibility(cfg: Config) -> None:
+    """Check whether the solver matches the config."""
     solver = cfg.solver.method
     grid_type = getattr(cfg.grid, "grid_type", "periodic")
     potential_type = getattr(cfg.potential, "potential_type", "zero")
@@ -146,6 +149,7 @@ def check_solver_compatibility(cfg: Config) -> None:
 
 
 def _gpu_available() -> bool:
+    """Return whether the active backend exposes CUDA."""
     try:
         from polarism.compute_engine import compute_engine
 

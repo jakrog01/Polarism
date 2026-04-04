@@ -1,3 +1,4 @@
+"""Interfaces for objects that expose results."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -8,6 +9,8 @@ if TYPE_CHECKING:
 
 
 class ResultProvider(ABC):
+    """Define the interface for result providers."""
     @abstractmethod
     def make_result_nodes(self) -> list[ResultNode]:
+        """Build the result nodes exposed by this object."""
         raise NotImplementedError

@@ -1,3 +1,4 @@
+"""Boundary-condition helpers."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
 
 
 class BoundaryCondition:
+    """Apply boundary actions around each solver step."""
     absorption: AbsorptionStrategy
 
     def __init__(
@@ -25,14 +27,17 @@ class BoundaryCondition:
         boundary_conditions_config: BoundaryConditionParameters,
         physics_constants: PhysicsConstants,
     ):
+        """Set up the boundary absorption strategy."""
         self.absorption = create_absorption_strategy(
             grid, boundary_conditions_config, physics_constants
         )
 
     def before_step_action(self) -> Union[np.ndarray, cp.ndarray]:
+        """Return the boundary potential term."""
         return self.absorption.get_potential_distribution()
 
     def after_step_action(
         self, psi: Union[np.ndarray, cp.ndarray]
     ) -> Union[np.ndarray, cp.ndarray]:
+        """Apply the boundary action to psi."""
         return self.absorption.apply_absorption(psi)

@@ -206,6 +206,7 @@ def validate_slurm_env(env_path: str) -> list[str]:
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(
         description="Validate pipeline config and Slurm env before submission"
     )

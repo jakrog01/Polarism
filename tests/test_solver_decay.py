@@ -1,3 +1,4 @@
+"""Solver decay tests."""
 import numpy as np
 import pytest
 
@@ -24,6 +25,7 @@ from tests._helpers import (
 @pytest.mark.parametrize("solver_cls", [RK4FDMSolver, SplitStepFFTSolver])
 @pytest.mark.parametrize("reservoir_cls", [SingleReservoir, DoubleReservoir])
 def test_zero_pump_exponential_decay(solver_cls, reservoir_cls, output_dir):
+    """Test that zero pump exponential decay."""
     grid = make_grid(GridCfg(nx=64, ny=64, lx=200.0, ly=200.0))
     physics = make_physics_default(g_C=0.0, g_R=0.0, R=0.0)
     cfg = make_config(dt=0.02, physics=physics)

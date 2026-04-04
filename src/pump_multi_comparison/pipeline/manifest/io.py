@@ -1,12 +1,10 @@
 """Run-scoped manifest and atomic file I/O.
 
-Every write goes through :func:`atomic_write_json` which uses temp-file +
-fsync + ``os.replace`` — safe on Lustre/GPFS parallel filesystems used on
-Rysy at ICM UW.
+Every write goes through :func:`atomic_write_json`, which writes a temp
+file, fsyncs it, and then swaps it into place.
 
-The *manifest* (``manifest.json``) is the single source of truth for a run.
-Individual scenario jobs write *sidecar* files (``<scenario>_meta.json``)
-rather than updating the manifest concurrently, avoiding multi-writer races.
+The manifest file is the main record for a run. Individual scenario jobs
+write sidecar files instead of updating the manifest at the same time.
 """
 from __future__ import annotations
 

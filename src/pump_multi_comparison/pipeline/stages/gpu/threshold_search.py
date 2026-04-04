@@ -85,6 +85,7 @@ class _SearchInfra:
     """
 
     def __init__(self, global_cfg: dict[str, Any], t_max: float, dt: float) -> None:
+        """Set up reusable objects for the threshold search."""
         cfg = _build_config(global_cfg, t_max, dt)
         self.xp = compute_engine.xp
         self.grid = create_grid(cfg.grid)
@@ -114,6 +115,7 @@ class _SearchInfra:
         self.N_initial = float(self.xp.sum(self.xp.abs(self._init_psi) ** 2))
 
     def fresh_state(self) -> SimulationState:
+        """Return a fresh simulation state."""
         state = SimulationState.__new__(SimulationState)
         state.psi = self._init_psi.copy()
         state.t = 0.0
@@ -122,6 +124,7 @@ class _SearchInfra:
 
 def _p_time_pure(t: float, pulse_separation: float,
                  cutoff_sigma: float, sigma_time: float) -> float:
+    """Return the pulse envelope at time t."""
     n = round(t / pulse_separation)
     dt_val = t - n * pulse_separation
     if abs(dt_val) > cutoff_sigma * sigma_time:
@@ -190,6 +193,7 @@ def evaluate_threshold(
 # ── Stage entrypoint ──────────────────────────────────────────────────────────
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description="GPU threshold search stage")
     parser.add_argument("--config", required=True)
     parser.add_argument(

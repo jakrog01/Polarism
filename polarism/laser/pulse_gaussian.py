@@ -1,3 +1,4 @@
+"""Pulsed Gaussian laser model."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
 
 @register_laser("pulse-gaussian")
 class PulseGaussian(AbstractLaser):
+    """Represent a pulse gaussian."""
     sigma_space: float
     Pmax: float
     sigma_time: float
@@ -21,6 +23,7 @@ class PulseGaussian(AbstractLaser):
     cutoff_sigma: float
 
     def __init__(self, laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]):
+        """Set up the pulse gaussian."""
         super().__init__(laser_config, X, Y)
         self.sigma_space = laser_config.sigma_space
         self.Pmax = laser_config.Pmax
@@ -30,16 +33,19 @@ class PulseGaussian(AbstractLaser):
         self.cutoff_sigma = laser_config.cutoff_sigma
 
     def _amplitude(self, t: float) -> float:
+        """Return the base laser amplitude at time t."""
         n = int(t / self.pulse_separation)
         if n == 0:
             return self.P0
         return min(self.P0 + n * (self.Pmax - self.P0), self.Pmax)
 
     def _P_space(self, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]) -> Union[np.ndarray, cp.ndarray]:
+        """Return the spatial pump profile."""
         r2 = (X - self.x0) ** 2 + (Y - self.y0) ** 2
         return self.xp.exp(-0.5 * r2 / self.sigma_space**2)
 
     def _P_time(self, t: float) -> float:
+        """Return the time profile of the pump."""
         n = round(t / self.pulse_separation)
         dt = t - n * self.pulse_separation
 

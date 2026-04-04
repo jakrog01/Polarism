@@ -1,3 +1,4 @@
+"""Split-step FFT solver."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -18,10 +19,12 @@ if TYPE_CHECKING:
 
 @register_solver("split-step-fft")
 class SplitStepFFTSolver(AbstractSolver):
+    """Solve the model with split-step FFT."""
     _kinetic_propagator_half: Union[np.ndarray, cp.ndarray]
     _use_dct: bool
 
     def __init__(self, config: Config, grid: SimulationGrid2D):
+        """Set up the split step fft solver."""
         super().__init__(config)
 
         grid_type = getattr(config.grid, "grid_type", "periodic")
@@ -58,6 +61,7 @@ class SplitStepFFTSolver(AbstractSolver):
     def _kinetic_half_step_fft(
         self, psi: Union[np.ndarray, cp.ndarray]
     ) -> Union[np.ndarray, cp.ndarray]:
+        """Apply the FFT half-step of the kinetic term."""
         psi_k = self.xp.fft.fft2(psi)
         psi_k *= self._kinetic_propagator_half
         return self.xp.fft.ifft2(psi_k)
@@ -65,6 +69,7 @@ class SplitStepFFTSolver(AbstractSolver):
     def _kinetic_half_step_dct(
         self, psi: Union[np.ndarray, cp.ndarray]
     ) -> Union[np.ndarray, cp.ndarray]:
+        """Apply the DCT half-step of the kinetic term."""
         try:
             from scipy.fft import dctn, idctn
         except ImportError:
@@ -105,6 +110,7 @@ class SplitStepFFTSolver(AbstractSolver):
         boundary_condition: BoundaryCondition,
         state: SimulationState,
     ) -> None:
+        """Advance the solver by one time step."""
         dt = self.config.solver.dt
         hbar = self.config.physics.hbar
         g_C = self.config.physics.g_C

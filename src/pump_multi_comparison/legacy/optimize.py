@@ -1,3 +1,4 @@
+"""Legacy threshold-search helpers."""
 import argparse
 import json
 import math
@@ -49,6 +50,7 @@ PULSE_SEP_VALUES = [2.0, 5.0, 10.0, 20.0, 40.0, 60.0, 80.0]
 
 
 def _build_infra_config(t_max, dt):
+    """Build the base config for the legacy search."""
     return Config(
         grid=GridParameters(
             nx=GRID_NX, ny=GRID_NY, lx=GRID_LX, ly=GRID_LY, grid_type="periodic"
@@ -76,6 +78,7 @@ def _build_infra_config(t_max, dt):
 
 
 def _p_time_pure(t, pulse_separation, cutoff_sigma, sigma_time):
+    """Return the pulse envelope at time t."""
     n = round(t / pulse_separation)
     dt_val = t - n * pulse_separation
     if abs(dt_val) > cutoff_sigma * sigma_time:
@@ -84,7 +87,9 @@ def _p_time_pure(t, pulse_separation, cutoff_sigma, sigma_time):
 
 
 class _ReusableInfra:
+    """Cache reusable objects for repeated search runs."""
     def __init__(self, t_max, dt):
+        """Set up reusable objects for the legacy search."""
         cfg = _build_infra_config(t_max, dt)
         self.xp = compute_engine.xp
         self.grid = create_grid(cfg.grid)
@@ -114,6 +119,7 @@ class _ReusableInfra:
         self.N_initial = float(self.xp.sum(self.xp.abs(self._init_psi) ** 2))
 
     def fresh_state(self):
+        """Return a fresh simulation state."""
         state = SimulationState.__new__(SimulationState)
         state.psi = self._init_psi.copy()
         state.t = 0.0
@@ -121,6 +127,7 @@ class _ReusableInfra:
 
 
 def evaluate_params(infra, power, sigma_time, pulse_sep):
+    """Run one legacy threshold-search point."""
     xp = infra.xp
     grid = infra.grid
     dt = infra.dt
@@ -216,6 +223,7 @@ def evaluate_params(infra, power, sigma_time, pulse_sep):
 
 
 def main():
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--t_max", type=float, default=1000.0)
     parser.add_argument("--dt", type=float, default=1e-3)

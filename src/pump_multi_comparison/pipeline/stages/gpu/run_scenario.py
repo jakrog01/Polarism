@@ -61,6 +61,7 @@ def _make_scratch_dir(run_dir: str, scenario_name: str) -> str:
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description="GPU scenario simulation (array task)")
     parser.add_argument("--run-dir", required=True)
     parser.add_argument(

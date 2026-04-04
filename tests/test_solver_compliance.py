@@ -1,3 +1,4 @@
+"""Solver compliance tests."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -48,6 +49,7 @@ CLOSED_INTERVAL_SOLVERS = [
 
 
 def _save_fig(outdir: Path, name: str) -> None:
+    """Save the current figure."""
     outdir.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
     plt.savefig(outdir / name, dpi=160, bbox_inches="tight")
@@ -55,6 +57,7 @@ def _save_fig(outdir: Path, name: str) -> None:
 
 
 def _run_solver(solver_cls, grid_cfg, physics, dt, n_steps, P0):
+    """Run solver."""
     grid = make_grid(grid_cfg)
     cfg = make_config(dt=dt, physics=physics, grid_type=grid_cfg.grid_type)
     solver = solver_cls(cfg, grid)
@@ -79,6 +82,7 @@ def _run_solver(solver_cls, grid_cfg, physics, dt, n_steps, P0):
 
 
 def _log_correlation(rho_a, rho_b):
+    """Compute the log-scale correlation between two fields."""
     floor = 1e-30
     log_a = np.log10(np.maximum(rho_a, floor))
     log_b = np.log10(np.maximum(rho_b, floor))
@@ -92,6 +96,7 @@ def _plot_rho_comparison(
     t_test, rho_test, test_label,
     corr: float,
 ):
+    """Plot rho comparison."""
     floor = 1e-30
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
 
@@ -120,6 +125,7 @@ def _plot_rho_comparison(
     ids=lambda cls: cls.__name__,
 )
 def test_periodic_matches_reference(solver_cls):
+    """Test that periodic matches reference."""
     grid_cfg = GridCfg(nx=64, ny=64, lx=200.0, ly=200.0, grid_type="periodic")
     physics = make_physics_default()
     dt = 0.01
@@ -150,6 +156,7 @@ def test_periodic_matches_reference(solver_cls):
     ids=lambda cls: cls.__name__,
 )
 def test_closed_interval_matches_reference(solver_cls):
+    """Test that closed interval matches reference."""
     grid_cfg = GridCfg(
         nx=64, ny=64, lx=200.0, ly=200.0, grid_type="closed-interval"
     )
@@ -182,6 +189,7 @@ def test_closed_interval_matches_reference(solver_cls):
     ids=lambda cls: cls.__name__,
 )
 def test_double_reservoir_matches_single(solver_cls):
+    """Test that double reservoir matches single."""
     grid_cfg = GridCfg(nx=64, ny=64, lx=200.0, ly=200.0, grid_type="periodic")
     grid = make_grid(grid_cfg)
     physics = make_physics_default()
@@ -241,6 +249,7 @@ def test_double_reservoir_matches_single(solver_cls):
     ids=lambda cls: cls.__name__,
 )
 def test_fdm_solvers_bitwise_close(solver_cls):
+    """Test that fdm solvers bitwise close."""
     if solver_cls is RK4FDMSolver:
         pytest.skip("reference solver")
 
