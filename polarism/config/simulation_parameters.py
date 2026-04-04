@@ -53,7 +53,7 @@ class PotentialParameters:
 @dataclass
 class LaserParameters:
     expose_results: bool = True
-    mode: str = "multiple"
+    mode: str = "single"
     config_file: str = "lasers_setup.yaml"
     laser_type: str = "pulse-gaussian"
     P0: float = 0.4
@@ -77,13 +77,13 @@ class ReservoirParameters:
 class SolverParameters:
     total_time: float = 5.0
     dt: float = 1e-3
-    method: str = "rk4-cuda"
+    method: str = "rk4-fdm"
     precision: str = "double"
 
 
 @dataclass
 class ResultParameters:
-    real_time_view: bool = True
+    real_time_view: bool = False
     real_time_refresh_interval: float = 0.1
     save_results: bool = False
     save_hdf5: bool = False
@@ -96,7 +96,7 @@ class ResultParameters:
 
 @dataclass
 class ComputeEngineParameters:
-    use_gpu: bool = True
+    use_gpu: bool = False
     gpu_device: int = 0
 
 
