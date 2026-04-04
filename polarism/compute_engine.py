@@ -36,6 +36,9 @@ class ComputeEngine:
                 )
                 self.xp = np
                 self.use_gpu = False
+        else:
+            self.xp = np
+            self.use_gpu = False
 
     def to_gpu(self, array: Union[np.ndarray, Any]) -> Union[np.ndarray, Any]:
         return self.xp.asarray(array)

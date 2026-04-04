@@ -1,9 +1,10 @@
 *.pyc
-.venv
+.*/
+.*
 __pycache__/
 simulation_results/
 test_results/
-.pytest_cache/
-.vscode/
 data/
-.claude/
+*.md
+!README.md
+!gitignore
