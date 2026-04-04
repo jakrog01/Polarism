@@ -36,11 +36,10 @@ class RK4FDMFusedSolver(AbstractSolver):
         self._dt = config.solver.dt
 
         self._inv_dx2 = 1.0 / (self.dx**2)
-        self._inv_dy2 = 1.0 / (self.dy**2)  #
+        self._inv_dy2 = 1.0 / (self.dy**2)
         self._kinetic_coeff = -(self._hbar**2) / (2.0 * self._m_eff)
         self._minus_i_over_hbar = -1j / self._hbar
 
-        # Buffers (lazily allocated on first step)
         self._buf_initialized = False
         _empty = self.xp.empty(0, dtype=complex)
         self._lap = _empty
@@ -50,13 +49,11 @@ class RK4FDMFusedSolver(AbstractSolver):
         self._k4_psi = _empty
         self._tmp_psi = _empty
 
-        # Try to create fused kernels for GPU
         self._fused_rhs = None
         self._fused_combine = None
         self._setup_fused_kernels()
 
     def _setup_fused_kernels(self):
-        """Create fused GPU kernels if cupy is available."""
         if not hasattr(self.xp, "fuse"):
             return
 
@@ -70,8 +67,7 @@ class RK4FDMFusedSolver(AbstractSolver):
 
         @xp.fuse()
         def fused_rhs(psi, lap, potential, n_active):
-            """Fused RHS: kinetic + potential + nonlinear + gain/loss."""
-            rho = xp.abs(psi) ** 2 
+            rho = xp.abs(psi) ** 2
             eff_energy = potential + g_C * rho + g_R * n_active
             gain_loss = (R * n_active - gamma_C) * 0.5
             kinetic_energy = kinetic_coeff * lap
@@ -82,14 +78,12 @@ class RK4FDMFusedSolver(AbstractSolver):
 
         @xp.fuse()
         def fused_combine_rk4(psi0, k1, k2, k3, k4, dt_over_6):
-            """Fused RK4 combination step."""
             return psi0 + dt_over_6 * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
         self._fused_rhs = fused_rhs
         self._fused_combine = fused_combine_rk4
 
     def _ensure_buffers(self, psi):
-        """Allocate all temporary buffers once."""
         if self._buf_initialized and self._lap.shape == psi.shape:
             return
         shape = psi.shape
@@ -115,7 +109,6 @@ class RK4FDMFusedSolver(AbstractSolver):
         inv_dx2 = self._inv_dx2
         inv_dy2 = self._inv_dy2
         xp = self.xp
-        # Use roll for periodic BC — same as reference solver
         out[:] = (
             xp.roll(psi, -1, axis=0) - 2 * psi + xp.roll(psi, 1, axis=0)
         ) * inv_dy2 + (
@@ -170,7 +163,6 @@ class RK4FDMFusedSolver(AbstractSolver):
         )
 
     def _rhs_into(self, psi, n_active, potential, out) -> None:
-        """Compute dpsi/dt and store into out buffer."""
         if self._fused_rhs is not None:
             self._laplacian(psi, self._lap)
             out[:] = self._fused_rhs(psi, self._lap, potential, n_active)
@@ -198,12 +190,10 @@ class RK4FDMFusedSolver(AbstractSolver):
 
         res0 = reservoir.get_state()
 
-        # Stage 1
         nR_0 = reservoir.get_active_density(res0)
         self._rhs_into(psi0, nR_0, potential, self._k1_psi)
         k1_res = reservoir.get_derivatives(psi0, pump, res0)
 
-        # Stage 2
         self._tmp_psi[:] = psi0
         self._tmp_psi += 0.5 * dt * self._k1_psi
         res2 = tuple(r + 0.5 * dt * k for r, k in zip(res0, k1_res))
@@ -211,7 +201,6 @@ class RK4FDMFusedSolver(AbstractSolver):
         self._rhs_into(self._tmp_psi, nR_2, potential, self._k2_psi)
         k2_res = reservoir.get_derivatives(self._tmp_psi, pump, res2)
 
-        # Stage 3
         self._tmp_psi[:] = psi0
         self._tmp_psi += 0.5 * dt * self._k2_psi
         res3 = tuple(r + 0.5 * dt * k for r, k in zip(res0, k2_res))
@@ -219,7 +208,6 @@ class RK4FDMFusedSolver(AbstractSolver):
         self._rhs_into(self._tmp_psi, nR_3, potential, self._k3_psi)
         k3_res = reservoir.get_derivatives(self._tmp_psi, pump, res3)
 
-        # Stage 4
         self._tmp_psi[:] = psi0
         self._tmp_psi += dt * self._k3_psi
         res4 = tuple(r + dt * k for r, k in zip(res0, k3_res))
@@ -227,7 +215,6 @@ class RK4FDMFusedSolver(AbstractSolver):
         self._rhs_into(self._tmp_psi, nR_4, potential, self._k4_psi)
         k4_res = reservoir.get_derivatives(self._tmp_psi, pump, res4)
 
-        # Combine
         dt6 = dt / 6.0
         if self._fused_combine is not None:
             state.psi = self._fused_combine(

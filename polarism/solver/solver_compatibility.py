@@ -19,6 +19,17 @@ class _SolverCaps(TypedDict):
 
 
 _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
+    "rk4-cuda-v100": {
+        "grid_types": {"periodic", "closed-interval"},
+        "supports_potential": True,
+        "boundary_types": {"no-absorption", "mask", "cap"},
+        "reservoir_types": {"single", "double"},
+        "description": (
+            "V100-specialised CUDA RK4 solver. "
+            "2-D block geometry + __launch_bounds__(256,4). "
+            "Numerically identical to rk4-cuda; hardware-tuned for V100."
+        ),
+    },
     "rk4-fdm": {
         "grid_types": {"periodic", "closed-interval"},
         "supports_potential": True,
@@ -124,9 +135,9 @@ def check_solver_compatibility(cfg: Config) -> None:
             stacklevel=2,
         )
 
-    if solver == "rk4-cuda" and not _gpu_available():
+    if solver in {"rk4-cuda", "rk4-cuda-v100"} and not _gpu_available():
         warnings.warn(
-            "Solver 'rk4-cuda' is optimized for GPU but no GPU is detected. "
+            f"Solver '{solver}' is optimized for GPU but no GPU is detected. "
             "Falling back to CPU (numpy). For CPU-only runs, 'rk4-fdm-fused' "
             "may be faster.",
             UserWarning,
