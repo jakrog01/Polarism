@@ -13,5 +13,10 @@ class ResultsManager:
         self.visitors.append(visitor)
 
     def step(self, t: float, **context) -> None:
+        cached = {}
+        for node in self.nodes:
+            field_cpu, reduced_cpu = node.compute_cpu(**context)
+            cached[node.name] = (field_cpu, reduced_cpu)
+
         for visitor in self.visitors:
-            visitor.visit_all(self.nodes, t=t, **context)
+            visitor.visit_all(self.nodes, t=t, cached=cached, **context)
