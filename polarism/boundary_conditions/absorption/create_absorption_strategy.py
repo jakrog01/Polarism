@@ -1,3 +1,4 @@
+"""Absorption factory helpers."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -22,6 +23,7 @@ def create_absorption_strategy(
     boundary_conditions_config: BoundaryConditionParameters,
     physics_constants: PhysicsConstants,
 ) -> AbsorptionStrategy:
+    """Create absorption strategy."""
     if boundary_conditions_config.absorption not in available_boundary_conditions:
         raise ValueError(
             f"Unknown boundary conditions: '{boundary_conditions_config.absorption}'. "

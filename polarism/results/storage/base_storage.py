@@ -1,3 +1,4 @@
+"""Shared result storage helpers."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -7,6 +8,7 @@ import numpy as np
 
 
 class BaseStorage(ABC):
+    """Store result batches in a common format."""
     output_dir: Path
     batch_size: int
     batch_count: int
@@ -18,6 +20,7 @@ class BaseStorage(ABC):
     scalar_group_buffers: dict[str, dict[str, list[float]]]
 
     def __init__(self, output_dir: Path, batch_size: int) -> None:
+        """Set up common storage buffers."""
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.batch_size = batch_size
@@ -30,6 +33,7 @@ class BaseStorage(ABC):
         self.scalar_group_buffers = {}
 
     def add_to_batch(self, t: float, nodes: list, **context) -> None:
+        """Add one result step to the current batch."""
         cached = context.get("cached", {})
         self.time_buffer.append(t)
 
@@ -63,13 +67,16 @@ class BaseStorage(ABC):
 
     @abstractmethod
     def dump_batch(self) -> None:
+        """Write the current batch to disk."""
         pass
 
     @abstractmethod
     def finalize(self) -> None:
+        """Flush remaining data and close resources."""
         pass
 
     def _clear_buffers(self) -> None:
+        """Clear all in-memory buffers."""
         self.time_buffer.clear()
         self.field_buffers.clear()
         self.scalar_buffers.clear()

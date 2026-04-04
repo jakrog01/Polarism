@@ -1,3 +1,4 @@
+"""Phoenix benchmark tests."""
 from __future__ import annotations
 
 import gc
@@ -37,11 +38,13 @@ INIT_EPS = 1e-7
 
 
 def _asnumpy(x):
+    """Convert a backend array to NumPy."""
     xp = compute_engine.xp
     return xp.asnumpy(x) if hasattr(xp, "asnumpy") else np.asarray(x)
 
 
 def _gpu_sync():
+    """Wait for queued GPU work to finish."""
     if compute_engine.use_gpu:
         try:
             import cupy
@@ -52,6 +55,7 @@ def _gpu_sync():
 
 
 def _load_phoenix_rho_max(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Load phoenix rho max."""
     data = np.loadtxt(path, comments="#")
     if data.ndim == 1:
         data = data[None, :]
@@ -62,6 +66,7 @@ def _load_phoenix_rho_max(path: Path) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _load_phoenix_frame(path: Path) -> dict | None:
+    """Load phoenix frame."""
     if not path.exists():
         return None
     data = np.load(path)
@@ -76,6 +81,7 @@ def _load_phoenix_frame(path: Path) -> dict | None:
 
 
 def _load_phoenix_timing(path: Path) -> dict | None:
+    """Load phoenix timing."""
     if not path.exists():
         return None
     with open(path) as f:
@@ -83,6 +89,7 @@ def _load_phoenix_timing(path: Path) -> dict | None:
 
 
 def _save_fig(outdir: Path, name: str) -> None:
+    """Save the current figure."""
     outdir.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
     plt.savefig(outdir / name, dpi=160, bbox_inches="tight")
@@ -96,6 +103,7 @@ def compute_accuracy_metrics(
     rho_sim: np.ndarray,
     tail_fraction: float = 0.1,
 ) -> dict:
+    """Compute accuracy metrics."""
     rho_sim_interp = np.interp(t_ref, t_sim, rho_sim)
     floor = max(1e-20, 1e-8 * float(rho_ref.max()))
 
@@ -144,6 +152,7 @@ def compute_accuracy_metrics(
 
 
 def _first_crossing_time(t: np.ndarray, y: np.ndarray, level: float) -> float:
+    """Return the first time the signal crosses the level."""
     idx = np.where(y >= level)[0]
     if len(idx) == 0:
         return np.nan
@@ -164,6 +173,7 @@ def configure_simulation(
     total_time: float,
     use_gpu: bool = None,
 ) -> None:
+    """Configure simulation."""
     if use_gpu is not None:
         cfg.compute_engine.use_gpu = use_gpu
 
@@ -204,6 +214,7 @@ def configure_simulation(
 
 
 def apply_potential_config(cfg: Config, case_name: str) -> None:
+    """Apply potential config."""
     if case_name == "01_uniform_pump":
         cfg.potential.potential_type = "zero"
     elif case_name == "02_pump_no_potential":
@@ -220,12 +231,14 @@ def apply_potential_config(cfg: Config, case_name: str) -> None:
 
 
 def _phoenix_grid():
+    """Return the benchmark grid settings."""
     x = np.linspace(-L_MAX / 2, L_MAX / 2, GRID_SIZE, endpoint=True)
     y = np.linspace(-L_MAX / 2, L_MAX / 2, GRID_SIZE, endpoint=True)
     return np.meshgrid(x, y, indexing="xy")
 
 
 def _reconstruct_pump(lasers_yaml: Path, X: np.ndarray, Y: np.ndarray) -> np.ndarray:
+    """Rebuild the pump field from the laser YAML file."""
     import yaml
 
     with open(lasers_yaml) as f:
@@ -254,6 +267,7 @@ def _reconstruct_pump(lasers_yaml: Path, X: np.ndarray, Y: np.ndarray) -> np.nda
 def _reconstruct_potential(
     case_name: str, X: np.ndarray, Y: np.ndarray
 ) -> np.ndarray:
+    """Rebuild the benchmark potential for the case."""
     if case_name in ("01_uniform_pump", "02_pump_no_potential"):
         return np.zeros_like(X)
     if case_name == "03_pump_and_potential":
@@ -271,6 +285,7 @@ def _reconstruct_potential(
 
 
 def validate_benchmark_data(case_name: str, case_dir: Path, lasers_yaml: Path) -> None:
+    """Validate benchmark data."""
     psi_path = case_dir / "psi_init.txt"
     assert psi_path.exists(), f"Missing psi_init.txt in {case_dir}"
     psi_data = np.loadtxt(psi_path, comments="#")
@@ -299,6 +314,7 @@ def validate_benchmark_data(case_name: str, case_dir: Path, lasers_yaml: Path) -
 def validate_simulation_inputs(
     sim, case_dir: Path, case_name: str, atol: float = 1e-10
 ) -> None:
+    """Validate simulation inputs."""
     xp = compute_engine.xp
 
     X_ph, Y_ph = _phoenix_grid()
@@ -357,6 +373,7 @@ def validate_simulation_inputs(
 
 
 def _load_psi_init(path: Path, psi_dtype) -> np.ndarray | None:
+    """Load psi init."""
     if not path.exists():
         return None
     data = np.loadtxt(path, comments="#")
@@ -374,6 +391,7 @@ def run_benchmark_simulation(
     case_dir: Path | None = None,
     case_name: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray, float, float, dict]:
+    """Run benchmark simulation."""
     from polarism.simulation_controller import SimulationController
 
     xp = compute_engine.xp
@@ -489,6 +507,7 @@ def plot_benchmark_results(
     metrics: dict,
     phoenix_timing: dict = None,
 ) -> None:
+    """Plot benchmark results."""
     outdir.mkdir(parents=True, exist_ok=True)
 
     rho_sim_interp = np.interp(t_ref, t_sim, rho_sim)
@@ -638,6 +657,7 @@ def plot_frame_comparison(
     phoenix_frame: dict,
     polarism_frame: dict,
 ) -> None:
+    """Plot frame comparison."""
     if phoenix_frame is None or polarism_frame is None:
         return
 
@@ -685,6 +705,7 @@ def plot_frame_comparison(
 
 @dataclass
 class BenchmarkCase:
+    """Store one Phoenix benchmark case."""
     name: str
     final_rel_tol: float
     log_rmse_tol: float
@@ -743,6 +764,7 @@ def _run_benchmark_case(
     solver_name: str,
     save_frames: bool = True,
 ) -> dict:
+    """Run benchmark case."""
     base_dir = Path(__file__).resolve().parent / "data" / "phoenix_benchmark"
     case_dir = base_dir / case.name
 
@@ -875,6 +897,7 @@ SOLVER_CASE_MATRIX = [
 
 
 def _assert_metrics(metrics: dict, case: BenchmarkCase) -> None:
+    """Check metrics against the case tolerances."""
     assert metrics["correlation"] >= case.correlation_tol, (
         f"Correlation {metrics['correlation']:.6f} "
         f"below tolerance {case.correlation_tol}"
@@ -918,5 +941,6 @@ def _assert_metrics(metrics: dict, case: BenchmarkCase) -> None:
     ids=[f"{s}-{c.name}" for s, c in SOLVER_CASE_MATRIX],
 )
 def test_phoenix_accuracy(solver_name: str, case: BenchmarkCase):
+    """Test that phoenix accuracy."""
     metrics = _run_benchmark_case(case, solver_name)
     _assert_metrics(metrics, case)

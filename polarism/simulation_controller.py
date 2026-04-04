@@ -1,3 +1,4 @@
+"""High-level simulation setup and execution."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -31,21 +32,25 @@ if TYPE_CHECKING:
 
 
 def _compute_density(**ctx):
+    """Compute the condensate density."""
     xp = compute_engine.xp
     return xp.abs(ctx["state"].psi) ** 2
 
 
 def _compute_total_norm(**ctx):
+    """Compute the total condensate norm."""
     xp = compute_engine.xp
     grid = ctx["grid"]
     return float((xp.abs(ctx["state"].psi) ** 2).sum()) * grid.dx * grid.dy
 
 
 def _compute_pump_field(**ctx):
+    """Return the full pump field."""
     return ctx["P_total"]
 
 
 class SimulationController:
+    """Set up and run a full simulation."""
     cfg: Config
     grid: SimulationGrid2D
     boundary_condition: BoundaryCondition
@@ -60,6 +65,7 @@ class SimulationController:
     storage_visitor: StorageVisitor | None
 
     def __init__(self, cfg: Config):
+        """Set up the simulation from the config."""
         self.cfg = cfg
         compute_engine.configure(cfg.compute_engine)
         self.xp = compute_engine.xp
@@ -94,6 +100,7 @@ class SimulationController:
             self._init_storage()
 
     def _compute_max_laser_power(self) -> float:
+        """Return the largest configured laser power."""
         max_power = 0.0
         for laser in self.lasers:
             if hasattr(laser, "Pmax"):
@@ -103,6 +110,7 @@ class SimulationController:
         return max_power if max_power > 0 else self.cfg.laser.Pmax
 
     def _init_visualizer(self) -> None:
+        """Set up live result plotting."""
         extent = [
             self.grid.X.min(),
             self.grid.X.max(),
@@ -142,6 +150,7 @@ class SimulationController:
         self.results_manager.add_visitor(VisualizationVisitor(self.visualizer))
 
     def _init_storage(self) -> None:
+        """Set up result storage."""
         if not (
             self.cfg.result.save_hdf5
             or self.cfg.result.save_json
@@ -156,6 +165,7 @@ class SimulationController:
         self.results_manager.add_visitor(self.storage_visitor)
 
     def _build_result_nodes(self) -> list[ResultNode]:
+        """Build the result nodes for this run."""
         nodes = [
             ResultNode(
                 name="|ψ|²",
@@ -206,6 +216,7 @@ class SimulationController:
         return nodes
 
     def run(self) -> None:
+        """Run the simulation loop."""
         dt = self.cfg.solver.dt
         n_steps = int(self.cfg.solver.total_time / dt)
 
@@ -262,12 +273,14 @@ class SimulationController:
                 self.storage_visitor.finalize()
 
     def _compute_total_pump(self, t: float) -> Union[np.ndarray, cp.ndarray]:
+        """Sum the pump from all lasers at time t."""
         P_total = self.xp.zeros_like(self.grid.X)
         for laser in self.lasers:
             P_total += laser.get_power(self.grid.X, self.grid.Y, t)
         return P_total
 
     def _get_scalar_groups(self, t: float) -> dict[str, dict[str, float]]:
+        """Build scalar groups for the current time."""
         scalar_groups = {}
         if self.cfg.laser.expose_results:
             scalar_groups["P_lasers"] = {
@@ -281,6 +294,7 @@ class SimulationController:
     def _update_visualization(
         self, t: float, P_total: Union[np.ndarray, cp.ndarray]
     ) -> None:
+        """Refresh the live plots."""
         scalar_groups = {}
         if self.cfg.laser.expose_results:
             scalar_groups["P_lasers"] = {

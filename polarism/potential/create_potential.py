@@ -1,3 +1,4 @@
+"""Potential factory helpers."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
 def create_potential(
     potential_config: PotentialParameters, grid: SimulationGrid2D
 ) -> Union[np.ndarray, cp.ndarray]:
+    """Create potential."""
     if potential_config.potential_type not in available_potentials:
         raise ValueError(
             f"Unknown potential: '{potential_config.potential_type}'. "

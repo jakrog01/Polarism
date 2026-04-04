@@ -30,6 +30,7 @@ _BLOCK_2D = (32, 8)
 def _build_kernel_source_v100(
     bc_type: str, real_type: str, reservoir_type: str
 ) -> tuple[str, str, str]:
+    """Build the V100 CUDA kernel source."""
     return build_kernel_source_1d(
         bc_type,
         real_type,
@@ -46,12 +47,15 @@ class RK4CudaV100Solver(RK4CudaSolver):
     def _build_kernel_source(
         self, bc_type: str, real_type: str, reservoir_type: str
     ) -> tuple[str, str, str]:
+        """Build the CUDA kernel source."""
         return _build_kernel_source_v100(bc_type, real_type, reservoir_type)
 
     def _select_block_size(self) -> tuple[int, int]:
+        """Pick the CUDA block size."""
         return _BLOCK_2D
 
     def _make_launch_dims(self, block_size: tuple[int, int]) -> None:
+        """Set the CUDA launch dimensions."""
         bx, by = block_size
         gx = (self.nx + bx - 1) // bx
         gy = (self.ny + by - 1) // by

@@ -1,3 +1,4 @@
+"""Reservoir interfaces."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
 
 
 class AbstractReservoir(ABC):
+    """Define the interface for reservoir models."""
     @abstractmethod
     def __init__(
         self,
@@ -20,6 +22,7 @@ class AbstractReservoir(ABC):
         physics: PhysicsConstants,
         grid: SimulationGrid2D,
     ):
+        """Set up the abstract reservoir."""
         raise NotImplementedError
 
     @abstractmethod
@@ -29,27 +32,34 @@ class AbstractReservoir(ABC):
         psi_mid: Union[np.ndarray, cp.ndarray],
         pump: Union[np.ndarray, cp.ndarray],
     ) -> None:
+        """Advance the reservoir by one time step."""
         raise NotImplementedError
 
     @abstractmethod
     def get_reservoir_density(self) -> Union[np.ndarray, cp.ndarray]:
+        """Return the total reservoir density."""
         raise NotImplementedError
 
     @abstractmethod
     def make_result_nodes(self) -> list[ResultNode]:
+        """Build the result nodes exposed by this object."""
         raise NotImplementedError
 
     @abstractmethod
     def get_state(self) -> tuple:
+        """Return the current state."""
         raise NotImplementedError
 
     @abstractmethod
     def set_state(self, state: tuple) -> None:
+        """Set the current state."""
         raise NotImplementedError
 
     @abstractmethod
     def get_derivatives(self, psi, pump, state: tuple) -> tuple:
+        """Return the reservoir time derivatives."""
         raise NotImplementedError
 
     def get_active_density(self, state: tuple):
+        """Return the active reservoir density."""
         return state[0]

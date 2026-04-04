@@ -1,3 +1,4 @@
+"""Solver interfaces."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -15,8 +16,10 @@ if TYPE_CHECKING:
 
 
 class AbstractSolver(ABC):
+    """Define the interface for solver backends."""
     @abstractmethod
     def __init__(self, config: Config):
+        """Set up the abstract solver."""
         self.config = config
         self.physics = config.physics
         self.xp = compute_engine.xp
@@ -30,4 +33,5 @@ class AbstractSolver(ABC):
         boundary_condition: BoundaryCondition,
         state: SimulationState,
     ) -> None:
+        """Advance the solver by one time step."""
         pass

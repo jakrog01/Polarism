@@ -1,3 +1,4 @@
+"""NumPy result storage."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,14 +9,17 @@ from polarism.results.storage.base_storage import BaseStorage
 
 
 class NPYStorage(BaseStorage):
+    """Store result batches in NumPy files."""
     output_dir: Path
     batch_number: int
 
     def __init__(self, output_dir: Path, batch_size: int):
+        """Set up NumPy batch storage."""
         super().__init__(output_dir, batch_size)
         self.batch_number = 0
 
     def dump_batch(self) -> None:
+        """Write the current batch to NumPy files."""
         if not self.time_buffer:
             return
 
@@ -41,5 +45,6 @@ class NPYStorage(BaseStorage):
         self._clear_buffers()
 
     def finalize(self) -> None:
+        """Flush remaining data and close NumPy storage."""
         if self.batch_count > 0:
             self.dump_batch()

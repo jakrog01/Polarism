@@ -1,3 +1,4 @@
+"""Public grid exports."""
 from polarism.grid.closed_interval_simulation_grid_2d import (
     ClosedIntervalSimulationGrid2D,
 )

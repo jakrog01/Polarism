@@ -1,3 +1,4 @@
+"""Protocols for 2D simulation grids."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, Union
@@ -8,6 +9,7 @@ if TYPE_CHECKING:
 
 
 class SimulationGrid2D(Protocol):
+    """Protocol for 2D simulation grids."""
     nx: int
     ny: int
     lx: float

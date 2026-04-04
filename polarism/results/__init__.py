@@ -1,3 +1,4 @@
+"""Public result exports."""
 from polarism.results.real_time_visualization import RealTimeVisualization
 from polarism.results.result_groups import Results2D, ResultScalar, ResultScalarGroup
 from polarism.results.result_node import ResultNode

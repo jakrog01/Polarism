@@ -1,3 +1,4 @@
+"""Solver uniformity tests."""
 import numpy as np
 import pytest
 
@@ -28,6 +29,7 @@ from tests._helpers import (
 def test_uniform_pump_does_not_create_spatial_structure(
     solver_cls, reservoir_cls
 ):
+    """Test that uniform pump does not create spatial structure."""
     grid = make_grid(GridCfg(nx=64, ny=64, lx=200.0, ly=200.0))
     physics = make_physics_default()
     cfg = make_config(dt=0.02, physics=physics)

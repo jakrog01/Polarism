@@ -1,3 +1,4 @@
+"""Zero-potential helpers."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -18,4 +19,5 @@ def potential_zero(
     Y: Union["np.ndarray", "cp.ndarray"],
     cfg: PotentialParameters,
 ) -> Union["np.ndarray", "cp.ndarray"]:
+    """Return a zero potential on the grid."""
     return compute_engine.xp.zeros_like(X)

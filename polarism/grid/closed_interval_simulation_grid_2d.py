@@ -1,3 +1,4 @@
+"""Closed-interval 2D simulation grids."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
 
 
 class ClosedIntervalSimulationGrid2D:
+    """Store a closed-interval 2D simulation grid."""
     nx: int
     ny: int
     lx: float
@@ -27,6 +29,7 @@ class ClosedIntervalSimulationGrid2D:
     k_squared: Union["np.ndarray", "cp.ndarray"]
 
     def __init__(self, cfg: GridParameters):
+        """Set up the closed interval simulation grid 2 d."""
         if cfg.nx < 2 or cfg.ny < 2:
             raise ValueError(
                 "ClosedIntervalSimulationGrid2D requires nx >= 2 and ny >= 2"

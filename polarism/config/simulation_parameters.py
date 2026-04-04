@@ -1,8 +1,10 @@
+"""Simulation config dataclasses."""
 from dataclasses import dataclass, field
 
 
 @dataclass
 class GridParameters:
+    """Store grid size and box-length settings."""
     nx: int = 256
     ny: int = 256
     lx: float = 100.0
@@ -13,6 +15,7 @@ class GridParameters:
 
 @dataclass
 class PhysicsConstants:
+    """Store the physics constants for the model."""
     hbar: float = 0.6582119514  # mev * ps
     m_eff: float = 0.284  # meV * ps**2 / um**2
     gamma_R: float = 0.005
@@ -29,6 +32,7 @@ class PhysicsConstants:
 
 @dataclass
 class BoundaryConditionParameters:
+    """Store boundary absorption settings."""
     profile_type: str = "sin2"
     strength: float = 1.0
     absorption: str = "no-absorption"
@@ -37,6 +41,7 @@ class BoundaryConditionParameters:
 
 @dataclass
 class PotentialParameters:
+    """Store potential settings."""
     expose_results: bool = True
     potential_type: str = "zero"
     x1: float = -2.0
@@ -52,6 +57,7 @@ class PotentialParameters:
 
 @dataclass
 class LaserParameters:
+    """Store laser settings."""
     expose_results: bool = True
     mode: str = "single"
     config_file: str = "lasers_setup.yaml"
@@ -69,12 +75,14 @@ class LaserParameters:
 
 @dataclass
 class ReservoirParameters:
+    """Store reservoir settings."""
     expose_results: bool = True
     reservoir_type: str = "double"
 
 
 @dataclass
 class SolverParameters:
+    """Store solver settings."""
     total_time: float = 5.0
     dt: float = 1e-3
     method: str = "rk4-fdm"
@@ -83,6 +91,7 @@ class SolverParameters:
 
 @dataclass
 class ResultParameters:
+    """Store result-output settings."""
     real_time_view: bool = False
     real_time_refresh_interval: float = 0.1
     save_results: bool = False
@@ -96,12 +105,14 @@ class ResultParameters:
 
 @dataclass
 class ComputeEngineParameters:
+    """Store backend settings."""
     use_gpu: bool = False
     gpu_device: int = 0
 
 
 @dataclass
 class Config:
+    """Store the full simulation configuration."""
     grid: GridParameters = field(default_factory=GridParameters)
     boundary_condition: BoundaryConditionParameters = field(
         default_factory=BoundaryConditionParameters

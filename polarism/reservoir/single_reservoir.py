@@ -1,3 +1,4 @@
+"""Single-reservoir model."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 
 
 class SingleReservoir(AbstractReservoir, ResultProvider):
+    """Model a single active reservoir."""
     config: ReservoirParameters
     R: float
     gamma_r: float
@@ -26,6 +28,7 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         physics: PhysicsConstants,
         grid: SimulationGrid2D,
     ):
+        """Set up the single reservoir."""
         self.xp = compute_engine.xp
         self.config = reservoir_config
         self.R = physics.R
@@ -33,14 +36,17 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         self.nR = self.xp.zeros((grid.ny, grid.nx), dtype=self.xp.float64)
 
     def get_state(self) -> tuple[Union[np.ndarray, cp.ndarray]]:
+        """Return the current state."""
         return (self.nR,)
 
     def set_state(self, state: tuple[Union[np.ndarray, cp.ndarray]]) -> None:
+        """Set the current state."""
         self.nR = self.xp.maximum(state[0], 0)
 
     def get_active_density(
         self, state: tuple[Union[np.ndarray, cp.ndarray]]
     ) -> Union[np.ndarray, cp.ndarray]:
+        """Return the active reservoir density."""
         return state[0]
 
     def get_derivatives(
@@ -49,6 +55,7 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         Pxy: Union[np.ndarray, cp.ndarray],
         state: tuple[Union[np.ndarray, cp.ndarray]],
     ) -> tuple[Union[np.ndarray, cp.ndarray]]:
+        """Return the reservoir time derivatives."""
         nR = state[0]
         abs_psi2 = self.xp.abs(psi) ** 2
         dnR = Pxy - (self.gamma_r + self.R * abs_psi2) * nR
@@ -60,6 +67,7 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         psi: Union[np.ndarray, cp.ndarray],
         Pxy: Union[np.ndarray, cp.ndarray],
     ) -> None:
+        """Advance the reservoir by one time step."""
         s0 = self.get_state()
         (k1,) = self.get_derivatives(psi, Pxy, s0)
         s_mid = (s0[0] + 0.5 * dt * k1,)
@@ -67,9 +75,11 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         self.set_state((s0[0] + dt * k2,))
 
     def get_reservoir_density(self) -> Union[np.ndarray, cp.ndarray]:
+        """Return the total reservoir density."""
         return self.nR
 
     def make_result_nodes(self) -> list[ResultNode]:
+        """Build the result nodes exposed by this object."""
         nodes = []
         if self.config.expose_results:
             nodes.append(

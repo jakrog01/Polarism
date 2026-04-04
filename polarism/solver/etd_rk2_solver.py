@@ -1,3 +1,4 @@
+"""ETD-RK2 solver."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -18,7 +19,9 @@ if TYPE_CHECKING:
 
 @register_solver("etd-rk2")
 class ETDRK2Solver(AbstractSolver):
+    """Solve the model with ETD-RK2."""
     def __init__(self, config: Config, grid: SimulationGrid2D):
+        """Set up the etdrk 2 solver."""
         super().__init__(config)
         dt = self.config.solver.dt
         hbar = self.config.physics.hbar
@@ -42,6 +45,7 @@ class ETDRK2Solver(AbstractSolver):
         self._phi2 = self._compute_phi2(L_dt)
 
     def _compute_phi1(self, z):
+        """Compute the phi1 coefficient."""
         exp_z = self.xp.exp(z)
         z_safe = self.xp.where(self.xp.abs(z) > 1e-12, z, 1e-12)
         direct = (exp_z - 1) / z_safe
@@ -50,6 +54,7 @@ class ETDRK2Solver(AbstractSolver):
         return result
 
     def _compute_phi2(self, z):
+        """Compute the phi2 coefficient."""
         exp_z = self.xp.exp(z)
         z_safe = self.xp.where(self.xp.abs(z) > 1e-12, z, 1e-12)
         direct = (exp_z - 1 - z_safe) / (z_safe**2)
@@ -63,6 +68,7 @@ class ETDRK2Solver(AbstractSolver):
         nR: Union[np.ndarray, cp.ndarray],
         potential: Union[np.ndarray, cp.ndarray],
     ) -> Union[np.ndarray, cp.ndarray]:
+        """Compute the nonlinear right-hand side."""
         hbar = self.config.physics.hbar
         g_C = self.config.physics.g_C
         g_R = self.config.physics.g_R
@@ -83,6 +89,7 @@ class ETDRK2Solver(AbstractSolver):
         boundary_condition: BoundaryCondition,
         state: SimulationState,
     ) -> None:
+        """Advance the solver by one time step."""
         dt = self.config.solver.dt
 
         nR = reservoir.get_reservoir_density()

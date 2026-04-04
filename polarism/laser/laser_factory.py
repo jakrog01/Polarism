@@ -1,3 +1,4 @@
+"""Laser factory helpers."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -14,10 +15,12 @@ if TYPE_CHECKING:
 
 
 class LaserFactory:
+    """Build laser objects from config data."""
     @staticmethod
     def create_laser(
         laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]
     ) -> list[AbstractLaser]:
+        """Create one or more lasers from the config."""
         if laser_config.mode == "multiple":
             if laser_config.config_file is None:
                 raise ValueError(
@@ -32,6 +35,7 @@ class LaserFactory:
     def _create_single_laser(
         laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]
     ) -> list[AbstractLaser]:
+        """Create one laser from the config."""
         laser_type = laser_config.laser_type
         if laser_type not in available_lasers:
             raise ValueError(
@@ -44,7 +48,7 @@ class LaserFactory:
     def _create_multiple_lasers(
         laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]
     ) -> list[AbstractLaser]:
-
+        """Create all lasers listed in the config file."""
         with open(laser_config.config_file, "r") as f:
             data = yaml.safe_load(f)
 
@@ -68,6 +72,7 @@ class LaserFactory:
 
 
 def normalize_config(cfg: LaserParameters | dict) -> dict:
+    """Return the laser config as a plain dict."""
     if isinstance(cfg, dict):
         return cfg
     if hasattr(cfg, "__dict__"):

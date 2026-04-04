@@ -1,3 +1,4 @@
+"""Two-reservoir model."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 
 
 class DoubleReservoir(AbstractReservoir, ResultProvider):
+    """Model coupled active and inactive reservoirs."""
     config: ReservoirParameters
     R: float
     gamma_I: float
@@ -30,6 +32,7 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         physics: PhysicsConstants,
         grid: SimulationGrid2D,
     ):
+        """Set up the double reservoir."""
         self.xp = compute_engine.xp
         self.config = reservoir_config
         self.R = physics.R
@@ -43,11 +46,13 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
     def get_state(
         self,
     ) -> tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]]:
+        """Return the current state."""
         return (self.nA, self.nI)
 
     def set_state(
         self, state: tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]]
     ) -> None:
+        """Set the current state."""
         self.nA = self.xp.maximum(state[0], 0)
         self.nI = self.xp.maximum(state[1], 0)
 
@@ -55,6 +60,7 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         self,
         state: tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]],
     ) -> Union[np.ndarray, cp.ndarray]:
+        """Return the active reservoir density."""
         return state[0]
 
     def get_derivatives(
@@ -63,6 +69,7 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         Pxy: Union[np.ndarray, cp.ndarray],
         state: tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]],
     ) -> tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]]:
+        """Return the reservoir time derivatives."""
         nA, nI = state
         abs_psi2 = self.xp.abs(psi) ** 2
 
@@ -77,6 +84,7 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         psi: Union[np.ndarray, cp.ndarray],
         Pxy: Union[np.ndarray, cp.ndarray],
     ) -> None:
+        """Advance the reservoir by one time step."""
         s0 = self.get_state()
         k1 = self.get_derivatives(psi, Pxy, s0)
         s_mid = (s0[0] + 0.5 * dt * k1[0], s0[1] + 0.5 * dt * k1[1])
@@ -84,14 +92,17 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         self.set_state((s0[0] + dt * k2[0], s0[1] + dt * k2[1]))
 
     def get_reservoir_density(self) -> Union[np.ndarray, cp.ndarray]:
+        """Return the total reservoir density."""
         return self.nA
 
     def get_reservoir_densities(
         self,
     ) -> tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]]:
+        """Return the active and inactive reservoir densities."""
         return self.nA, self.nI
 
     def make_result_nodes(self) -> list[ResultNode]:
+        """Build the result nodes exposed by this object."""
         nodes = []
         if self.config.expose_results:
             nodes.append(

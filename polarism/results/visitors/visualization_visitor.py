@@ -1,3 +1,4 @@
+"""Result visualization visitors."""
 from __future__ import annotations
 
 from polarism.results.real_time_visualization import RealTimeVisualization
@@ -6,12 +7,15 @@ from polarism.results.visitors.result_visitor import ResultVisitor
 
 
 class VisualizationVisitor(ResultVisitor):
+    """Send result nodes to the live visualizer."""
     visualizer: RealTimeVisualization
 
     def __init__(self, visualizer: RealTimeVisualization):
+        """Store the live visualizer."""
         self.visualizer = visualizer
 
     def visit_all(self, nodes: list[ResultNode], **context):
+        """Send one result step to the visualizer."""
         cached = context.get("cached", {})
         fields = {}
         scalars = {}

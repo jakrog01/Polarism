@@ -1,3 +1,4 @@
+"""Laser interfaces."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -12,12 +13,14 @@ if TYPE_CHECKING:
 
 
 class AbstractLaser(ABC):
+    """Define the interface for laser profiles."""
     P0: float
     x0: float
     y0: float
     P: Union[np.ndarray, cp.ndarray]
 
     def __init__(self, laser_config: LaserParameters, X: np.ndarray, Y: np.ndarray):
+        """Set up the shared laser state."""
         self.xp = compute_engine.xp
         self.P0 = laser_config.P0
         self.x0 = laser_config.x0
@@ -27,16 +30,19 @@ class AbstractLaser(ABC):
 
     @abstractmethod
     def _amplitude(self, t: float) -> Union[np.ndarray, cp.ndarray]:
+        """Return the base laser amplitude at time t."""
         raise NotImplementedError
 
     @abstractmethod
     def _P_space(
         self, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]
     ) -> Union[np.ndarray, cp.ndarray]:
+        """Return the spatial pump profile."""
         raise NotImplementedError
 
     @abstractmethod
     def _P_time(self, t: float) -> Union[np.ndarray, cp.ndarray]:
+        """Return the time profile of the pump."""
         raise NotImplementedError
 
     def get_power(
@@ -45,6 +51,7 @@ class AbstractLaser(ABC):
         Y: Union[np.ndarray, cp.ndarray],
         t: float,
     ) -> Union[np.ndarray, cp.ndarray]:
+        """Return the full pump field at time t."""
         if t < self.delay:
             self.P = self.xp.zeros_like(X)
             return self.P

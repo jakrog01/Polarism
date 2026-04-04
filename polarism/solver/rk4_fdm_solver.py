@@ -1,3 +1,4 @@
+"""Finite-difference RK4 solver."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -18,7 +19,9 @@ if TYPE_CHECKING:
 
 @register_solver("rk4-fdm")
 class RK4FDMSolver(AbstractSolver):
+    """Solve the model with finite-difference RK4."""
     def __init__(self, config: Config, grid: SimulationGrid2D):
+        """Set up the rk 4 fdm solver."""
         super().__init__(config)
         self.dx = grid.dx
         self.dy = grid.dy
@@ -29,9 +32,11 @@ class RK4FDMSolver(AbstractSolver):
 
     @staticmethod
     def _tuple_add(t1: tuple, t2: tuple, scalar: float) -> tuple:
+        """Add two state tuples with a scale factor."""
         return tuple(a + scalar * b for a, b in zip(t1, t2))
 
     def _ensure_buffers(self, psi):
+        """Allocate work buffers for the current field shape."""
         if (
             self._laplacian_buf is None
             or self._laplacian_buf.shape != psi.shape
@@ -40,6 +45,7 @@ class RK4FDMSolver(AbstractSolver):
             self._laplacian_buf = self.xp.zeros_like(psi)
 
     def _laplacian_periodic(self, psi, out) -> None:
+        """Apply the periodic Laplacian stencil."""
         out[:] = (
             self.xp.roll(psi, -1, axis=0) - 2 * psi + self.xp.roll(psi, 1, axis=0)
         ) / (self.dy**2) + (
@@ -49,6 +55,7 @@ class RK4FDMSolver(AbstractSolver):
         )
 
     def _laplacian_closed_interval_neumann(self, psi, out) -> None:
+        """Apply the closed-interval Neumann Laplacian stencil."""
         out.fill(0)
 
         if self.ny > 2 and self.nx > 2:
@@ -86,6 +93,7 @@ class RK4FDMSolver(AbstractSolver):
         ) / (self.dx**2)
 
     def _laplacian(self, psi, out) -> None:
+        """Apply the Laplacian for the current grid."""
         if self.grid_type == "periodic":
             self._laplacian_periodic(psi, out)
             return
@@ -104,6 +112,7 @@ class RK4FDMSolver(AbstractSolver):
         boundary_condition: BoundaryCondition,
         state: SimulationState,
     ) -> None:
+        """Advance the solver by one time step."""
         dt = self.config.solver.dt
 
         psi0 = state.psi
@@ -144,6 +153,7 @@ class RK4FDMSolver(AbstractSolver):
         pump: Union[np.ndarray, cp.ndarray],
         reservoir: AbstractReservoir,
     ) -> tuple[Union[np.ndarray, cp.ndarray], tuple]:
+        """Compute the right-hand side."""
         res_derivs = reservoir.get_derivatives(psi, pump, res_state)
         n_active = reservoir.get_active_density(res_state)
 

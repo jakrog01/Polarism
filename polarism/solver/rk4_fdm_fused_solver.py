@@ -1,3 +1,4 @@
+"""Fused finite-difference RK4 solver."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -19,7 +20,9 @@ if TYPE_CHECKING:
 @register_solver("rk4-fdm-fused")
 class RK4FDMFusedSolver(AbstractSolver):
 
+    """Solve the model with fused finite-difference RK4."""
     def __init__(self, config: Config, grid: SimulationGrid2D):
+        """Set up the fused RK4 solver."""
         super().__init__(config)
         self.dx = grid.dx
         self.dy = grid.dy
@@ -54,6 +57,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         self._setup_fused_kernels()
 
     def _setup_fused_kernels(self):
+        """Build fused array kernels when the backend supports them."""
         if not hasattr(self.xp, "fuse"):
             return
 
@@ -67,6 +71,7 @@ class RK4FDMFusedSolver(AbstractSolver):
 
         @xp.fuse()
         def fused_rhs(psi, lap, potential, n_active):
+            """Compute the fused right-hand side."""
             rho = xp.abs(psi) ** 2
             eff_energy = potential + g_C * rho + g_R * n_active
             gain_loss = (R * n_active - gamma_C) * 0.5
@@ -78,12 +83,14 @@ class RK4FDMFusedSolver(AbstractSolver):
 
         @xp.fuse()
         def fused_combine_rk4(psi0, k1, k2, k3, k4, dt_over_6):
+            """Combine RK4 stages in one fused kernel."""
             return psi0 + dt_over_6 * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
         self._fused_rhs = fused_rhs
         self._fused_combine = fused_combine_rk4
 
     def _ensure_buffers(self, psi):
+        """Allocate work buffers for the current field shape."""
         if self._buf_initialized and self._lap.shape == psi.shape:
             return
         shape = psi.shape
@@ -98,6 +105,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         self._buf_initialized = True
 
     def _laplacian(self, psi, out) -> None:
+        """Apply the Laplacian for the current grid."""
         if self.grid_type == "periodic":
             self._laplacian_periodic(psi, out)
         elif self.grid_type == "closed-interval":
@@ -106,6 +114,7 @@ class RK4FDMFusedSolver(AbstractSolver):
             raise ValueError(f"Unknown grid_type: {self.grid_type}")
 
     def _laplacian_periodic(self, psi, out) -> None:
+        """Apply the periodic Laplacian stencil."""
         inv_dx2 = self._inv_dx2
         inv_dy2 = self._inv_dy2
         xp = self.xp
@@ -116,6 +125,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         ) * inv_dx2
 
     def _laplacian_closed_interval_neumann(self, psi, out) -> None:
+        """Apply the closed-interval Neumann Laplacian stencil."""
         inv_dx2 = self._inv_dx2
         inv_dy2 = self._inv_dy2
         out.fill(0)
@@ -163,6 +173,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         )
 
     def _rhs_into(self, psi, n_active, potential, out) -> None:
+        """Write the right-hand side into the output buffer."""
         if self._fused_rhs is not None:
             self._laplacian(psi, self._lap)
             out[:] = self._fused_rhs(psi, self._lap, potential, n_active)
@@ -184,6 +195,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         boundary_condition: BoundaryCondition,
         state: SimulationState,
     ) -> None:
+        """Advance the solver by one time step."""
         dt = self._dt
         psi0 = state.psi
         self._ensure_buffers(psi0)

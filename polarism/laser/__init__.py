@@ -1,3 +1,4 @@
+"""Public laser exports."""
 from polarism.laser.continuous_exp import ContinuousExponentialPump
 from polarism.laser.continuous_gaussian import ContinuousGaussian
 from polarism.laser.laser_factory import LaserFactory

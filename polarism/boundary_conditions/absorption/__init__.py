@@ -1,3 +1,4 @@
+"""Public absorption exports."""
 from polarism.boundary_conditions.absorption.absorption_cap_strategy import (
     AbsorptionCapStrategy,
 )
