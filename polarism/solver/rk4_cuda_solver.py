@@ -13,24 +13,22 @@ if TYPE_CHECKING:
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
     from polarism.grid.simulation_grid_2d import SimulationGrid2D
-    from polarism.reservoir.abstract_reservoir import AbstractReservoir
 
+PREAMBLE_1D = """
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    const int N = nx * ny;
+    if (tid >= N) return;
+    const int i = tid / nx;
+    const int j = tid % nx;
+"""
 
-# ---------------------------------------------------------------------------
-# CUDA kernels: fused GP equation RHS + reservoir derivatives
-#
-# Three kernel types per reservoir variant:
-#   1. gpe_rhs       — standalone RHS (used for k1)
-#   2. fused_stage_rhs — compute intermediate state + RHS in one pass (k2-k4)
-#   3. rk4_combine   — final weighted combination of k1-k4
-#
-# This gives 5 kernel launches per time step (vs 8 before fusion).
-# ---------------------------------------------------------------------------
-
-# ---- Neighbor code snippets ----
+COMBINE_PREAMBLE_1D = """
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N) return;
+"""
 
 _NEUMANN_NEIGHBORS = """
-    // Neumann mirror BC: ghost point reflects across boundary
+    // Neumann
     const int up = (i > 0)    ? tid - nx : tid + nx;
     const int dn = (i < ny-1) ? tid + nx : tid - nx;
     const int lt = (j > 0)    ? tid - 1  : tid + 1;
@@ -38,19 +36,15 @@ _NEUMANN_NEIGHBORS = """
 """
 
 _PERIODIC_NEIGHBORS = """
-    // Periodic BC: wrap around
+    // Periodic
     const int up = ((i > 0)    ? i - 1 : ny - 1) * nx + j;
     const int dn = ((i < ny-1) ? i + 1 : 0)      * nx + j;
     const int lt = i * nx + ((j > 0)    ? j - 1 : nx - 1);
     const int rt = i * nx + ((j < nx-1) ? j + 1 : 0);
 """
 
-# ---------------------------------------------------------------------------
-# Single reservoir kernels
-# ---------------------------------------------------------------------------
-
 _KERNEL_RHS_TEMPLATE = r"""
-extern "C" __global__ void gpe_rhs(
+extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs(
     const {REAL}* __restrict__ psi,
     const {REAL}* __restrict__ nR,
     const {REAL}* __restrict__ V,
@@ -64,12 +58,7 @@ extern "C" __global__ void gpe_rhs(
     const {REAL} g_C, const {REAL} g_R,
     const {REAL} R_cond, const {REAL} gamma_C, const {REAL} gamma_R
 ) {{
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    const int N = nx * ny;
-    if (tid >= N) return;
-
-    const int i = tid / nx;
-    const int j = tid % nx;
+    {PREAMBLE}
 
     const {REAL} pre = psi[2*tid];
     const {REAL} pim = psi[2*tid + 1];
@@ -97,7 +86,7 @@ extern "C" __global__ void gpe_rhs(
 """
 
 _KERNEL_FUSED_STAGE_RHS_TEMPLATE = r"""
-extern "C" __global__ void fused_stage_rhs(
+extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs(
     const {REAL}* __restrict__ psi0,
     const {REAL}* __restrict__ k_psi,
     const {REAL}* __restrict__ nR0,
@@ -114,22 +103,16 @@ extern "C" __global__ void fused_stage_rhs(
     const {REAL} g_C, const {REAL} g_R,
     const {REAL} R_cond, const {REAL} gamma_C, const {REAL} gamma_R
 ) {{
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    const int N = nx * ny;
-    if (tid >= N) return;
+    {PREAMBLE}
 
     // Stage: compute intermediate state in registers (no global write)
     const {REAL} pre = psi0[2*tid]   + c_dt * k_psi[2*tid];
     const {REAL} pim = psi0[2*tid+1] + c_dt * k_psi[2*tid+1];
     const {REAL} nR_val = nR0[tid] + c_dt * k_nR[tid];
 
-    const int i = tid / nx;
-    const int j = tid % nx;
-
     {NEIGHBOR_CODE}
 
     // Must read neighbors from the staged values too.
-    // We cannot keep all neighbors in registers, so we recompute them.
     const {REAL} psi_up_re = psi0[2*up]   + c_dt * k_psi[2*up];
     const {REAL} psi_up_im = psi0[2*up+1] + c_dt * k_psi[2*up+1];
     const {REAL} psi_dn_re = psi0[2*dn]   + c_dt * k_psi[2*dn];
@@ -159,7 +142,7 @@ extern "C" __global__ void fused_stage_rhs(
 """
 
 _KERNEL_COMBINE = r"""
-extern "C" __global__ void rk4_combine(
+extern "C" __global__ {LAUNCH_BOUNDS} void rk4_combine(
     const {REAL}* __restrict__ psi0,
     const {REAL}* __restrict__ k1p, const {REAL}* __restrict__ k2p,
     const {REAL}* __restrict__ k3p, const {REAL}* __restrict__ k4p,
@@ -171,8 +154,7 @@ extern "C" __global__ void rk4_combine(
     const {REAL} dt6,
     const int N
 ) {{
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= N) return;
+    {COMBINE_PREAMBLE}
     psi_out[2*tid]   = psi0[2*tid]   + dt6 * (k1p[2*tid]   + 2*k2p[2*tid]   + 2*k3p[2*tid]   + k4p[2*tid]);
     psi_out[2*tid+1] = psi0[2*tid+1] + dt6 * (k1p[2*tid+1] + 2*k2p[2*tid+1] + 2*k3p[2*tid+1] + k4p[2*tid+1]);
     {REAL} nR_new = nR0[tid] + dt6 * (k1n[tid] + 2*k2n[tid] + 2*k3n[tid] + k4n[tid]);
@@ -180,12 +162,8 @@ extern "C" __global__ void rk4_combine(
 }}
 """
 
-# ---------------------------------------------------------------------------
-# Double reservoir kernels
-# ---------------------------------------------------------------------------
-
 _KERNEL_RHS_DOUBLE_TEMPLATE = r"""
-extern "C" __global__ void gpe_rhs_double(
+extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_double(
     const {REAL}* __restrict__ psi,
     const {REAL}* __restrict__ nA,
     const {REAL}* __restrict__ nI,
@@ -203,12 +181,7 @@ extern "C" __global__ void gpe_rhs_double(
     const {REAL} gamma_I, const {REAL} gamma_A,
     const {REAL} R_IA, const {REAL} R_AI
 ) {{
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    const int N = nx * ny;
-    if (tid >= N) return;
-
-    const int i = tid / nx;
-    const int j = tid % nx;
+    {PREAMBLE}
 
     const {REAL} pre = psi[2*tid];
     const {REAL} pim = psi[2*tid + 1];
@@ -239,7 +212,7 @@ extern "C" __global__ void gpe_rhs_double(
 """
 
 _KERNEL_FUSED_STAGE_RHS_DOUBLE_TEMPLATE = r"""
-extern "C" __global__ void fused_stage_rhs_double(
+extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_double(
     const {REAL}* __restrict__ psi0,
     const {REAL}* __restrict__ k_psi,
     const {REAL}* __restrict__ nA0,
@@ -261,18 +234,12 @@ extern "C" __global__ void fused_stage_rhs_double(
     const {REAL} gamma_I, const {REAL} gamma_A,
     const {REAL} R_IA, const {REAL} R_AI
 ) {{
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    const int N = nx * ny;
-    if (tid >= N) return;
+    {PREAMBLE}
 
-    // Stage: intermediate state in registers
     const {REAL} pre = psi0[2*tid]   + c_dt * k_psi[2*tid];
     const {REAL} pim = psi0[2*tid+1] + c_dt * k_psi[2*tid+1];
     const {REAL} nA_val = nA0[tid] + c_dt * k_nA[tid];
     const {REAL} nI_val = nI0[tid] + c_dt * k_nI[tid];
-
-    const int i = tid / nx;
-    const int j = tid % nx;
 
     {NEIGHBOR_CODE}
 
@@ -306,7 +273,7 @@ extern "C" __global__ void fused_stage_rhs_double(
 """
 
 _KERNEL_COMBINE_DOUBLE = r"""
-extern "C" __global__ void rk4_combine_double(
+extern "C" __global__ {LAUNCH_BOUNDS} void rk4_combine_double(
     const {REAL}* __restrict__ psi0,
     const {REAL}* __restrict__ k1p, const {REAL}* __restrict__ k2p,
     const {REAL}* __restrict__ k3p, const {REAL}* __restrict__ k4p,
@@ -322,8 +289,7 @@ extern "C" __global__ void rk4_combine_double(
     const {REAL} dt6,
     const int N
 ) {{
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= N) return;
+    {COMBINE_PREAMBLE}
     psi_out[2*tid]   = psi0[2*tid]   + dt6 * (k1p[2*tid]   + 2*k2p[2*tid]   + 2*k3p[2*tid]   + k4p[2*tid]);
     psi_out[2*tid+1] = psi0[2*tid+1] + dt6 * (k1p[2*tid+1] + 2*k2p[2*tid+1] + 2*k3p[2*tid+1] + k4p[2*tid+1]);
     {REAL} nA_new = nA0[tid] + dt6 * (k1a[tid] + 2*k2a[tid] + 2*k3a[tid] + k4a[tid]);
@@ -333,17 +299,17 @@ extern "C" __global__ void rk4_combine_double(
 }}
 """
 
-
-def _build_kernel_code(
-    bc_type: str, real_type: str = "double", reservoir_type: str = "single"
+def build_kernel_source_1d(
+    bc_type: str,
+    real_type: str = "double",
+    reservoir_type: str = "single",
+    preamble: str = PREAMBLE_1D,
+    combine_preamble: str = COMBINE_PREAMBLE_1D,
+    launch_bounds: str = "",
 ) -> tuple[str, str, str]:
-    if bc_type == "closed-interval":
-        neighbor_code = _NEUMANN_NEIGHBORS
-        bc_comment = "Neumann mirror"
-    else:
-        neighbor_code = _PERIODIC_NEIGHBORS
-        bc_comment = "Periodic wrap"
-
+    neighbor_code = (
+        _NEUMANN_NEIGHBORS if bc_type == "closed-interval" else _PERIODIC_NEIGHBORS
+    )
     if reservoir_type == "double":
         rhs_tmpl = _KERNEL_RHS_DOUBLE_TEMPLATE
         fused_tmpl = _KERNEL_FUSED_STAGE_RHS_DOUBLE_TEMPLATE
@@ -353,16 +319,21 @@ def _build_kernel_code(
         fused_tmpl = _KERNEL_FUSED_STAGE_RHS_TEMPLATE
         combine_tmpl = _KERNEL_COMBINE
 
-    fmt = dict(REAL=real_type, NEIGHBOR_CODE=neighbor_code, BC_COMMENT=bc_comment)
-
-    rhs_code = rhs_tmpl.format(**fmt)
-    fused_code = fused_tmpl.format(**fmt)
-    combine_code = combine_tmpl.format(**fmt)
-    return rhs_code, fused_code, combine_code
+    fmt = dict(
+        REAL=real_type,
+        NEIGHBOR_CODE=neighbor_code,
+        PREAMBLE=preamble,
+        COMBINE_PREAMBLE=combine_preamble,
+        LAUNCH_BOUNDS=launch_bounds,
+    )
+    return (
+        rhs_tmpl.format(**fmt),
+        fused_tmpl.format(**fmt),
+        combine_tmpl.format(**fmt),
+    )
 
 
 def _auto_tune_block_size(kern_rhs, _N: int) -> int:
-    """Pick optimal block size from candidates by querying occupancy."""
     candidates = [128, 256, 512]
     best_block = 256
     best_occupancy = 0
@@ -377,9 +348,10 @@ def _auto_tune_block_size(kern_rhs, _N: int) -> int:
             continue
     return best_block
 
-
 @register_solver("rk4-cuda")
 class RK4CudaSolver(AbstractSolver):
+    """Generic fused RK4 CUDA solver with overridable kernel and launch hooks."""
+
     def __init__(self, config: Config, grid: SimulationGrid2D):
         super().__init__(config)
         self.nx = grid.nx
@@ -387,9 +359,10 @@ class RK4CudaSolver(AbstractSolver):
         self.N = grid.nx * grid.ny
         self.grid_type = getattr(config.grid, "grid_type", "periodic")
         _res_cfg = getattr(config, "reservoir", None)
-        self._reservoir_type = getattr(_res_cfg, "reservoir_type", "single") if _res_cfg else "single"
+        self._reservoir_type = (
+            getattr(_res_cfg, "reservoir_type", "single") if _res_cfg else "single"
+        )
 
-        # Precision config
         import numpy as _np
 
         self._precision = getattr(config.solver, "precision", "double")
@@ -417,13 +390,12 @@ class RK4CudaSolver(AbstractSolver):
             self._R_IA = config.physics.R_IA
             self._R_AI = config.physics.R_AI
 
-        self._inv_dx2 = 1.0 / (grid.dx**2)
-        self._inv_dy2 = 1.0 / (grid.dy**2)
-        self._neg_hbar2_over_2m = -(self._hbar**2) / (2.0 * self._m_eff)
+        self._inv_dx2 = 1.0 / (grid.dx ** 2)
+        self._inv_dy2 = 1.0 / (grid.dy ** 2)
+        self._neg_hbar2_over_2m = -(self._hbar ** 2) / (2.0 * self._m_eff)
         self._inv_hbar = 1.0 / self._hbar
 
         self._use_gpu = hasattr(self.xp, "cuda")
-        self._buf_initialized = False
 
         if self._use_gpu:
             _cast = self._np_real
@@ -441,6 +413,10 @@ class RK4CudaSolver(AbstractSolver):
             self._k_gamma_C = _cast(self._gamma_C)
             self._k_gamma_R = _cast(self._gamma_R)
 
+            self._k_half_dt = _cast(0.5 * self._dt)
+            self._k_dt = _cast(self._dt)
+            self._k_dt6 = _cast(self._dt / 6.0)
+
             if self._reservoir_type == "double":
                 self._k_gamma_I = _cast(self._gamma_I)
                 self._k_gamma_A = _cast(self._gamma_A)
@@ -448,20 +424,31 @@ class RK4CudaSolver(AbstractSolver):
                 self._k_R_AI = _cast(self._R_AI)
 
             self._compile_kernels()
+            self._init_gpu_buffers()
 
-            # CUDA streams for async save overlap
             import cupy as _cp
             self._stream_compute = _cp.cuda.Stream(non_blocking=True)
             self._stream_transfer = _cp.cuda.Stream(non_blocking=True)
             self._transfer_event = _cp.cuda.Event()
 
-    def _compile_kernels(self):
+    def _build_kernel_source(
+        self, bc_type: str, real_type: str, reservoir_type: str
+    ) -> tuple[str, str, str]:
+        return build_kernel_source_1d(bc_type, real_type, reservoir_type)
+
+    def _select_block_size(self) -> int:
+        return _auto_tune_block_size(self._kern_rhs, self.N)
+
+    def _make_launch_dims(self, block_size: int) -> None:
+        grid = (self.N + block_size - 1) // block_size
+        self._k_grid = (grid,)
+        self._k_block = (block_size,)
+
+    def _compile_kernels(self) -> None:
         import cupy as cp
 
-        rhs_src, fused_src, combine_src = _build_kernel_code(
-            self.grid_type,
-            real_type=self._real_type,
-            reservoir_type=self._reservoir_type,
+        rhs_src, fused_src, combine_src = self._build_kernel_source(
+            self.grid_type, self._real_type, self._reservoir_type
         )
 
         if self._reservoir_type == "double":
@@ -473,22 +460,15 @@ class RK4CudaSolver(AbstractSolver):
             self._kern_fused = cp.RawKernel(fused_src, "fused_stage_rhs")
             self._kern_combine = cp.RawKernel(combine_src, "rk4_combine")
 
-        # Auto-tune block size
-        self._block = _auto_tune_block_size(self._kern_rhs, self.N)
-        self._grid_rhs = (self.N + self._block - 1) // self._block
+        block = self._select_block_size()
+        self._make_launch_dims(block)
 
-    def _ensure_buffers(self, psi=None):
-        if self._buf_initialized:
-            return
+    def _init_gpu_buffers(self) -> None:
         xp = self.xp
         N = self.N
 
-        if self._precision == "single":
-            cdtype = xp.complex64
-            rdtype = xp.float32
-        else:
-            cdtype = xp.complex128
-            rdtype = xp.float64
+        cdtype = xp.complex64 if self._precision == "single" else xp.complex128
+        rdtype = xp.float32 if self._precision == "single" else xp.float64
 
         self._k1_psi = xp.empty(N, dtype=cdtype)
         self._k2_psi = xp.empty(N, dtype=cdtype)
@@ -514,10 +494,8 @@ class RK4CudaSolver(AbstractSolver):
             self._nI_tmp = xp.empty(N, dtype=rdtype)
             self._nI0 = xp.empty(N, dtype=rdtype)
 
-        self._buf_initialized = True
-
     def _cast_to_precision(self, arr):
-        """Cast array to solver precision if needed."""
+        """Cast array to solver precision if needed (no-op when types match)."""
         xp = self.xp
         if self._precision == "single":
             if xp.iscomplexobj(arr):
@@ -528,14 +506,9 @@ class RK4CudaSolver(AbstractSolver):
                     return arr.astype(xp.float32)
         return arr
 
-    # ------------------------------------------------------------------
-    # Single reservoir GPU path (fused: 5 launches per step)
-    # ------------------------------------------------------------------
-
     def _gpu_rhs(self, psi, nR, V, pump, out_dpsi, out_dnR):
         self._kern_rhs(
-            (self._grid_rhs,),
-            (self._block,),
+            self._k_grid, self._k_block,
             (
                 psi, nR, V, pump, out_dpsi, out_dnR,
                 self._k_nx, self._k_ny,
@@ -548,12 +521,11 @@ class RK4CudaSolver(AbstractSolver):
 
     def _gpu_fused_stage_rhs(self, psi0, k_psi, nR0, k_nR, c_dt, V, pump, out_dpsi, out_dnR):
         self._kern_fused(
-            (self._grid_rhs,),
-            (self._block,),
+            self._k_grid, self._k_block,
             (
                 psi0, k_psi, nR0, k_nR, V, pump, out_dpsi, out_dnR,
                 self._k_nx, self._k_ny,
-                self._np_real(c_dt),
+                c_dt,
                 self._k_inv_dx2, self._k_inv_dy2,
                 self._k_neg_hbar2_over_2m, self._k_inv_hbar,
                 self._k_g_C, self._k_g_R,
@@ -565,61 +537,47 @@ class RK4CudaSolver(AbstractSolver):
         self, psi0, k1p, k2p, k3p, k4p, nR0, k1n, k2n, k3n, k4n, psi_out, nR_out
     ):
         self._kern_combine(
-            (self._grid_rhs,),
-            (self._block,),
+            self._k_grid, self._k_block,
             (
                 psi0, k1p, k2p, k3p, k4p,
                 nR0, k1n, k2n, k3n, k4n,
                 psi_out, nR_out,
-                self._np_real(self._dt / 6.0),
+                self._k_dt6,
                 self._k_N,
             ),
         )
 
     def _step_gpu(self, V, pump, nR_buf, psi_buf):
-        dt = self._dt
         psi0 = self._psi0
         nR0 = self._nA0
 
         psi0[:] = psi_buf
         nR0[:] = nR_buf
 
-        # k1: standalone RHS on initial state
         self._gpu_rhs(psi0, nR0, V, pump, self._k1_psi, self._k1_nA)
 
-        # k2: fused stage(psi0 + 0.5*dt*k1) + RHS
         self._gpu_fused_stage_rhs(
             psi0, self._k1_psi, nR0, self._k1_nA,
-            0.5 * dt, V, pump, self._k2_psi, self._k2_nA,
+            self._k_half_dt, V, pump, self._k2_psi, self._k2_nA,
         )
-
-        # k3: fused stage(psi0 + 0.5*dt*k2) + RHS
         self._gpu_fused_stage_rhs(
             psi0, self._k2_psi, nR0, self._k2_nA,
-            0.5 * dt, V, pump, self._k3_psi, self._k3_nA,
+            self._k_half_dt, V, pump, self._k3_psi, self._k3_nA,
         )
-
-        # k4: fused stage(psi0 + dt*k3) + RHS
         self._gpu_fused_stage_rhs(
             psi0, self._k3_psi, nR0, self._k3_nA,
-            dt, V, pump, self._k4_psi, self._k4_nA,
+            self._k_dt, V, pump, self._k4_psi, self._k4_nA,
         )
 
-        # Combine: 5th launch
         self._gpu_combine(
             psi0, self._k1_psi, self._k2_psi, self._k3_psi, self._k4_psi,
             nR0, self._k1_nA, self._k2_nA, self._k3_nA, self._k4_nA,
             psi_buf, nR_buf,
         )
 
-    # ------------------------------------------------------------------
-    # Double reservoir GPU path (fused: 5 launches per step)
-    # ------------------------------------------------------------------
-
     def _gpu_rhs_double(self, psi, nA, nI, V, pump, out_dpsi, out_dnA, out_dnI):
         self._kern_rhs(
-            (self._grid_rhs,),
-            (self._block,),
+            self._k_grid, self._k_block,
             (
                 psi, nA, nI, V, pump, out_dpsi, out_dnA, out_dnI,
                 self._k_nx, self._k_ny,
@@ -637,13 +595,12 @@ class RK4CudaSolver(AbstractSolver):
         out_dpsi, out_dnA, out_dnI,
     ):
         self._kern_fused(
-            (self._grid_rhs,),
-            (self._block,),
+            self._k_grid, self._k_block,
             (
                 psi0, k_psi, nA0, k_nA, nI0, k_nI, V, pump,
                 out_dpsi, out_dnA, out_dnI,
                 self._k_nx, self._k_ny,
-                self._np_real(c_dt),
+                c_dt,
                 self._k_inv_dx2, self._k_inv_dy2,
                 self._k_neg_hbar2_over_2m, self._k_inv_hbar,
                 self._k_g_C, self._k_g_R,
@@ -660,20 +617,18 @@ class RK4CudaSolver(AbstractSolver):
         psi_out, nA_out, nI_out,
     ):
         self._kern_combine(
-            (self._grid_rhs,),
-            (self._block,),
+            self._k_grid, self._k_block,
             (
                 psi0, k1p, k2p, k3p, k4p,
                 nA0, k1a, k2a, k3a, k4a,
                 nI0, k1i, k2i, k3i, k4i,
                 psi_out, nA_out, nI_out,
-                self._np_real(self._dt / 6.0),
+                self._k_dt6,
                 self._k_N,
             ),
         )
 
     def _step_gpu_double(self, V, pump, nA_buf, nI_buf, psi_buf):
-        dt = self._dt
         psi0 = self._psi0
         nA0 = self._nA0
         nI0 = self._nI0
@@ -682,32 +637,25 @@ class RK4CudaSolver(AbstractSolver):
         nA0[:] = nA_buf
         nI0[:] = nI_buf
 
-        # k1
         self._gpu_rhs_double(psi0, nA0, nI0, V, pump,
-                             self._k1_psi, self._k1_nA, self._k1_nI)
+                              self._k1_psi, self._k1_nA, self._k1_nI)
 
-        # k2: fused
         self._gpu_fused_stage_rhs_double(
             psi0, self._k1_psi, nA0, self._k1_nA, nI0, self._k1_nI,
-            0.5 * dt, V, pump,
+            self._k_half_dt, V, pump,
             self._k2_psi, self._k2_nA, self._k2_nI,
         )
-
-        # k3: fused
         self._gpu_fused_stage_rhs_double(
             psi0, self._k2_psi, nA0, self._k2_nA, nI0, self._k2_nI,
-            0.5 * dt, V, pump,
+            self._k_half_dt, V, pump,
             self._k3_psi, self._k3_nA, self._k3_nI,
         )
-
-        # k4: fused
         self._gpu_fused_stage_rhs_double(
             psi0, self._k3_psi, nA0, self._k3_nA, nI0, self._k3_nI,
-            dt, V, pump,
+            self._k_dt, V, pump,
             self._k4_psi, self._k4_nA, self._k4_nI,
         )
 
-        # Combine
         self._gpu_combine_double(
             psi0,
             self._k1_psi, self._k2_psi, self._k3_psi, self._k4_psi,
@@ -717,10 +665,6 @@ class RK4CudaSolver(AbstractSolver):
             self._k1_nI, self._k2_nI, self._k3_nI, self._k4_nI,
             psi_buf, nA_buf, nI_buf,
         )
-
-    # ------------------------------------------------------------------
-    # CPU fallback paths (unchanged)
-    # ------------------------------------------------------------------
 
     def _cpu_laplacian(self, psi, out):
         xp = self.xp
@@ -804,18 +748,9 @@ class RK4CudaSolver(AbstractSolver):
         nR0 = reservoir.get_reservoir_density().copy()
 
         k1p, k1n = self._cpu_rhs(psi0, nR0, V, pump)
-
-        psi2 = psi0 + 0.5 * dt * k1p
-        nR2 = nR0 + 0.5 * dt * k1n
-        k2p, k2n = self._cpu_rhs(psi2, nR2, V, pump)
-
-        psi3 = psi0 + 0.5 * dt * k2p
-        nR3 = nR0 + 0.5 * dt * k2n
-        k3p, k3n = self._cpu_rhs(psi3, nR3, V, pump)
-
-        psi4 = psi0 + dt * k3p
-        nR4 = nR0 + dt * k3n
-        k4p, k4n = self._cpu_rhs(psi4, nR4, V, pump)
+        k2p, k2n = self._cpu_rhs(psi0 + 0.5 * dt * k1p, nR0 + 0.5 * dt * k1n, V, pump)
+        k3p, k3n = self._cpu_rhs(psi0 + 0.5 * dt * k2p, nR0 + 0.5 * dt * k2n, V, pump)
+        k4p, k4n = self._cpu_rhs(psi0 + dt * k3p, nR0 + dt * k3n, V, pump)
 
         state.psi = psi0 + (dt / 6.0) * (k1p + 2 * k2p + 2 * k3p + k4p)
         state.psi = boundary_condition.after_step_action(state.psi)
@@ -831,7 +766,6 @@ class RK4CudaSolver(AbstractSolver):
         nI0 = nI0.copy()
 
         k1p, k1a, k1i = self._cpu_rhs_double(psi0, nA0, nI0, V, pump)
-
         k2p, k2a, k2i = self._cpu_rhs_double(
             psi0 + 0.5 * dt * k1p, nA0 + 0.5 * dt * k1a, nI0 + 0.5 * dt * k1i, V, pump
         )
@@ -849,10 +783,6 @@ class RK4CudaSolver(AbstractSolver):
         nI_new = nI0 + dt6 * (k1i + 2 * k2i + 2 * k3i + k4i)
         reservoir.set_state((xp.maximum(nA_new, 0), xp.maximum(nI_new, 0)))
 
-    # ------------------------------------------------------------------
-    # Main entry point
-    # ------------------------------------------------------------------
-
     def step(
         self,
         potential: Union[np.ndarray, cp.ndarray],
@@ -868,50 +798,37 @@ class RK4CudaSolver(AbstractSolver):
                 self._step_cpu(potential, pump, reservoir, boundary_condition, state)
             return
 
-        self._ensure_buffers(state.psi)
         shape = state.psi.shape
 
-        # Cast inputs to solver precision
         V_flat = self._cast_to_precision(potential).ravel()
         pump_flat = self._cast_to_precision(pump).ravel()
 
         with self._stream_compute:
             if self._reservoir_type == "double":
                 nA, nI = reservoir.get_state()
-                nA_flat = self._cast_to_precision(nA).ravel()
-                nI_flat = self._cast_to_precision(nI).ravel()
                 psi_buf = self._psi_tmp
                 psi_buf[:] = self._cast_to_precision(state.psi).ravel()
                 nA_buf = self._nA_tmp
-                nA_buf[:] = nA_flat
+                nA_buf[:] = self._cast_to_precision(nA).ravel()
                 nI_buf = self._nI_tmp
-                nI_buf[:] = nI_flat
+                nI_buf[:] = self._cast_to_precision(nI).ravel()
 
                 self._step_gpu_double(V_flat, pump_flat, nA_buf, nI_buf, psi_buf)
-
-                # Record event so transfer stream can wait for compute
                 self._transfer_event.record(self._stream_compute)
-
             else:
-                psi_flat = self._cast_to_precision(state.psi).ravel()
-                nR_flat = self._cast_to_precision(
+                psi_buf = self._psi_tmp
+                psi_buf[:] = self._cast_to_precision(state.psi).ravel()
+                nR_buf = self._nA_tmp
+                nR_buf[:] = self._cast_to_precision(
                     reservoir.get_reservoir_density()
                 ).ravel()
-                psi_buf = self._psi_tmp
-                psi_buf[:] = psi_flat
-                nR_buf = self._nA_tmp
-                nR_buf[:] = nR_flat
 
                 self._step_gpu(V_flat, pump_flat, nR_buf, psi_buf)
-
                 self._transfer_event.record(self._stream_compute)
 
-        # Wait for compute, then write back results
-        # (transfer stream waits on compute event)
         self._stream_transfer.wait_event(self._transfer_event)
         with self._stream_transfer:
             if self._reservoir_type == "double":
-                # Cast back to original precision if needed
                 psi_result = psi_buf.reshape(shape)
                 if state.psi.dtype != psi_result.dtype:
                     psi_result = psi_result.astype(state.psi.dtype)
@@ -941,5 +858,4 @@ class RK4CudaSolver(AbstractSolver):
                     )
                 reservoir.set_state((self.xp.maximum(nR_result, 0),))
 
-        # Synchronize transfer stream to ensure state is ready
         self._stream_transfer.synchronize()
