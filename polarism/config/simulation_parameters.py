@@ -16,8 +16,8 @@ class GridParameters:
 @dataclass
 class PhysicsConstants:
     """Store the physics constants for the model."""
-    hbar: float = 0.6582119514  # mev * ps
-    m_eff: float = 0.284  # meV * ps**2 / um**2
+    hbar: float = 0.6582119514
+    m_eff: float = 0.284
     gamma_R: float = 0.005
     gamma_C: float = 0.083
     g_C: float = 0.001
@@ -71,6 +71,7 @@ class LaserParameters:
     pulse_separation: float = 0.6
     cutoff_sigma: float = 3.0
     delay: float = 0.0
+    n_pulses: int = 0
 
 
 @dataclass
@@ -98,7 +99,7 @@ class ResultParameters:
     save_hdf5: bool = False
     save_json: bool = False
     save_npy: bool = False
-    save_interval: int = 1 
+    save_interval: int = 1
     batch_size: int = 1000
     output_directory: str = "simulation_results"
 
