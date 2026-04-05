@@ -19,6 +19,8 @@ import json
 import os
 import shutil
 import sys
+import time
+import traceback
 
 import numpy as np
 
@@ -41,22 +43,32 @@ def _make_scratch_dir(run_dir: str, scenario_name: str) -> str:
 
     Layout: ``<base>/polariton/<run_name>/<job_id>_<task_id>/<scenario>/``
 
-    Prefers ``$SCRATCH`` over ``$TMPDIR`` because HDF5 outputs can be large.
-    Returns *run_dir* itself only as a last resort (no scratch configured).
+    Prefers ``$SCRATCH`` over Slurm/node-local temp directories because HDF5
+    outputs can be large. On cluster runs we fail fast when only ``/tmp`` is
+    available instead of silently filling node-local storage and failing late
+    during HDF5 finalization or copy-back.
     """
     run_name = os.path.basename(run_dir.rstrip("/"))
     job_id = os.environ.get("SLURM_JOB_ID") or os.environ.get("SLURM_ARRAY_JOB_ID", "local")
     task_id = os.environ.get("SLURM_ARRAY_TASK_ID", "0")
     unique_id = f"{job_id}_{task_id}"
 
-    for env_var in ("SCRATCH", "TMPDIR"):
+    for env_var in ("SCRATCH", "SLURM_TMPDIR", "TMPDIR"):
         base = os.environ.get(env_var)
         if base and os.path.isdir(base):
+            if os.path.realpath(base) == "/tmp":
+                continue
             scratch = os.path.join(base, "polariton", run_name, unique_id, scenario_name)
             os.makedirs(scratch, exist_ok=False)
             return scratch
 
-    # No external scratch: write directly to the run directory.
+    if os.environ.get("SLURM_JOB_ID") or os.environ.get("SLURM_ARRAY_JOB_ID"):
+        raise RuntimeError(
+            "No suitable scratch directory found for the GPU scenario job. "
+            "Set and export SCRATCH in slurm.env or provide SLURM_TMPDIR/TMPDIR "
+            "that points to real job scratch, not /tmp."
+        )
+
     return run_dir
 
 
@@ -76,7 +88,6 @@ def main() -> None:
         print(f"ERROR: run directory does not exist: {run_dir}", file=sys.stderr)
         sys.exit(1)
 
-    # Resolve array task index.
     if args.scenario_index is not None:
         scenario_index = args.scenario_index
     else:
@@ -95,7 +106,6 @@ def main() -> None:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Load config and threshold from the run directory (canonical snapshot).
     config_path = os.path.join(run_dir, "config.yaml")
     threshold_path = os.path.join(run_dir, "threshold_result.json")
     for path in (config_path, threshold_path):
@@ -141,11 +151,34 @@ def main() -> None:
             f"delay={laser.delay:.3f} ps"
         )
 
+    required_time = max(
+        (
+            laser.delay
+            + (max(laser.n_pulses, 1) - 1) * laser.pulse_separation
+            + 2.0 * laser.cutoff_sigma * laser.sigma_time
+            if getattr(laser, "n_pulses", 0) > 0
+            else laser.delay + 2.0 * laser.cutoff_sigma * laser.sigma_time
+        )
+        for laser in lasers
+    )
+    if required_time > sim_cfg.solver.total_time:
+        print(
+            "ERROR: scenario timing does not fit inside the configured simulation "
+            f"window. Need at least {required_time:.1f} ps, but total_time="
+            f"{sim_cfg.solver.total_time:.1f} ps.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     batch_size = compute_batch_size(grid.ny, grid.nx)
     n_steps = int(sim_cfg.solver.total_time / sim_cfg.solver.dt)
     print(f"  Batch: {batch_size},  Steps: {n_steps:,}")
 
-    scratch_dir = _make_scratch_dir(run_dir, scenario_name)
+    try:
+        scratch_dir = _make_scratch_dir(run_dir, scenario_name)
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
     using_scratch = scratch_dir != run_dir
     if using_scratch:
         print(f"  Scratch: {scratch_dir}")
@@ -154,26 +187,55 @@ def main() -> None:
 
     try:
         print("\n  Running simulation ...")
+        t_sim_start = time.monotonic()
         t_cond = run_simulation_from_config(
             scenario_name, lasers, sim_cfg, batch_size, scratch_dir,
         )
+        elapsed_sim = time.monotonic() - t_sim_start
     except Exception:
+        traceback.print_exc()
         if using_scratch and os.path.isdir(scratch_dir):
             shutil.rmtree(scratch_dir, ignore_errors=True)
+        else:
+            partial = os.path.join(run_dir, f"{scenario_name}.h5")
+            if os.path.isfile(partial):
+                try:
+                    os.remove(partial)
+                except OSError:
+                    pass
         sys.exit(1)
 
+    copyback_seconds: float = 0.0
     if using_scratch:
         src = os.path.join(scratch_dir, f"{scenario_name}.h5")
         if not os.path.isfile(src):
             print(f"ERROR: expected HDF5 not found at {src}", file=sys.stderr)
             shutil.rmtree(scratch_dir, ignore_errors=True)
             sys.exit(1)
+        print(f"  Copying scratch → {h5_final} ...")
+        t_copy_start = time.monotonic()
         tmp_dst = h5_final + ".tmp"
-        shutil.copy2(src, tmp_dst)
-        os.replace(tmp_dst, h5_final)
-        print(f"  Copied {src}\n       → {h5_final}")
+        try:
+            shutil.copy2(src, tmp_dst)
+            os.replace(tmp_dst, h5_final)
+        except Exception:
+            traceback.print_exc()
+            if os.path.isfile(tmp_dst):
+                try:
+                    os.remove(tmp_dst)
+                except OSError:
+                    pass
+            print(
+                "ERROR: copy-back failed; preserving scratch directory for recovery: "
+                f"{scratch_dir}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        copyback_seconds = time.monotonic() - t_copy_start
+        print(f"  Copied {src}\n       → {h5_final}  ({copyback_seconds:.1f}s)")
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
+    h5_bytes = os.path.getsize(h5_final) if os.path.isfile(h5_final) else 0
     meta: dict = {
         "scenario": scenario_name,
         "scenario_index": scenario_index,
@@ -193,6 +255,13 @@ def main() -> None:
         ],
         "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
         "slurm_task_id": os.environ.get("SLURM_ARRAY_TASK_ID"),
+        "telemetry": {
+            "elapsed_sim_seconds": round(elapsed_sim, 2),
+            "batch_size": batch_size,
+            "n_steps": int(sim_cfg.solver.total_time / sim_cfg.solver.dt),
+            "h5_bytes": h5_bytes,
+            "copyback_seconds": round(copyback_seconds, 2),
+        },
     }
     atomic_write_json(scenario_meta_path(run_dir, scenario_name), meta)
     print(f"  Metadata: {scenario_meta_path(run_dir, scenario_name)}")

@@ -30,6 +30,11 @@ def main() -> None:
         help="0-based index into scenario_index.json.  "
              "Defaults to $SLURM_ARRAY_TASK_ID.",
     )
+    parser.add_argument(
+        "--no-animation", action="store_true", default=False,
+        help="Skip animation generation.  Useful for large campaigns where "
+             "preloading all frames would exceed available memory.",
+    )
     args = parser.parse_args()
 
     run_dir = os.path.abspath(args.run_dir)
@@ -93,11 +98,14 @@ def main() -> None:
         except Exception as e:
             print(f" WARNING: {e}", file=sys.stderr)
 
-    print("  animation ...", flush=True)
-    try:
-        generate_animation(scenario_name, extent, data_dir=run_dir, results_dir=results_dir)
-    except Exception as e:
-        print(f"  WARNING: animation failed: {e}", file=sys.stderr)
+    if args.no_animation:
+        print("  animation ... skipped (--no-animation)")
+    else:
+        print("  animation ...", flush=True)
+        try:
+            generate_animation(scenario_name, extent, data_dir=run_dir, results_dir=results_dir)
+        except Exception as e:
+            print(f"  WARNING: animation failed: {e}", file=sys.stderr)
 
     print(f"\n  Visualization for '{scenario_name}' complete.")
 

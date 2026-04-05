@@ -22,7 +22,7 @@ The supported entry point is:
 bash src/pump_multi_comparison/submit.sh [--config config.yaml] [--runs-dir /path/to/runs] [--dry-run]
 ```
 
-This wrapper owns the run-directory setup and Slurm submission logic. The legacy scripts under `legacy/` are kept for reference only and are not part of the main path.
+This wrapper owns the run-directory setup and Slurm submission logic. By default it writes runs under `src/pump_multi_comparison/runs/`; use `--runs-dir` to override that. The legacy scripts under `legacy/` are kept for reference only and are not part of the main path.
 
 ## Pipeline structure
 
@@ -67,7 +67,25 @@ Each run produces a timestamped directory containing:
 - plots and aggregated summaries
 - Slurm logs
 
+With the default submission path, these live under `src/pump_multi_comparison/runs/<timestamp>_<config-hash>/`.
+
 This makes the example useful as a reference for reproducible study orchestration, not just raw simulation execution.
+
+## Scenario configuration
+
+The current `src/pump_multi_comparison/config.yaml` example uses a deterministic
+multi-laser scenario schema built around reusable YAML anchors:
+
+- `timing_vars` defines shared arithmetic expressions such as `pulse_duration`
+  and `cycle_duration`, evaluated from threshold-search results
+- each laser defines an explicit `delay` as either a number or an arithmetic
+  expression
+- `power_modifiers` scales selected laser IDs using threshold-relative power
+  expressions such as `0.9P`
+
+This keeps the scenario description readable while remaining flexible for
+regular or irregular spatial layouts. The older relational `timing:` syntax is
+not part of the current schema.
 
 ## Why it lives in `src/`
 

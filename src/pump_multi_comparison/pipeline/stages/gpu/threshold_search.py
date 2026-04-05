@@ -1,7 +1,28 @@
 """GPU stage: threshold search.
 
 Scans the (power, sigma_time, pulse_separation) parameter space for the
-minimum pump power that drives condensation.  Outputs
+minimum pump power that drives condensation. ``P_threshold`` is defined
+as the lowest value in ``power_values`` for which at least one valid
+``(sigma_time, pulse_separation)`` combination produces condensation.
+
+By default the search is anchored to the first scenario in ``config.yaml``:
+
+- laser geometry, delays, power modifiers, finite train counts, and the
+  scenario potential are reused as the optimization reference
+- the search falls back to the legacy single-laser proxy only when no
+  scenario is available
+
+Selection is lexicographic and deterministic:
+
+1. minimize power
+2. minimize ``sigma_time`` (shortest pulse)
+3. minimize condensation time ``t_cond``
+4. minimize ``pulse_separation`` (only relevant when ``pulse_separation_values``
+   is used; with ``pulse_separation_formula`` each sigma_time maps to exactly
+   one derived separation, so this step is never exercised)
+
+This keeps the threshold search aligned with a "weak but fast" operating
+point while still guaranteeing condensation. Outputs
 ``threshold_result.json`` to the run directory.
 
 Invoked by Slurm as:
@@ -18,7 +39,15 @@ import sys
 import time
 from typing import Any
 
-from pipeline.config.loader import get_threshold_search_cfg, load_config, make_dataclass
+import numpy as np
+
+from pipeline.config.builder import build_scenario_lasers
+from pipeline.config.loader import (
+    get_threshold_search_cfg,
+    load_config,
+    make_dataclass,
+    resolve_delay,
+)
 from pipeline.manifest.io import atomic_write_json, set_manifest_field
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine
@@ -46,10 +75,12 @@ CHECK_EVERY = 500
 MIN_CHECK_TIME = 50.0
 RNG_SEED = 42
 
-
-# ── Internal helpers ──────────────────────────────────────────────────────────
-
-def _build_config(global_cfg: dict[str, Any], t_max: float, dt: float) -> Config:
+def _build_config(
+    global_cfg: dict[str, Any],
+    t_max: float,
+    dt: float,
+    potential_cfg: dict[str, Any] | None = None,
+) -> Config:
     """Build a Config sized for the threshold search (coarser dt, shorter time)."""
     defaults = global_cfg.get("laser_defaults", {})
     return Config(
@@ -57,7 +88,7 @@ def _build_config(global_cfg: dict[str, Any], t_max: float, dt: float) -> Config
         boundary_condition=make_dataclass(
             BoundaryConditionParameters, global_cfg.get("boundary_condition", {})
         ),
-        potential=PotentialParameters(potential_type="zero"),
+        potential=make_dataclass(PotentialParameters, potential_cfg or {}),
         physics=make_dataclass(PhysicsConstants, global_cfg.get("physics", {})),
         laser=LaserParameters(
             mode="single",
@@ -84,9 +115,15 @@ class _SearchInfra:
     is generated per evaluation via :meth:`fresh_state`.
     """
 
-    def __init__(self, global_cfg: dict[str, Any], t_max: float, dt: float) -> None:
+    def __init__(
+        self,
+        global_cfg: dict[str, Any],
+        t_max: float,
+        dt: float,
+        potential_cfg: dict[str, Any] | None = None,
+    ) -> None:
         """Set up reusable objects for the threshold search."""
-        cfg = _build_config(global_cfg, t_max, dt)
+        cfg = _build_config(global_cfg, t_max, dt, potential_cfg)
         self.xp = compute_engine.xp
         self.grid = create_grid(cfg.grid)
         self.bc = BoundaryCondition(self.grid, cfg.boundary_condition, cfg.physics)
@@ -125,22 +162,24 @@ class _SearchInfra:
 def _p_time_pure(t: float, pulse_separation: float,
                  cutoff_sigma: float, sigma_time: float) -> float:
     """Return the pulse envelope at time t."""
-    n = round(t / pulse_separation)
-    dt_val = t - n * pulse_separation
+    phase = cutoff_sigma * sigma_time
+    n = max(0, round((t - phase) / pulse_separation))
+    dt_val = t - n * pulse_separation - phase
     if abs(dt_val) > cutoff_sigma * sigma_time:
         return 0.0
     return math.exp(-0.5 * (dt_val / sigma_time) ** 2)
 
 
-def evaluate_threshold(
+def _run_simulation_kernel(
     infra: _SearchInfra,
-    power: float,
-    sigma_time: float,
-    pulse_sep: float,
-    sigma_space: float,
-    cutoff_sigma: float,
+    lasers: list,
+    spatial_profiles: list,
 ) -> dict[str, Any]:
-    """Evaluate one parameter combination for condensation.
+    """Run the condensation-detection loop for an arbitrary laser configuration.
+
+    Handles any number of lasers with per-laser delay, finite-train cutoff,
+    and individual pulse parameters.  Spatial profiles must be pre-computed
+    by the caller via ``laser._P_space``.
 
     Returns
     -------
@@ -149,34 +188,31 @@ def evaluate_threshold(
         ``reason`` (str).
     """
     xp = infra.xp
-    grid = infra.grid
     dt = infra.dt
-
-    if cutoff_sigma * sigma_time >= pulse_sep / 2.0:
-        return {"condensed": False, "reason": "pulses_overlap"}
-
-    laser_cfg = LaserParameters(
-        mode="single", laser_type="pulse-gaussian",
-        P0=power, Pmax=power, x0=0.0, y0=0.0,
-        sigma_space=sigma_space, sigma_time=sigma_time,
-        pulse_separation=pulse_sep, cutoff_sigma=cutoff_sigma,
-    )
-    laser = PulseGaussian(laser_cfg, grid.X, grid.Y)
-    spatial_profile = laser._P_space(grid.X, grid.Y)
-    P_zero = xp.zeros_like(spatial_profile)
+    P_zero = xp.zeros_like(spatial_profiles[0])
 
     state = infra.fresh_state()
     reservoir = create_reservoir(
         make_dataclass(ReservoirParameters, infra.reservoir_kw),
-        infra.physics, grid,
+        infra.physics, infra.grid,
     )
 
     for step in range(infra.n_steps):
         t = step * dt
-        amp = laser._amplitude(t)
-        pt = _p_time_pure(t, pulse_sep, cutoff_sigma, sigma_time)
-        temporal = float(amp) * pt
-        P_total = P_zero if temporal == 0.0 else temporal * spatial_profile
+        P_total = None
+        for i, laser in enumerate(lasers):
+            t_eff = t - laser.delay
+            if t_eff < 0:
+                continue
+            amp = laser._amplitude(t_eff)
+            pt = _p_time_pure(t_eff, laser.pulse_separation, laser.cutoff_sigma, laser.sigma_time)
+            temporal = float(amp) * pt
+            if temporal != 0.0:
+                contrib = temporal * spatial_profiles[i]
+                P_total = contrib if P_total is None else P_total + contrib
+        if P_total is None:
+            P_total = P_zero
+
         infra.solver.step(infra.potential, P_total, reservoir, infra.bc, state)
 
         if step > 0 and step % CHECK_EVERY == 0:
@@ -190,7 +226,186 @@ def evaluate_threshold(
     return {"condensed": False, "reason": "no_condensation"}
 
 
-# ── Stage entrypoint ──────────────────────────────────────────────────────────
+def evaluate_threshold(
+    infra: _SearchInfra,
+    power: float,
+    sigma_time: float,
+    pulse_sep: float,
+    sigma_space: float,
+    cutoff_sigma: float,
+    n_pulses: int = 0,
+) -> dict[str, Any]:
+    """Evaluate one parameter combination for condensation (single-laser proxy).
+
+    Returns
+    -------
+    dict
+        Keys: ``condensed`` (bool), and either ``t_cond`` (float) or
+        ``reason`` (str).
+    """
+    if cutoff_sigma * sigma_time >= pulse_sep / 2.0:
+        return {"condensed": False, "reason": "pulses_overlap"}
+
+    laser_cfg = LaserParameters(
+        mode="single", laser_type="pulse-gaussian",
+        P0=power, Pmax=power, x0=0.0, y0=0.0,
+        sigma_space=sigma_space, sigma_time=sigma_time,
+        pulse_separation=pulse_sep, cutoff_sigma=cutoff_sigma,
+        n_pulses=n_pulses,
+    )
+    laser = PulseGaussian(laser_cfg, infra.grid.X, infra.grid.Y)
+    spatial_profile = laser._P_space(infra.grid.X, infra.grid.Y)
+    return _run_simulation_kernel(infra, [laser], [spatial_profile])
+
+
+def evaluate_threshold_scenario(
+    infra: _SearchInfra,
+    scenario: dict[str, Any],
+    global_cfg: dict[str, Any],
+    power: float,
+    sigma_time: float,
+    pulse_sep: float,
+) -> dict[str, Any]:
+    """Evaluate condensation using the scenario laser geometry.
+
+    Builds all laser instances from the scenario definition — positions,
+    staggered delays, finite-train counts, and power modifiers — with
+    ``power`` substituted as the reference threshold power ``P``.
+
+    A fresh RNG is initialised from ``RNG_SEED`` on every call so the
+    result depends only on the parameter tuple and the fixed seed, not on
+    the order in which earlier candidates were evaluated.  This keeps the
+    search deterministic for all scenario types, including those that use
+    the legacy random-phase path inside ``build_scenario_lasers``.
+
+    The potential baked into ``infra.potential`` is the one constructed at
+    ``_SearchInfra`` initialisation time; for a scenario-based search that
+    is the actual scenario potential, not a forced zero-potential default.
+
+    Returns
+    -------
+    dict
+        Keys: ``condensed`` (bool), and either ``t_cond`` (float) or
+        ``reason`` (str).
+    """
+    rng = np.random.default_rng(RNG_SEED)
+    fake_threshold = {
+        "P_threshold": power,
+        "sigma_time": sigma_time,
+        "pulse_separation": pulse_sep,
+    }
+    lasers, _ = build_scenario_lasers(scenario, global_cfg, fake_threshold, infra.grid, rng)
+    spatial_profiles = [laser._P_space(infra.grid.X, infra.grid.Y) for laser in lasers]
+    return _run_simulation_kernel(infra, lasers, spatial_profiles)
+
+
+def _run_search_loop(
+    infra: _SearchInfra,
+    power_values: list[float],
+    sigma_time_values: list[float],
+    sigma_space: float,
+    cutoff_sigma: float,
+    max_wall: float,
+    pulse_sep_values: list[float] | None = None,
+    pulse_sep_formula: str | None = None,
+    n_pulses: int = 0,
+    scenario: dict[str, Any] | None = None,
+    global_cfg: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any] | None, int, float]:
+    """Search for the minimum pump power that achieves condensation.
+
+    Iterates powers in ascending order. For the first power at which
+    condensation is possible, the retained operating point is chosen by
+    the lexicographic rule:
+
+    1. smallest ``sigma_time``
+    2. smallest ``t_cond``
+    3. smallest ``pulse_separation`` (only exercised on the explicit-list
+       path; with ``pulse_separation_formula`` each sigma_time maps to
+       exactly one derived separation so this step is never reached)
+
+    When ``scenario`` is provided the search uses the full scenario laser
+    geometry via :func:`evaluate_threshold_scenario`.  Otherwise it falls
+    back to the single-laser proxy via :func:`evaluate_threshold`.
+
+    Returns
+    -------
+    (best, tested, elapsed_seconds)
+        ``best`` is ``None`` when no combination condensed (including
+        wall-clock timeout before any result).
+    """
+    wall_start = time.time()
+    best: dict[str, Any] | None = None
+    tested = 0
+    wall_exceeded = False
+
+    for power in power_values:
+        best_at_power: dict[str, Any] | None = None
+        for sigma_time in sigma_time_values:
+            if pulse_sep_formula is not None:
+                pulse_sep_candidates = [
+                    resolve_delay(
+                        pulse_sep_formula,
+                        {
+                            "sigma_time": sigma_time,
+                            "cutoff_sigma": cutoff_sigma,
+                            "pulse_separation": 0.0,
+                        },
+                    )
+                ]
+            else:
+                pulse_sep_candidates = pulse_sep_values or []
+
+            for pulse_sep in pulse_sep_candidates:
+                elapsed = time.time() - wall_start
+                if elapsed > max_wall:
+                    print(f"\n  Wall-clock limit reached ({elapsed:.0f}s)")
+                    wall_exceeded = True
+                    break
+                if cutoff_sigma * sigma_time >= pulse_sep / 2.0:
+                    continue
+
+                tested += 1
+                label = (f"P={power:6.1f}  sigma_t={sigma_time:.2f}  "
+                         f"T_sep={pulse_sep:5.1f}")
+                print(f"  [{tested:3d}] {label} ... ", end="", flush=True)
+
+                if scenario is not None:
+                    result = evaluate_threshold_scenario(
+                        infra, scenario, global_cfg, power, sigma_time, pulse_sep,
+                    )
+                else:
+                    result = evaluate_threshold(
+                        infra, power, sigma_time, pulse_sep, sigma_space, cutoff_sigma, n_pulses,
+                    )
+
+                if result["condensed"]:
+                    print(f"CONDENSED at t={result['t_cond']:.1f} ps")
+                    candidate = {
+                        "P_threshold": power,
+                        "sigma_time": sigma_time,
+                        "pulse_separation": pulse_sep,
+                        "t_cond": result["t_cond"],
+                    }
+                    if best_at_power is None or (
+                        candidate["t_cond"],
+                        candidate["pulse_separation"],
+                    ) < (
+                        best_at_power["t_cond"],
+                        best_at_power["pulse_separation"],
+                    ):
+                        best_at_power = candidate
+                else:
+                    print(result["reason"])
+            if best_at_power is not None:
+                best = best_at_power
+            if wall_exceeded or best_at_power is not None:
+                break
+        if best_at_power is not None or wall_exceeded:
+            break
+
+    return best, tested, time.time() - wall_start
+
 
 def main() -> None:
     """Run the command-line entry point."""
@@ -206,6 +421,7 @@ def main() -> None:
     g = cfg["global"]
     ts = get_threshold_search_cfg(cfg)
     defaults = g.get("laser_defaults", {})
+    first_scenario: dict[str, Any] | None = (cfg.get("scenarios") or [None])[0]
 
     total_time: float = g["solver"]["total_time"]
     cond_frac: float = ts["condensation_fraction"]
@@ -218,8 +434,10 @@ def main() -> None:
     sigma_space: float = defaults.get("sigma_space", 5.0)
     cutoff_sigma: float = defaults.get("cutoff_sigma", 3.0)
     power_values = sorted(ts["power_values"])
-    sigma_time_values: list[float] = ts["sigma_time_values"]
-    pulse_sep_values = sorted(ts["pulse_separation_values"], reverse=True)
+    sigma_time_values = sorted(ts["sigma_time_values"])
+    pulse_sep_formula: str | None = ts.get("pulse_separation_formula")
+    pulse_sep_values = sorted(ts.get("pulse_separation_values", []))
+    n_pulses: int = int(ts.get("n_pulses", 0))
 
     compute_engine.configure(ComputeEngineParameters(use_gpu=True))
 
@@ -231,62 +449,43 @@ def main() -> None:
     print(f"  dt (search)    : {search_dt}")
     print(f"  Wall-clock cap : {ts['max_runtime_minutes']} min")
     print(f"  Powers         : {power_values}")
-    print(f"  Pulse seps     : {pulse_sep_values}")
+    if pulse_sep_formula is not None:
+        print(f"  Pulse sep rule : {pulse_sep_formula}")
+    else:
+        print(f"  Pulse seps     : {pulse_sep_values}")
     print(f"  sigma_times    : {sigma_time_values}")
+    if n_pulses > 0:
+        print(f"  Max pulses     : {n_pulses}")
+    if first_scenario is not None:
+        print(f"  Search kernel  : multi-laser (scenario '{first_scenario.get('name', 'unnamed')}')")
+    else:
+        print(f"  Search kernel  : single-laser proxy (no scenarios defined)")
     print()
 
-    infra = _SearchInfra(g, search_t_max, search_dt)
+    scenario_potential_cfg = (
+        first_scenario.get("potential") if first_scenario is not None else None
+    )
+    infra = _SearchInfra(g, search_t_max, search_dt, potential_cfg=scenario_potential_cfg)
     print(f"  Grid {infra.grid.nx}x{infra.grid.ny}, {infra.n_steps} steps\n")
 
-    wall_start = time.time()
-    best: dict[str, Any] | None = None
-    tested = 0
-
-    for pulse_sep in pulse_sep_values:
-        if best is not None:
-            break
-        for power in power_values:
-            if best is not None:
-                break
-            for sigma_time in sigma_time_values:
-                elapsed = time.time() - wall_start
-                if elapsed > max_wall:
-                    print(f"\n  Wall-clock limit reached ({elapsed:.0f}s)")
-                    break
-                if cutoff_sigma * sigma_time >= pulse_sep / 2.0:
-                    continue
-
-                tested += 1
-                label = (f"T_sep={pulse_sep:5.1f}  P={power:6.1f}  "
-                         f"sigma_t={sigma_time:.2f}")
-                print(f"  [{tested:3d}] {label} ... ", end="", flush=True)
-
-                result = evaluate_threshold(
-                    infra, power, sigma_time, pulse_sep, sigma_space, cutoff_sigma
-                )
-
-                if result["condensed"]:
-                    print(f"CONDENSED at t={result['t_cond']:.1f} ps")
-                    best = {
-                        "P_threshold": power,
-                        "sigma_time": sigma_time,
-                        "pulse_separation": pulse_sep,
-                        "t_cond": result["t_cond"],
-                    }
-                    break
-                else:
-                    print(result["reason"])
-            else:
-                continue
-            break
-        else:
-            continue
-        break
+    best, tested, wall_time = _run_search_loop(
+        infra,
+        power_values,
+        sigma_time_values,
+        sigma_space,
+        cutoff_sigma,
+        max_wall,
+        pulse_sep_values=pulse_sep_values,
+        pulse_sep_formula=pulse_sep_formula,
+        n_pulses=n_pulses,
+        scenario=first_scenario,
+        global_cfg=g,
+    )
 
     output: dict[str, Any] = {
         "search_completed": best is not None,
         "combinations_tested": tested,
-        "wall_time_seconds": round(time.time() - wall_start, 1),
+        "wall_time_seconds": round(wall_time, 1),
     }
     if best:
         output.update(best)

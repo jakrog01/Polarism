@@ -22,17 +22,12 @@ from polarism.simulation_state import SimulationState
 from polarism.solver.create_solver import create_solver
 from tqdm import trange
 
-# ── Simulation constants ──────────────────────────────────────────────────────
-
-RECORD_STRIDE = 100          # Record one frame every N steps.
-COND_GROWTH_FACTOR = 1e6     # |ψ|² growth ratio to flag condensation.
-CHECK_EVERY = 50             # Check condensation every N steps.
-MIN_CHECK_TIME = 50.0        # ps — ignore condensation checks before this time.
-RESERVED_GPU_GB = 4.0        # GB reserved for non-simulation GPU allocations.
-RNG_SEED = 42                # Reproducible initial noise.
-
-
-# ── HDF5 async writer ─────────────────────────────────────────────────────────
+RECORD_STRIDE = 100
+COND_GROWTH_FACTOR = 1e6
+CHECK_EVERY = 50
+MIN_CHECK_TIME = 50.0
+RESERVED_GPU_GB = 4.0
+RNG_SEED = 42
 
 class AsyncBatchWriter:
     """Write HDF5 frames with double buffering.
@@ -221,8 +216,6 @@ class AsyncBatchWriter:
         self.h5.close()
 
 
-# ── Condensation check ────────────────────────────────────────────────────────
-
 def check_condensation_kspace(psi: object, xp: object) -> float:
     """Return the k=0 power fraction of *psi* (FFT-based)."""
     psi_k = xp.fft.fft2(psi)
@@ -234,14 +227,14 @@ def check_condensation_kspace(psi: object, xp: object) -> float:
     return k0_power / total_power
 
 
-# ── Batch-size heuristic ──────────────────────────────────────────────────────
-
 def compute_batch_size(ny: int, nx: int) -> int:
     """Estimate a safe HDF5 write-buffer depth for the current GPU.
 
-    Conservative by design: uses 75 % of free GPU memory after reserving
-    ``RESERVED_GPU_GB`` GB for other allocations.  Falls back to small
-    values on shared GPUs or when CUDA is unavailable.
+    Allocates 75 % of free GPU memory (after reserving ``RESERVED_GPU_GB``
+    GB) across both double-buffer GPU slots.  Returns 1 when memory is too
+    tight to fit even a single frame per slot — correct but slower, as every
+    ``record()`` call triggers an immediate transfer.  Returns 500 on the
+    CPU path where host memory is not the limiting resource.
 
     Parameters
     ----------
@@ -251,22 +244,17 @@ def compute_batch_size(ny: int, nx: int) -> int:
     Returns
     -------
     int
-        Batch depth in frames, clamped to [100, 10000].
+        Batch depth in frames, in [1, 10000].
     """
     xp = compute_engine.xp
     if not hasattr(xp, "cuda"):
-        return 500  # CPU path: memory is not a constraint but keep it moderate.
+        return 500
     free = xp.cuda.Device().mem_info[0]
     usable = max(0, free - int(RESERVED_GPU_GB * 1024**3))
-    if usable == 0:
-        return 100  # Extremely memory-constrained — last resort.
-    frame_bytes = ny * nx * (16 + 8 + 8 + 8)  # psi(c128) + nI,nA,Pump(f64)
-    # Double-buffer with 0.75 safety margin for fragmentation.
-    batch = int(usable * 0.75) // (2 * frame_bytes)
-    return max(100, min(batch, 10000))
+    frame_bytes = ny * nx * (16 + 8 + 8 + 8)
+    batch = int(usable * 0.75) // (2 * frame_bytes) if frame_bytes else 0
+    return max(1, min(batch, 10000))
 
-
-# ── Internal pump helpers ─────────────────────────────────────────────────────
 
 def _precompute_spatial_profiles(lasers: list, grid: object) -> list:
     """Precompute the spatial pump profile for each laser."""
@@ -280,8 +268,9 @@ def _p_time_pure(
     sigma_time: float,
 ) -> float:
     """Return the pulse envelope at time t."""
-    n = round(t / pulse_separation)
-    dt_val = t - n * pulse_separation
+    phase = cutoff_sigma * sigma_time
+    n = max(0, round((t - phase) / pulse_separation))
+    dt_val = t - n * pulse_separation - phase
     if abs(dt_val) > cutoff_sigma * sigma_time:
         return 0.0
     return math.exp(-0.5 * (dt_val / sigma_time) ** 2)
@@ -318,8 +307,6 @@ def _compute_pump_fast(
         per_laser_max.append(temporal * spatial_maxes[i])
     return P_total, per_laser_max
 
-
-# ── Main simulation entry point ───────────────────────────────────────────────
 
 def run_simulation_from_config(
     routine_name: str,
@@ -414,14 +401,14 @@ def run_simulation_from_config(
             )
             solver.step(potential, P_total, reservoir, bc, state)
 
-            if (
-                not condensed
-                and step > 0
-                and step % CHECK_EVERY == 0
-                and t >= MIN_CHECK_TIME
-            ):
+            if step > 0 and step % CHECK_EVERY == 0:
                 N_total = float(xp.sum(xp.abs(state.psi) ** 2))
-                if N_total > N_initial * COND_GROWTH_FACTOR:
+                if math.isnan(N_total) or math.isinf(N_total):
+                    raise RuntimeError(
+                        f"Numerical divergence at step {step}, t={t:.4f} ps: "
+                        f"psi norm is {N_total}"
+                    )
+                if not condensed and t >= MIN_CHECK_TIME and N_total > N_initial * COND_GROWTH_FACTOR:
                     t_cond = (step + 1) * dt
                     condensed = True
                     print(f"\n    Condensation at t={t:.2f} ps (step {step})")
@@ -453,7 +440,9 @@ def run_simulation_from_config(
         traceback.print_exc()
         raise
     finally:
+        print("    Closing HDF5 writer ...")
         writer.close()
+        print("    HDF5 finalized.")
 
     print(
         f"    -> {out_path}  ({writer.total} frames, "

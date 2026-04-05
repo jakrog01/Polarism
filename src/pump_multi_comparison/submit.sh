@@ -20,12 +20,17 @@
 # Scenario temp directories are job-unique:
 #   $SCRATCH/polariton/<run>/<SLURM_JOB_ID>_<ARRAY_TASK_ID>/<scenario>/
 #
-# CPU-STAGE PARTITION (Rysy-specific)
+# STAGE-SPECIFIC RESOURCE OVERRIDES
 # ------------------------------------
-# Rysy is a GPU cluster with no confirmed dedicated CPU partition.  If
-# CPU_PARTITION is unset or matches SLURM_PARTITION, non-GPU stages (viz,
-# finalize) will run on the GPU partition without allocating a GPU.
-# A WARNING is printed in that case.  See cluster/README.md for details.
+# All overrides are optional.  Fallback precedence per stage:
+#   threshold : THRESHOLD_{PARTITION,MEM,CPUS,GPUS} -> GPU scenario defaults
+#               walltime always = config max_runtime_minutes (THRESHOLD_TIME)
+#   visualize : VIZ_{PARTITION,MEM,CPUS,TIME}       -> CPU_* -> GPU defaults
+#   finalize  : FINALIZE_{PARTITION,MEM,CPUS,TIME}  -> CPU_* -> GPU defaults
+#
+# If VIZ_PARTITION / FINALIZE_PARTITION resolve to SLURM_PARTITION (the GPU
+# partition), a WARNING is printed; those stages still run but occupy GPU nodes
+# without a GPU allocation.  See cluster/README.md for details.
 #
 # Usage:
 #   bash submit.sh [--config /path/to/config.yaml] [--runs-dir /path] [--dry-run]
@@ -54,7 +59,7 @@ PUMP_DIR="$SCRIPT_DIR"
 
 CONFIG="${CONFIG:-$SCRIPT_DIR/config.yaml}"
 CONFIG="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
-RUNS_BASE_DIR="${RUNS_BASE_DIR:-$PROJECT_ROOT/runs}"
+RUNS_BASE_DIR="${RUNS_BASE_DIR:-$PUMP_DIR/runs}"
 SLURM_ENV="$PROJECT_ROOT/slurm.env"
 
 echo "========================================"
@@ -70,12 +75,17 @@ if [[ ! -f "$SLURM_ENV" ]]; then
     echo "ERROR: slurm.env not found: $SLURM_ENV" >&2
     printf '  Required variables:\n    SLURM_ACCOUNT SLURM_PARTITION SLURM_MEM SLURM_GPUS SLURM_CPUS SLURM_TIME\n' >&2
     printf '  Optional:\n    SLURM_QOS MAX_CONCURRENT_SCENARIOS\n' >&2
-    printf '    CPU_PARTITION CPU_MEM CPU_CPUS CPU_TIME  (see cluster/README.md)\n' >&2
+    printf '    CPU_PARTITION CPU_MEM CPU_CPUS CPU_TIME\n' >&2
+    printf '    THRESHOLD_{PARTITION,MEM,CPUS,GPUS}\n' >&2
+    printf '    VIZ_{PARTITION,MEM,CPUS,TIME}\n' >&2
+    printf '    FINALIZE_{PARTITION,MEM,CPUS,TIME}  (see cluster/README.md)\n' >&2
     exit 1
 fi
 
-# Activate Python environment (login node).
-module load common/python/3.13.2 2>/dev/null || true
+# Activate Python environment on the login node only if no Python is already available.
+if ! command -v python3 >/dev/null 2>&1; then
+    module load common/python/3.13.2 >/dev/null 2>&1 || true
+fi
 for venv_path in "$PROJECT_ROOT/.venv/bin/activate" "$PROJECT_ROOT/venv/bin/activate"; do
     [[ -f "$venv_path" ]] && { source "$venv_path" 2>/dev/null || true; break; }
 done
@@ -104,7 +114,9 @@ PYEOF
 THRESHOLD_MINUTES="${_PARSED[0]}"
 SCENARIOS=("${_PARSED[@]:1}")
 N_SCENARIOS="${#SCENARIOS[@]}"
-THRESHOLD_TIME=$(printf "00:%02d:00" "$THRESHOLD_MINUTES")
+THRESHOLD_HOURS=$((THRESHOLD_MINUTES / 60))
+THRESHOLD_REMAINDER_MINUTES=$((THRESHOLD_MINUTES % 60))
+THRESHOLD_TIME=$(printf "%02d:%02d:00" "$THRESHOLD_HOURS" "$THRESHOLD_REMAINDER_MINUTES")
 
 echo "  Scenarios ($N_SCENARIOS):"
 for sc in "${SCENARIOS[@]}"; do echo "    - $sc"; done
@@ -112,7 +124,12 @@ echo ""
 
 # ── Load Slurm env ────────────────────────────────────────────────────────────
 # shellcheck source=/dev/null
+#
+# Export everything defined in slurm.env so variables such as SCRATCH are
+# visible inside the submitted jobs, not only in this login-shell process.
+set -a
 source "$SLURM_ENV"
+set +a
 
 for var in SLURM_ACCOUNT SLURM_PARTITION SLURM_MEM SLURM_GPUS SLURM_CPUS SLURM_TIME; do
     if [[ -z "${!var:-}" ]]; then
@@ -123,25 +140,47 @@ done
 # Bounded scenario fan-out (default 1 — safest for shared scratch and GPU memory).
 MAX_CONCURRENT="${MAX_CONCURRENT_SCENARIOS:-1}"
 
-# ── CPU-stage partition decision ──────────────────────────────────────────────
-# Non-GPU stages (visualize, finalize) may not have dedicated CPU hardware on
-# Rysy.  We explicitly handle three cases and warn when falling back.
-_STAGE_PARTITION="${CPU_PARTITION:-}"
-_STAGE_MEM="${CPU_MEM:-$SLURM_MEM}"
-_STAGE_CPUS="${CPU_CPUS:-$SLURM_CPUS}"
-_STAGE_TIME="${CPU_TIME:-$SLURM_TIME}"
+# ── Per-stage resource resolution ─────────────────────────────────────────────
+# Fallback precedence (all variables are optional in slurm.env):
+#   threshold : THRESHOLD_*   -> GPU scenario defaults
+#               (time always comes from config max_runtime_minutes)
+#   visualize : VIZ_*         -> CPU_*  -> GPU scenario defaults
+#   finalize  : FINALIZE_*    -> CPU_*  -> GPU scenario defaults
+#
+# GPU scenario defaults (SLURM_*) are always required and serve as the
+# ultimate fallback for every stage.
 
-if [[ -n "$_STAGE_PARTITION" ]] && [[ "$_STAGE_PARTITION" != "$SLURM_PARTITION" ]]; then
-    echo "  Stage partition  : $_STAGE_PARTITION  (dedicated, from CPU_PARTITION)"
-else
-    _STAGE_PARTITION="$SLURM_PARTITION"
-    echo "  ⚠  WARNING: CPU_PARTITION is not set or equals SLURM_PARTITION."
-    echo "     Non-GPU stages (visualize, finalize) will run on the GPU partition"
-    echo "     ($SLURM_PARTITION) WITHOUT a GPU allocation.  They will still occupy"
-    echo "     a slot on a GPU node.  See cluster/README.md for details."
-    echo "     To suppress this warning, set CPU_PARTITION in slurm.env."
+_TH_PARTITION="${THRESHOLD_PARTITION:-$SLURM_PARTITION}"
+_TH_MEM="${THRESHOLD_MEM:-$SLURM_MEM}"
+_TH_CPUS="${THRESHOLD_CPUS:-$SLURM_CPUS}"
+_TH_GPUS="${THRESHOLD_GPUS:-$SLURM_GPUS}"
+
+_VIZ_PARTITION="${VIZ_PARTITION:-${CPU_PARTITION:-$SLURM_PARTITION}}"
+_VIZ_MEM="${VIZ_MEM:-${CPU_MEM:-$SLURM_MEM}}"
+_VIZ_CPUS="${VIZ_CPUS:-${CPU_CPUS:-$SLURM_CPUS}}"
+_VIZ_TIME="${VIZ_TIME:-${CPU_TIME:-$SLURM_TIME}}"
+
+_FIN_PARTITION="${FINALIZE_PARTITION:-${CPU_PARTITION:-$SLURM_PARTITION}}"
+_FIN_MEM="${FINALIZE_MEM:-${CPU_MEM:-$SLURM_MEM}}"
+_FIN_CPUS="${FINALIZE_CPUS:-${CPU_CPUS:-$SLURM_CPUS}}"
+_FIN_TIME="${FINALIZE_TIME:-${CPU_TIME:-$SLURM_TIME}}"
+
+_cpu_fallback_active=0
+for _stage_part in "$_VIZ_PARTITION" "$_FIN_PARTITION"; do
+    if [[ "$_stage_part" == "$SLURM_PARTITION" ]]; then
+        _cpu_fallback_active=1
+    fi
+done
+if [[ $_cpu_fallback_active -eq 1 ]]; then
+    echo "  WARNING: one or more CPU stages (visualize, finalize) resolved to the"
+    echo "     GPU partition ($SLURM_PARTITION) because no stage-specific or"
+    echo "     CPU_PARTITION override is set.  They will occupy a GPU node slot"
+    echo "     without allocating a GPU.  Set CPU_PARTITION, VIZ_PARTITION, or"
+    echo "     FINALIZE_PARTITION in slurm.env to suppress this warning."
 fi
-echo "  Stage partition  : $_STAGE_PARTITION  (mem=$_STAGE_MEM, cpus=$_STAGE_CPUS, time=$_STAGE_TIME)"
+echo "  threshold : partition=$_TH_PARTITION  mem=$_TH_MEM  cpus=$_TH_CPUS  gpus=$_TH_GPUS  time=$THRESHOLD_TIME"
+echo "  visualize : partition=$_VIZ_PARTITION  mem=$_VIZ_MEM  cpus=$_VIZ_CPUS  time=$_VIZ_TIME"
+echo "  finalize  : partition=$_FIN_PARTITION  mem=$_FIN_MEM  cpus=$_FIN_CPUS  time=$_FIN_TIME"
 echo "  Max concurrent GPU scenarios : $MAX_CONCURRENT"
 echo ""
 
@@ -200,14 +239,31 @@ GPU_FLAGS=(
     "${_QOS_FLAG[@]}"
 )
 
-STAGE_FLAGS=(
+THRESHOLD_FLAGS=(
     --account="$SLURM_ACCOUNT"
-    --partition="$_STAGE_PARTITION"
-    --mem="$_STAGE_MEM"
-    --cpus-per-task="$_STAGE_CPUS"
-    --time="$_STAGE_TIME"
+    --partition="$_TH_PARTITION"
+    --mem="$_TH_MEM"
+    --gres="gpu:${_TH_GPUS}"
+    --cpus-per-task="$_TH_CPUS"
     "${_QOS_FLAG[@]}"
-    # No --gres=gpu: intentional — these stages do not use the GPU.
+)
+
+VIZ_FLAGS=(
+    --account="$SLURM_ACCOUNT"
+    --partition="$_VIZ_PARTITION"
+    --mem="$_VIZ_MEM"
+    --cpus-per-task="$_VIZ_CPUS"
+    --time="$_VIZ_TIME"
+    "${_QOS_FLAG[@]}"
+)
+
+FINALIZE_FLAGS=(
+    --account="$SLURM_ACCOUNT"
+    --partition="$_FIN_PARTITION"
+    --mem="$_FIN_MEM"
+    --cpus-per-task="$_FIN_CPUS"
+    --time="$_FIN_TIME"
+    "${_QOS_FLAG[@]}"
 )
 
 # ── Job 1: Threshold search (GPU) ─────────────────────────────────────────────
@@ -216,7 +272,7 @@ if [[ $DRY_RUN -eq 1 ]]; then
     THRESHOLD_JOB="DRY_1"
 else
     THRESHOLD_JOB=$(sbatch --parsable \
-        "${GPU_FLAGS[@]}" \
+        "${THRESHOLD_FLAGS[@]}" \
         --time="$THRESHOLD_TIME" \
         --job-name="pol_th_${RUN_NAME}" \
         --output="${LOGS_DIR}/threshold_%j.out" \
@@ -258,7 +314,7 @@ if [[ $DRY_RUN -eq 1 ]]; then
     VIZ_ARRAY_JOB="DRY_3"
 else
     VIZ_ARRAY_JOB=$(sbatch --parsable \
-        "${STAGE_FLAGS[@]}" \
+        "${VIZ_FLAGS[@]}" \
         --array="$VIZ_ARRAY_SPEC" \
         --dependency="afterok:${SCENARIO_ARRAY_JOB}" \
         --job-name="pol_viz_${RUN_NAME}" \
@@ -276,7 +332,7 @@ if [[ $DRY_RUN -eq 1 ]]; then
     FINALIZE_JOB="DRY_4"
 else
     FINALIZE_JOB=$(sbatch --parsable \
-        "${STAGE_FLAGS[@]}" \
+        "${FINALIZE_FLAGS[@]}" \
         --dependency="afterok:${SCENARIO_ARRAY_JOB}" \
         --job-name="pol_fin_${RUN_NAME}" \
         --output="${LOGS_DIR}/finalize_%j.out" \

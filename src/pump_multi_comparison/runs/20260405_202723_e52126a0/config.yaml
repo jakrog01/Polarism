@@ -37,45 +37,34 @@ global:
     cutoff_sigma: 3.0
 
   threshold_search:
-    max_runtime_minutes: 120
+    max_runtime_minutes: 30
     condensation_fraction: 0.7
     dt_multiplier: 5
-    n_pulses: 10
     power_values:
-      - 0.5
-      - 1.0
-      - 1.5
-      - 2.0
-      - 3.0
-      - 4.0
       - 5.0
-      - 6.0
-      - 8.0
       - 10.0
-      - 15.0
       - 20.0
-      - 30.0
       - 40.0
       - 60.0
       - 80.0
     sigma_time_values:
-      - 0.05
-      - 0.075
-      - 0.1
-      - 0.15
-      - 0.2
       - 0.25
-      - 0.35
       - 0.5
-      - 0.75
       - 1.0
-      - 1.5
       - 2.0
-    pulse_separation_formula: "8 * cutoff_sigma * sigma_time"
+      - 4.0
+    pulse_separation_values:
+      - 2.0
+      - 5.0
+      - 10.0
+      - 20.0
+      - 40.0
+      - 60.0
+      - 80.0
 _timing_vars_seq: &timing_vars_seq
   pulse_duration: "2 * cutoff_sigma * sigma_time"
   cycle_duration: "4 * pulse_duration"
-  center_wait_cycles: 10.0
+  center_wait_cycles: 5.0
 _lasers_seq_5spot: &lasers_seq_5spot
   - id: "s0"
     tags: ["outer"]
@@ -83,7 +72,6 @@ _lasers_seq_5spot: &lasers_seq_5spot
     y0: 0.0
     delay: 0.0
     pulse_separation: "cycle_duration"
-    n_pulses: 10
 
   - id: "s1"
     tags: ["outer"]
@@ -91,7 +79,6 @@ _lasers_seq_5spot: &lasers_seq_5spot
     y0: 30.0
     delay: "pulse_duration"
     pulse_separation: "cycle_duration"
-    n_pulses: 10
 
   - id: "s2"
     tags: ["outer"]
@@ -99,7 +86,6 @@ _lasers_seq_5spot: &lasers_seq_5spot
     y0: 0.0
     delay: "2 * pulse_duration"
     pulse_separation: "cycle_duration"
-    n_pulses: 10
 
   - id: "s3"
     tags: ["outer"]
@@ -107,86 +93,21 @@ _lasers_seq_5spot: &lasers_seq_5spot
     y0: -30.0
     delay: "3 * pulse_duration"
     pulse_separation: "cycle_duration"
-    n_pulses: 10
 
   - id: "center"
     power: "1.0P"
     x0: 0.0
     y0: 0.0
     delay: "center_wait_cycles * cycle_duration"
-    pulse_separation: "cycle_duration"
-    n_pulses: 1
+    pulse_separation: 1000.0
 scenarios:
-  - name: seq_5spot_p1.0
+  - name: seq_5spot_p0.1
     potential:
       potential_type: zero
     timing_vars: *timing_vars_seq
     power_modifiers:
       - ids: ["s0", "s1", "s2", "s3"]
-        power: "1.0P"
-    lasers: *lasers_seq_5spot
-
-  - name: seq_5spot_p0.9
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "0.9P"
-    lasers: *lasers_seq_5spot
-
-  - name: seq_5spot_p0.8
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "0.8P"
-    lasers: *lasers_seq_5spot
-
-  - name: seq_5spot_p0.7
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "0.7P"
-    lasers: *lasers_seq_5spot
-
-  - name: seq_5spot_p0.6
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "0.6P"
-    lasers: *lasers_seq_5spot
-
-  - name: seq_5spot_p0.5
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "0.5P"
-    lasers: *lasers_seq_5spot
-
-  - name: seq_5spot_p0.4
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "0.4P"
-    lasers: *lasers_seq_5spot
-
-  - name: seq_5spot_p0.3
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "0.3P"
+        power: "0.1P"
     lasers: *lasers_seq_5spot
 
   - name: seq_5spot_p0.2
@@ -198,20 +119,74 @@ scenarios:
         power: "0.2P"
     lasers: *lasers_seq_5spot
 
-  - name: seq_5spot_p0.1
+  - name: seq_5spot_p0.3
     potential:
       potential_type: zero
     timing_vars: *timing_vars_seq
     power_modifiers:
       - ids: ["s0", "s1", "s2", "s3"]
-        power: "0.1P"
+        power: "0.3P"
     lasers: *lasers_seq_5spot
 
-  - name: seq_5spot_p0.05
+  - name: seq_5spot_p0.4
     potential:
       potential_type: zero
     timing_vars: *timing_vars_seq
     power_modifiers:
       - ids: ["s0", "s1", "s2", "s3"]
-        power: "0.05P"
+        power: "0.4P"
+    lasers: *lasers_seq_5spot
+
+  - name: seq_5spot_p0.5
+    potential:
+      potential_type: zero
+    timing_vars: *timing_vars_seq
+    power_modifiers:
+      - ids: ["s0", "s1", "s2", "s3"]
+        power: "0.5P"
+    lasers: *lasers_seq_5spot
+
+  - name: seq_5spot_p0.6
+    potential:
+      potential_type: zero
+    timing_vars: *timing_vars_seq
+    power_modifiers:
+      - ids: ["s0", "s1", "s2", "s3"]
+        power: "0.6P"
+    lasers: *lasers_seq_5spot
+
+  - name: seq_5spot_p0.7
+    potential:
+      potential_type: zero
+    timing_vars: *timing_vars_seq
+    power_modifiers:
+      - ids: ["s0", "s1", "s2", "s3"]
+        power: "0.7P"
+    lasers: *lasers_seq_5spot
+
+  - name: seq_5spot_p0.8
+    potential:
+      potential_type: zero
+    timing_vars: *timing_vars_seq
+    power_modifiers:
+      - ids: ["s0", "s1", "s2", "s3"]
+        power: "0.8P"
+    lasers: *lasers_seq_5spot
+
+  - name: seq_5spot_p0.9
+    potential:
+      potential_type: zero
+    timing_vars: *timing_vars_seq
+    power_modifiers:
+      - ids: ["s0", "s1", "s2", "s3"]
+        power: "0.9P"
+    lasers: *lasers_seq_5spot
+
+  - name: seq_5spot_p1.0
+    potential:
+      potential_type: zero
+    timing_vars: *timing_vars_seq
+    power_modifiers:
+      - ids: ["s0", "s1", "s2", "s3"]
+        power: "1.0P"
     lasers: *lasers_seq_5spot

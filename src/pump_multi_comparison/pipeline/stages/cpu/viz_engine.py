@@ -18,9 +18,6 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.colors import PowerNorm
 from matplotlib.gridspec import GridSpec
 
-
-# ── ffmpeg detection ──────────────────────────────────────────────────────────
-
 def _find_ffmpeg() -> bool:
     """Check whether ffmpeg is available."""
     import subprocess
@@ -45,8 +42,6 @@ def _find_ffmpeg() -> bool:
 
 HAS_FFMPEG = _find_ffmpeg()
 
-# ── Field definitions ─────────────────────────────────────────────────────────
-
 FIELD_SPECS = {
     "psi_sq": {"source": "psi", "label": r"$|\psi|^2$", "cmap": "magma", "transform": "abs2"},
     "nI": {"source": "nI", "label": r"$n_I$", "cmap": "plasma", "transform": None},
@@ -68,9 +63,6 @@ GIF_MAX_FRAMES = 200
 ANIM_DPI = 150
 PLOT_DPI = 200
 PUMP_NORM_GAMMA = 0.3
-
-
-# ── Low-level file helpers ────────────────────────────────────────────────────
 
 def routine_dir(routine: str, results_dir: str) -> str:
     """Return the output directory for *routine* within *results_dir*."""
@@ -108,8 +100,6 @@ def _make_norm(spec: dict, vmin: float, vmax: float):
         return PowerNorm(gamma=PUMP_NORM_GAMMA, vmin=max(vmin, 1e-12), vmax=vmax)
     return None
 
-
-# ── Rendering ─────────────────────────────────────────────────────────────────
 
 def generate_field_png(
     routine: str,
@@ -242,7 +232,17 @@ def generate_animation(
         first_frames = {k: _read_field_frame(h5, sp, anim_physical[0])
                         for k, sp in zip(field_keys, specs)}
 
-        print(f"    Pre-loading {len(anim_physical)} frames...")
+        n_frames_anim = len(anim_physical)
+        ny_dim, nx_dim = h5[f"fields/{FIELD_SPECS['psi_sq']['source']}"].shape[1:]
+        preload_bytes = n_frames_anim * ny_dim * nx_dim * (16 + 8 + 8 + 8)
+        preload_gb = preload_bytes / 1024**3
+        if preload_gb > 1.0:
+            print(
+                f"    WARNING: animation preload estimated at {preload_gb:.1f} GB "
+                f"({n_frames_anim} frames, {ny_dim}×{nx_dim} grid).  "
+                "Pass --no-animation to skip."
+            )
+        print(f"    Pre-loading {n_frames_anim} frames ({preload_gb:.2f} GB)...")
         preloaded = {
             k: np.stack([_read_field_frame(h5, sp, pi) for pi in anim_physical])
             for k, sp in zip(field_keys, specs)
@@ -304,40 +304,27 @@ def generate_summary(
         print("  No HDF5 files found; skipping summary plot.")
         return
 
-    routine_styles = {}  # No hardcoded colours — use matplotlib defaults.
-
-    psi_spec = FIELD_SPECS["psi_sq"]
     routine_data = {}
     for routine in available:
         with open_h5(routine, data_dir) as h5:
             so = load_sorted_order(h5)
             time_sorted = h5["time"][:][so]
-            last_frame = _read_field_frame(h5, psi_spec, int(so[-1]))
             scalars = {
                 sc_key: h5[f"scalars/{sc_key}"][:][so]
                 for sc_key, _ in COMPARISON_SCALARS
                 if f"scalars/{sc_key}" in h5
             }
-        routine_data[routine] = {"time": time_sorted, "last_frame": last_frame, "scalars": scalars}
+        routine_data[routine] = {"time": time_sorted, "scalars": scalars}
 
-    n_r = len(available)
     n_sc = len(COMPARISON_SCALARS)
-    fig = plt.figure(figsize=(max(6 * n_r, 12), 5 + 4.5 * n_sc), constrained_layout=True)
-    gs = GridSpec(1 + n_sc, n_r, figure=fig, height_ratios=[2] + [1] * n_sc)
+    fig = plt.figure(
+        figsize=(max(10.0, 1.5 * len(available)), max(3.5 * n_sc, 4.0)),
+        constrained_layout=True,
+    )
+    gs = GridSpec(n_sc, 1, figure=fig)
 
-    for col, routine in enumerate(available):
-        rd = routine_data[routine]
-        ax_img = fig.add_subplot(gs[0, col])
-        im = ax_img.imshow(rd["last_frame"], origin="lower", extent=extent,
-                           cmap=psi_spec["cmap"], aspect="equal")
-        ax_img.set_title(f"{routine.upper()}\nt = {rd['time'][-1]:.1f} ps", fontsize=11)
-        ax_img.set_xlabel(r"x ($\mu$m)")
-        if col == 0:
-            ax_img.set_ylabel(r"y ($\mu$m)")
-        fig.colorbar(im, ax=ax_img, fraction=0.046, pad=0.04)
-
-    for row, (sc_key, sc_label) in enumerate(COMPARISON_SCALARS, start=1):
-        ax_sc = fig.add_subplot(gs[row, :])
+    for row, (sc_key, sc_label) in enumerate(COMPARISON_SCALARS):
+        ax_sc = fig.add_subplot(gs[row, 0])
         for routine in available:
             rd = routine_data[routine]
             if sc_key in rd["scalars"]:

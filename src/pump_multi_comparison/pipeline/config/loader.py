@@ -1,11 +1,14 @@
 """Config loading and basic extraction utilities.
 
-Responsible for: reading YAML, resolving power expressions, extracting
-named sections from the config dict.  No validation, no dataclass
-construction. Those live in validator.py and builder.py.
+Responsible for: reading YAML, resolving power/delay expressions, extracting
+named sections from the config dict.  No validation, no dataclass construction.
+Those live in validator.py and builder.py.
 """
 from __future__ import annotations
 
+import ast
+import math
+import operator as _op
 import re
 from dataclasses import fields as dc_fields
 from typing import Any, TypeVar
@@ -13,6 +16,44 @@ from typing import Any, TypeVar
 import yaml
 
 T = TypeVar("T")
+
+_BINOPS: dict[type, Any] = {
+    ast.Add: _op.add,
+    ast.Sub: _op.sub,
+    ast.Mult: _op.mul,
+    ast.Div: _op.truediv,
+}
+_UNOPS: dict[type, Any] = {
+    ast.UAdd: _op.pos,
+    ast.USub: _op.neg,
+}
+
+
+def _eval_arith(node: ast.expr, namespace: dict[str, float]) -> float:
+    if isinstance(node, ast.Constant):
+        if not isinstance(node.value, (int, float)):
+            raise ValueError(f"Only numeric constants allowed, got {node.value!r}")
+        return float(node.value)
+    if isinstance(node, ast.Name):
+        if node.id not in namespace:
+            raise ValueError(f"Unknown variable {node.id!r}")
+        return float(namespace[node.id])
+    if isinstance(node, ast.BinOp):
+        fn = _BINOPS.get(type(node.op))
+        if fn is None:
+            raise ValueError(f"Unsupported operator {type(node.op).__name__!r}")
+        left = _eval_arith(node.left, namespace)
+        right = _eval_arith(node.right, namespace)
+        try:
+            return fn(left, right)
+        except ZeroDivisionError:
+            raise ValueError("Division by zero in delay expression")
+    if isinstance(node, ast.UnaryOp):
+        fn = _UNOPS.get(type(node.op))
+        if fn is None:
+            raise ValueError(f"Unsupported unary operator {type(node.op).__name__!r}")
+        return fn(_eval_arith(node.operand, namespace))
+    raise ValueError(f"Unsupported expression node {type(node).__name__!r}")
 
 
 def load_config(path: str) -> dict[str, Any]:
@@ -43,11 +84,99 @@ def resolve_power(expr: str | float | None, p_threshold: float) -> float:
     if isinstance(expr, (int, float)):
         return float(expr)
     if isinstance(expr, str):
-        m = re.match(r"^\s*([0-9]*\.?[0-9]+)\s*P\s*$", expr)
+        m = re.match(r"^\s*([0-9]*\.?[0-9]*)\s*P\s*$", expr)
         if m:
-            return float(m.group(1)) * p_threshold
+            coeff_str = m.group(1)
+            return (float(coeff_str) if coeff_str else 1.0) * p_threshold
         return float(expr)
     raise ValueError(f"Invalid power expression: {expr!r}")
+
+
+def resolve_delay(
+    expr: str | int | float | None,
+    namespace: dict[str, float],
+) -> float:
+    """Resolve a delay expression to a float (ps).
+
+    Parameters
+    ----------
+    expr : str, int, float, or None
+        Delay value.  ``None`` resolves to ``0.0``.  A ``str`` is parsed as
+        an arithmetic expression; allowed names are those in *namespace*.
+        Only ``+``, ``-``, ``*``, ``/`` and numeric constants are permitted —
+        no builtins, no function calls, no imports.
+    namespace : dict[str, float]
+        Variables available inside the expression.  Typically built by
+        :func:`build_timing_namespace`.
+
+    Returns
+    -------
+    float
+        Resolved delay in ps.
+
+    Raises
+    ------
+    ValueError
+        If *expr* is not a recognised type, contains a syntax error, uses an
+        unknown variable, or uses a disallowed AST node.
+    """
+    if expr is None:
+        return 0.0
+    if isinstance(expr, (int, float)):
+        return float(expr)
+    if isinstance(expr, str):
+        try:
+            tree = ast.parse(expr.strip(), mode="eval")
+        except SyntaxError as exc:
+            raise ValueError(f"Invalid delay expression {expr!r}: {exc}") from exc
+        return _eval_arith(tree.body, namespace)
+    raise ValueError(
+        f"delay must be a number or expression string, got {type(expr).__name__!r}"
+    )
+
+
+def build_timing_namespace(
+    threshold: dict[str, Any],
+    defaults: dict[str, Any],
+    timing_vars: dict[str, Any] | None = None,
+) -> dict[str, float]:
+    """Build the variable namespace for delay expression evaluation.
+
+    The base namespace always contains three threshold-derived quantities:
+
+    * ``sigma_time`` — temporal width of one pulse (ps)
+    * ``pulse_separation`` — period between consecutive pulse starts (ps)
+    * ``cutoff_sigma`` — pulse cutoff multiplier (dimensionless)
+
+    Scenarios may extend this namespace via a ``timing_vars`` block, naming
+    derived quantities in physically readable terms such as ``pulse_duration``
+    or ``cycle_duration``.  Each timing variable is itself an expression
+    evaluated against the current namespace, so later variables may reference
+    earlier ones.
+
+    Parameters
+    ----------
+    threshold : dict
+        Threshold search result (``threshold_result.json``).
+    defaults : dict
+        Global ``laser_defaults`` section.
+    timing_vars : dict, optional
+        Scenario-level ``timing_vars`` mapping.  Values may be numbers or
+        expression strings using base variables or previously defined vars.
+
+    Returns
+    -------
+    dict[str, float]
+        Combined namespace: base variables plus evaluated timing_vars.
+    """
+    ns: dict[str, float] = {
+        "sigma_time": float(threshold.get("sigma_time", 1.0)),
+        "pulse_separation": float(threshold.get("pulse_separation", 10.0)),
+        "cutoff_sigma": float(defaults.get("cutoff_sigma", 3.0)),
+    }
+    for name, expr in (timing_vars or {}).items():
+        ns[name] = resolve_delay(expr, dict(ns))
+    return ns
 
 
 def make_dataclass(cls: type[T], overrides: dict[str, Any]) -> T:

@@ -46,6 +46,10 @@ A(t - t_{\mathrm{delay}})\, S(x, y)\, T(t - t_{\mathrm{delay}}), & t \ge t_{\mat
 $$
 
 Here `P0`, `Pmax`, `sigma_space`, `sigma_time`, `pulse_separation`, and `delay` are the configuration fields on `cfg.laser`.
+For `pulse-gaussian`, the implementation also defines a pulse-center offset
+\(\phi = \texttt{cutoff\_sigma} \cdot \sigma_{\mathrm{time}}\), so the first
+pulse peak occurs at \(t = t_{\mathrm{delay}} + \phi\) rather than exactly at
+`delay`.
 
 ### Laser type summary
 
@@ -54,9 +58,15 @@ Here `P0`, `Pmax`, `sigma_space`, `sigma_time`, `pulse_separation`, and `delay` 
 | `uniform` | Spatially constant continuous pump | \(S(x, y) = 1,\; A(t) = P_0,\; T(t) = 1\) |
 | `continuous-gaussian` | Continuous Gaussian spot centered at \((x_0, y_0)\) | \(S(x, y) = \exp[-((x-x_0)^2 + (y-y_0)^2)/(2 \sigma_{\mathrm{space}}^2)]\) |
 | `continuous-exp` | Continuous radially decaying pump with exponential tail | \(S(x, y) = \exp[-r / w^2],\; r = \sqrt{(x-x_0)^2 + (y-y_0)^2},\; w = \texttt{sigma\_space}\) |
-| `pulse-gaussian` | Repeated Gaussian pulses with Gaussian spot and stepwise amplitude ramp up to `Pmax` | \(S(x, y) = \exp[-((x-x_0)^2 + (y-y_0)^2)/(2 \sigma_{\mathrm{space}}^2)]\) and \(T(t) = \exp[-(t-n\Delta t)^2/(2 \sigma_{\mathrm{time}}^2)]\) near each pulse center \(n\Delta t\) |
+| `pulse-gaussian` | Repeated Gaussian pulses with Gaussian spot and stepwise amplitude ramp up to `Pmax` | \(S(x, y) = \exp[-((x-x_0)^2 + (y-y_0)^2)/(2 \sigma_{\mathrm{space}}^2)]\) and \(T(t) = \exp[-(t-(\phi+n\Delta t))^2/(2 \sigma_{\mathrm{time}}^2)]\) near each pulse center \(\phi+n\Delta t\), where \(\phi = \texttt{cutoff\_sigma} \cdot \sigma_{\mathrm{time}}\) |
 
 `continuous-exp` follows the current implementation exactly, including the `\exp(-r / w^2)` spatial form.
+
+For `pulse-gaussian`, `P0` is the peak amplitude of the first pulse and later
+pulse peaks ramp toward `Pmax`. At `t = delay` the pump is no longer at its
+maximum; with the default parameters it starts at about `exp(-4.5) ≈ 0.011`
+times the first-pulse peak and then rises to the first peak at
+`delay + cutoff_sigma * sigma_time`.
 
 For a single pump, configure the values directly on `cfg.laser`:
 

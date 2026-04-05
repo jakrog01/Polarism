@@ -15,13 +15,8 @@ import tempfile
 from datetime import datetime
 from typing import Any
 
-
-# Filename constants shared across all pipeline stages.
 MANIFEST_FILE = "manifest.json"
 SCENARIO_INDEX_FILE = "scenario_index.json"
-
-
-# ── Atomic I/O ────────────────────────────────────────────────────────────────
 
 def atomic_write_json(path: str, data: Any) -> None:
     """Write *data* as JSON to *path* atomically.
@@ -46,8 +41,6 @@ def atomic_write_json(path: str, data: Any) -> None:
         raise
     os.replace(tmp_path, path)
 
-
-# ── Run directory ─────────────────────────────────────────────────────────────
 
 def config_hash(config_path: str) -> str:
     """First 8 hex chars of the SHA-256 of the config file content."""
@@ -74,8 +67,6 @@ def create_run_dir(base_dir: str, config_path: str) -> str:
     os.makedirs(run_dir, exist_ok=False)
     return run_dir
 
-
-# ── Manifest ──────────────────────────────────────────────────────────────────
 
 def init_manifest(
     run_dir: str,
@@ -155,8 +146,6 @@ def resolve_scenario_name(run_dir: str, scenario_index: int) -> str:
         )
     return names[scenario_index]
 
-
-# ── Scenario sidecar files ────────────────────────────────────────────────────
 
 def scenario_meta_path(run_dir: str, scenario_name: str) -> str:
     """Return the canonical path for a scenario's metadata sidecar file."""

@@ -56,7 +56,7 @@ Pump profiles share the `AbstractLaser` contract:
 | `uniform` | homogeneous continuous pump |
 | `continuous-gaussian` | localized Gaussian continuous pump |
 | `continuous-exp` | localized continuous pump with exponential radial decay |
-| `pulse-gaussian` | repeated Gaussian pulses with Gaussian spatial profile |
+| `pulse-gaussian` | repeated Gaussian pulses with Gaussian spatial profile; the first peak is phase-shifted after `delay`, and pulse peaks ramp from `P0` toward `Pmax` |
 
 ### Laser composition modes
 

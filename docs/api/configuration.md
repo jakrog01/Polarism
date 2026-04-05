@@ -50,13 +50,13 @@
 | `mode` | single or multi-pump setup | `single`, `multiple` |
 | `config_file` | YAML file for multi-pump setups | path string |
 | `laser_type` | pump-profile selection | `uniform`, `continuous-gaussian`, `continuous-exp`, `pulse-gaussian` |
-| `P0`, `Pmax` | pump amplitudes | floats |
+| `P0`, `Pmax` | pump amplitudes; for `pulse-gaussian`, `P0` is the first pulse peak and later peaks ramp toward `Pmax` | floats |
 | `x0`, `y0` | pump center | floats |
 | `sigma_space` | spatial width scale | positive float |
 | `sigma_time` | pulse width in time | positive float |
 | `pulse_separation` | distance between pulses | positive float |
 | `cutoff_sigma` | pulse truncation radius in sigma units | positive float |
-| `delay` | start delay before pump turns on | nonnegative float |
+| `delay` | start delay before pump turns on; for `pulse-gaussian`, the first peak occurs later at `delay + cutoff_sigma * sigma_time` | nonnegative float |
 
 ## Reservoir options
 
