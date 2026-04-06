@@ -153,6 +153,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void rk4_combine(
     {REAL}* __restrict__ psi_out,
     {REAL}* __restrict__ nR_out,
     const {REAL} dt6,
+    const int nx, const int ny,
     const int N
 ) {{
     {COMBINE_PREAMBLE}
@@ -288,6 +289,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void rk4_combine_double(
     {REAL}* __restrict__ nA_out,
     {REAL}* __restrict__ nI_out,
     const {REAL} dt6,
+    const int nx, const int ny,
     const int N
 ) {{
     {COMBINE_PREAMBLE}
@@ -555,7 +557,7 @@ class RK4CudaSolver(AbstractSolver):
                 nR0, k1n, k2n, k3n, k4n,
                 psi_out, nR_out,
                 self._k_dt6,
-                self._k_N,
+                self._k_nx, self._k_ny, self._k_N,
             ),
         )
 
@@ -640,7 +642,7 @@ class RK4CudaSolver(AbstractSolver):
                 nI0, k1i, k2i, k3i, k4i,
                 psi_out, nA_out, nI_out,
                 self._k_dt6,
-                self._k_N,
+                self._k_nx, self._k_ny, self._k_N,
             ),
         )
 
