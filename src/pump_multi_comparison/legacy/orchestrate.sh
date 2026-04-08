@@ -1,16 +1,4 @@
 #!/usr/bin/env bash
-# -----------------------------------------------------------------------
-# Login-node orchestrator for the multi-pump comparison pipeline.
-#
-# Parses config.yaml, then fires sbatch calls with afterok dependency
-# chaining.  Exits immediately once all jobs are queued — no compute
-# allocation is consumed by this script.
-#
-# Usage:
-#   bash orchestrate.sh                       
-#   bash orchestrate.sh /path/to/config.yaml
-#   bash orchestrate.sh --dry-run
-# -----------------------------------------------------------------------
 set -euo pipefail
 
 DRY_RUN=0

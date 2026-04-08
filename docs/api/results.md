@@ -41,6 +41,18 @@ The user-facing result configuration exposes these main storage choices:
 | `save_npy` | NumPy array dumps |
 | `real_time_view` | interactive visualization during a run |
 
+The reusable storage module also exports append-only HDF5 helpers used by the example pipeline:
+
+| Symbol | Role |
+| --- | --- |
+| `AppendableHDF5Writer` | abstract append-only writer contract |
+| `CpuBufferedHDF5Writer` | CPU-oriented batched HDF5 writer |
+| `GpuAsyncHDF5Writer` | GPU-oriented double-buffered HDF5 writer |
+| `compute_batch_size` | GPU-memory-aware batch-depth heuristic |
+| `create_hdf5_writer` | backend-selection factory for CPU vs GPU runs |
+
+These helpers are separate from the visitor-based `cfg.result` path. They are intended for workflows that stream explicit field snapshots, such as `src/pump_multi_comparison/`.
+
 ## Why this abstraction matters
 
 The physics and solver layers do not need to know whether a quantity will be plotted, written to HDF5, or ignored. They only expose result nodes. That keeps numerical code separate from output boilerplate.

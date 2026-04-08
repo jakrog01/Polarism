@@ -1,12 +1,15 @@
-"""Pure rendering helpers for scenario outputs.
+"""Rendering helpers for scenario outputs.
 
 All public functions take explicit data and result directories. The module
 does not keep pipeline state in globals.
+
+``generate_animation`` has been replaced by the NVENC streaming renderer in
+``pipeline.render.nvenc_stream``.  This module handles static PNGs and the
+scalar-sidecar-based summary plot only.
 """
 from __future__ import annotations
 
 import os
-import shutil
 
 import h5py
 import matplotlib
@@ -14,33 +17,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.animation import FuncAnimation
 from matplotlib.colors import PowerNorm
 from matplotlib.gridspec import GridSpec
-
-def _find_ffmpeg() -> bool:
-    """Check whether ffmpeg is available."""
-    import subprocess
-
-    try:
-        import imageio_ffmpeg
-
-        ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-        matplotlib.rcParams["animation.ffmpeg_path"] = ffmpeg_path
-        subprocess.run([ffmpeg_path, "-version"], capture_output=True, check=True)
-        return True
-    except (ImportError, FileNotFoundError, subprocess.CalledProcessError):
-        pass
-    if shutil.which("ffmpeg"):
-        try:
-            subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
-            return True
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            pass
-    return False
-
-
-HAS_FFMPEG = _find_ffmpeg()
 
 FIELD_SPECS = {
     "psi_sq": {"source": "psi", "label": r"$|\psi|^2$", "cmap": "magma", "transform": "abs2"},
@@ -56,13 +34,9 @@ COMPARISON_SCALARS = [
 ]
 
 SNAPSHOT_COUNT = 5
-ANIM_FPS = 8
-ANIM_GIF_FPS = 5
-ANIM_TARGET_SECONDS = 60
-GIF_MAX_FRAMES = 200
-ANIM_DPI = 150
 PLOT_DPI = 200
 PUMP_NORM_GAMMA = 0.3
+
 
 def routine_dir(routine: str, results_dir: str) -> str:
     """Return the output directory for *routine* within *results_dir*."""
@@ -108,7 +82,10 @@ def generate_field_png(
     data_dir: str,
     results_dir: str,
 ) -> None:
-    """Generate a snapshot grid PNG with a scalar trace for *field_key*."""
+    """Generate a snapshot grid PNG with a scalar trace for *field_key*.
+
+    Reads from ``{data_dir}/{routine}.h5`` — call while HDF5 is local on scratch.
+    """
     spec = FIELD_SPECS[field_key]
 
     with open_h5(routine, data_dir) as h5:
@@ -192,141 +169,43 @@ def generate_field_png(
     print(f"    {out_path}")
 
 
-def generate_animation(
-    routine: str,
-    extent: list[float],
-    data_dir: str,
-    results_dir: str,
-) -> None:
-    """Generate an MP4 (or GIF if ffmpeg is absent) animation."""
-    with open_h5(routine, data_dir) as h5:
-        sort_order = load_sorted_order(h5)
-        time_sorted = h5["time"][:][sort_order]
-        n_total = len(time_sorted)
-
-        if HAS_FFMPEG:
-            anim_fps, target_frames = ANIM_FPS, ANIM_FPS * ANIM_TARGET_SECONDS
-        else:
-            anim_fps = ANIM_GIF_FPS
-            target_frames = min(GIF_MAX_FRAMES, ANIM_GIF_FPS * ANIM_TARGET_SECONDS)
-        step = max(1, n_total // target_frames)
-        anim_indices = list(range(0, n_total, step))
-        anim_physical = [int(sort_order[i]) for i in anim_indices]
-
-        field_keys = list(FIELD_SPECS.keys())
-        specs = [FIELD_SPECS[k] for k in field_keys]
-
-        n_samples = min(20, n_total)
-        sample_step = max(1, (n_total - 1) // max(1, n_samples - 1))
-        sample_physical = [int(sort_order[i]) for i in range(0, n_total, sample_step)][:n_samples]
-
-        vmins, vmaxs, norms = {}, {}, {}
-        for k, sp in zip(field_keys, specs):
-            vals = [_read_field_frame(h5, sp, pi) for pi in sample_physical]
-            vmins[k] = min(v.min() for v in vals)
-            vmaxs[k] = max(v.max() for v in vals)
-            if vmaxs[k] <= vmins[k]:
-                vmaxs[k] = vmins[k] + 1e-12
-            norms[k] = _make_norm(sp, vmins[k], vmaxs[k])
-
-        first_frames = {k: _read_field_frame(h5, sp, anim_physical[0])
-                        for k, sp in zip(field_keys, specs)}
-
-        n_frames_anim = len(anim_physical)
-        ny_dim, nx_dim = h5[f"fields/{FIELD_SPECS['psi_sq']['source']}"].shape[1:]
-        preload_bytes = n_frames_anim * ny_dim * nx_dim * (16 + 8 + 8 + 8)
-        preload_gb = preload_bytes / 1024**3
-        if preload_gb > 1.0:
-            print(
-                f"    WARNING: animation preload estimated at {preload_gb:.1f} GB "
-                f"({n_frames_anim} frames, {ny_dim}×{nx_dim} grid).  "
-                "Pass --no-animation to skip."
-            )
-        print(f"    Pre-loading {n_frames_anim} frames ({preload_gb:.2f} GB)...")
-        preloaded = {
-            k: np.stack([_read_field_frame(h5, sp, pi) for pi in anim_physical])
-            for k, sp in zip(field_keys, specs)
-        }
-
-    fig, axes = plt.subplots(1, 4, figsize=(22, 5.5), constrained_layout=True)
-    images = {}
-    for ax, k, sp in zip(axes, field_keys, specs):
-        kw = {"norm": norms[k]} if norms[k] else {"vmin": vmins[k], "vmax": vmaxs[k]}
-        images[k] = ax.imshow(first_frames[k], origin="lower", extent=extent,
-                               cmap=sp["cmap"], aspect="equal", **kw)
-        ax.set_title(sp["label"], fontsize=11)
-        ax.set_xlabel(r"x ($\mu$m)")
-        ax.set_ylabel(r"y ($\mu$m)")
-        fig.colorbar(images[k], ax=ax, fraction=0.046, pad=0.04)
-
-    title_text = fig.suptitle("", fontsize=12, fontweight="bold")
-
-    def update(frame_num: int):
-        """Redraw one animation frame."""
-        idx = anim_indices[frame_num]
-        for k in field_keys:
-            images[k].set_data(preloaded[k][frame_num])
-        title_text.set_text(f"{routine.upper()} \u2014 t = {time_sorted[idx]:.2f} ps")
-        return list(images.values()) + [title_text]
-
-    anim = FuncAnimation(fig, update, frames=len(anim_indices),
-                         blit=False, interval=1000 // anim_fps)
-
-    out_dir = routine_dir(routine, results_dir)
-    os.makedirs(out_dir, exist_ok=True)
-
-    if HAS_FFMPEG:
-        from matplotlib.animation import FFMpegWriter
-        ext = "mp4"
-        writer = FFMpegWriter(fps=anim_fps, codec="h264", bitrate=3000)
-    else:
-        from matplotlib.animation import PillowWriter
-        ext = "gif"
-        writer = PillowWriter(fps=anim_fps)
-
-    out_path = os.path.join(out_dir, f"dynamics.{ext}")
-    print(f"    Saving {ext.upper()} ({len(anim_indices)} frames, "
-          f"ffmpeg={'yes' if HAS_FFMPEG else 'no'})...")
-    anim.save(out_path, writer=writer, dpi=ANIM_DPI)
-    plt.close(fig)
-    print(f"    {out_path}")
-
-
 def generate_summary(
-    extent: list[float],
     routines: list[str],
     data_dir: str,
     results_dir: str,
 ) -> None:
-    """Generate a cross-scenario comparison plot."""
-    available = [r for r in routines if os.path.isfile(os.path.join(data_dir, f"{r}.h5"))]
-    if not available:
-        print("  No HDF5 files found; skipping summary plot.")
-        return
+    """Generate a cross-scenario comparison plot from scalar sidecars.
 
-    routine_data = {}
-    for routine in available:
-        with open_h5(routine, data_dir) as h5:
-            so = load_sorted_order(h5)
-            time_sorted = h5["time"][:][so]
-            scalars = {
-                sc_key: h5[f"scalars/{sc_key}"][:][so]
-                for sc_key, _ in COMPARISON_SCALARS
-                if f"scalars/{sc_key}" in h5
-            }
-        routine_data[routine] = {"time": time_sorted, "scalars": scalars}
+    Reads ``{data_dir}/{routine}_scalars.npz`` for each routine — no HDF5 required.
+    """
+    routine_data: dict[str, dict] = {}
+    for routine in routines:
+        sidecar = os.path.join(data_dir, f"{routine}_scalars.npz")
+        if not os.path.isfile(sidecar):
+            print(f"  WARNING: scalar sidecar not found, skipping {routine}: {sidecar}")
+            continue
+        npz = np.load(sidecar)
+        scalars = {
+            sc_key: npz[sc_key]
+            for sc_key, _ in COMPARISON_SCALARS
+            if sc_key in npz
+        }
+        routine_data[routine] = {"time": npz["time"], "scalars": scalars}
+
+    if not routine_data:
+        print("  No scalar sidecars found; skipping summary plot.")
+        return
 
     n_sc = len(COMPARISON_SCALARS)
     fig = plt.figure(
-        figsize=(max(10.0, 1.5 * len(available)), max(3.5 * n_sc, 4.0)),
+        figsize=(max(10.0, 1.5 * len(routine_data)), max(3.5 * n_sc, 4.0)),
         constrained_layout=True,
     )
     gs = GridSpec(n_sc, 1, figure=fig)
 
     for row, (sc_key, sc_label) in enumerate(COMPARISON_SCALARS):
         ax_sc = fig.add_subplot(gs[row, 0])
-        for routine in available:
-            rd = routine_data[routine]
+        for routine, rd in routine_data.items():
             if sc_key in rd["scalars"]:
                 scalar = rd["scalars"][sc_key]
                 ax_sc.plot(rd["time"][: len(scalar)], scalar, label=routine)

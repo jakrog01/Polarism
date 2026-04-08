@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Union
 
 from polarism.compute_engine import compute_engine
+from polarism.config.dtype_utils import real_dtype
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
@@ -27,13 +28,14 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         reservoir_config: ReservoirParameters,
         physics: PhysicsConstants,
         grid: SimulationGrid2D,
+        precision: str = "double",
     ):
         """Set up the single reservoir."""
         self.xp = compute_engine.xp
         self.config = reservoir_config
         self.R = physics.R
         self.gamma_r = physics.gamma_R
-        self.nR = self.xp.zeros((grid.ny, grid.nx), dtype=self.xp.float64)
+        self.nR = self.xp.zeros((grid.ny, grid.nx), dtype=real_dtype(self.xp, precision))
 
     def get_state(self) -> tuple[Union[np.ndarray, cp.ndarray]]:
         """Return the current state."""
@@ -41,7 +43,7 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
 
     def set_state(self, state: tuple[Union[np.ndarray, cp.ndarray]]) -> None:
         """Set the current state."""
-        self.nR = self.xp.maximum(state[0], 0)
+        self.nR = self.xp.maximum(state[0], 0).astype(self.nR.dtype, copy=False)
 
     def get_active_density(
         self, state: tuple[Union[np.ndarray, cp.ndarray]]

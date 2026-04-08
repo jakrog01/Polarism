@@ -1,13 +1,10 @@
-"""CPU stage: per-scenario visualization.
+"""CPU stage: per-scenario visualization (optional post-hoc use).
 
-Reads HDF5 from the run directory, writes plots to
-``<run_dir>/results/<scenario_name>/``.  All paths are derived from
-``--run-dir`` and ``--scenario-index``; no global state mutation.
+Reads ``<run_dir>/<scenario_name>.h5`` and writes plots to
+``<run_dir>/results/<scenario_name>/``.  Requires ``archive_raw_hdf5=True``
+in the output config — the inline GPU render covers the normal case.
 
-Exits nonzero if the required HDF5 or metadata is missing so the Slurm
-dependency chain breaks clearly.
-
-Invoked by Slurm as:
+Invoked as:
     python -m pipeline.stages.cpu.visualize --run-dir <run_dir>
 """
 from __future__ import annotations
@@ -18,7 +15,8 @@ import os
 import sys
 
 from pipeline.manifest.io import resolve_scenario_name, scenario_meta_path
-from pipeline.stages.cpu.viz_engine import FIELD_SPECS, generate_animation, generate_field_png
+from pipeline.render.nvenc_stream import generate_animation
+from pipeline.stages.cpu.viz_engine import FIELD_SPECS, generate_field_png
 
 
 def main() -> None:
@@ -32,8 +30,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--no-animation", action="store_true", default=False,
-        help="Skip animation generation.  Useful for large campaigns where "
-             "preloading all frames would exceed available memory.",
+        help="Skip animation generation.",
     )
     args = parser.parse_args()
 
@@ -102,10 +99,7 @@ def main() -> None:
         print("  animation ... skipped (--no-animation)")
     else:
         print("  animation ...", flush=True)
-        try:
-            generate_animation(scenario_name, extent, data_dir=run_dir, results_dir=results_dir)
-        except Exception as e:
-            print(f"  WARNING: animation failed: {e}", file=sys.stderr)
+        generate_animation(scenario_name, FIELD_SPECS, extent, data_dir=run_dir, results_dir=results_dir)
 
     print(f"\n  Visualization for '{scenario_name}' complete.")
 

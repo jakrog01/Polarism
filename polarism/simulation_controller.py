@@ -7,6 +7,8 @@ from tqdm import trange
 
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine
+from polarism.config.dtype_utils import complex_dtype, real_dtype
+from polarism.config.validation import validate_config
 from polarism.grid.create_grid import create_grid
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.laser.laser_factory import LaserFactory
@@ -70,6 +72,7 @@ class SimulationController:
         compute_engine.configure(cfg.compute_engine)
         self.xp = compute_engine.xp
 
+        validate_config(cfg)
         check_solver_compatibility(cfg)
 
         self.grid = create_grid(cfg.grid)
@@ -77,9 +80,9 @@ class SimulationController:
             self.grid, cfg.boundary_condition, cfg.physics
         )
         self.potential = create_potential(cfg.potential, self.grid)
-        self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self.grid.Y)
-        self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid)
-        self.state = SimulationState(self.grid, cfg.physics.init_eps)
+        self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self.grid.Y, cfg.solver.precision)
+        self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid, cfg.solver.precision)
+        self.state = SimulationState(self.grid, cfg.physics.init_eps, cfg.solver.precision)
         self.solver = create_solver(cfg, self.grid)
         self.max_laser_power = self._compute_max_laser_power()
 
@@ -88,6 +91,14 @@ class SimulationController:
             self.potential = self.potential.astype(self.state.psi.dtype)
             cap = cap.astype(self.state.psi.dtype)
         self.potential = self.potential + cap
+
+        if cfg.solver.precision == "single":
+            target = (
+                complex_dtype(self.xp, "single")
+                if self.xp.iscomplexobj(self.potential)
+                else real_dtype(self.xp, "single")
+            )
+            self.potential = self.potential.astype(target)
         self.visualizer = None
         self.next_viz_time = 0.0
         self.results_manager = ResultsManager()
@@ -260,11 +271,7 @@ class SimulationController:
                         state=self.state,
                         grid=self.grid,
                         P_total=P_total,
-                        scalar_groups=(
-                            self._get_scalar_groups(t_after)
-                            if self.cfg.laser.expose_results
-                            else {}
-                        ),
+                        scalar_groups=self._get_scalar_groups(),
                     )
                     if should_viz:
                         self.next_viz_time += self.cfg.result.real_time_refresh_interval
@@ -274,42 +281,22 @@ class SimulationController:
 
     def _compute_total_pump(self, t: float) -> Union[np.ndarray, cp.ndarray]:
         """Sum the pump from all lasers at time t."""
-        P_total = self.xp.zeros_like(self.grid.X)
+        P_total = self.xp.zeros(self.grid.X.shape, dtype=real_dtype(self.xp, self.cfg.solver.precision))
         for laser in self.lasers:
             P_total += laser.get_power(self.grid.X, self.grid.Y, t)
         return P_total
 
-    def _get_scalar_groups(self, t: float) -> dict[str, dict[str, float]]:
-        """Build scalar groups for the current time."""
-        scalar_groups = {}
-        if self.cfg.laser.expose_results:
-            scalar_groups["P_lasers"] = {
-                f"L{i}": float(
-                    self.xp.max(laser.get_power(self.grid.X, self.grid.Y, t))
-                )
+    def _get_scalar_groups(self) -> dict[str, dict[str, float]]:
+        """Build scalar groups from the last computed laser fields.
+
+        Must be called after _compute_total_pump so that each laser's .P
+        is already set to the current time step.
+        """
+        if not self.cfg.laser.expose_results:
+            return {}
+        return {
+            "P_lasers": {
+                f"L{i}": float(self.xp.max(laser.P))
                 for i, laser in enumerate(self.lasers)
             }
-        return scalar_groups
-
-    def _update_visualization(
-        self, t: float, P_total: Union[np.ndarray, cp.ndarray]
-    ) -> None:
-        """Refresh the live plots."""
-        scalar_groups = {}
-        if self.cfg.laser.expose_results:
-            scalar_groups["P_lasers"] = {
-                f"L{i}": float(
-                    self.xp.max(laser.get_power(self.grid.X, self.grid.Y, t))
-                )
-                for i, laser in enumerate(self.lasers)
-            }
-
-        self.results_manager.step(
-            t,
-            grid=self.grid,
-            state=self.state,
-            lasers=self.lasers,
-            reservoir=self.reservoir,
-            scalar_groups=scalar_groups,
-            P_total=P_total,
-        )
+        }

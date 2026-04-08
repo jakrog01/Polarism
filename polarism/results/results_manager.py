@@ -18,10 +18,15 @@ class ResultsManager:
 
     def step(self, t: float, **context) -> None:
         """Send one time step to each visitor."""
+        needed: set[str] = set()
+        for visitor in self.visitors:
+            needed |= visitor.needs(self.nodes)
+
         cached = {}
         for node in self.nodes:
-            field_cpu, reduced_cpu = node.compute_cpu(**context)
-            cached[node.name] = (field_cpu, reduced_cpu)
+            if node.name in needed:
+                field_cpu, reduced_cpu = node.compute_cpu(**context)
+                cached[node.name] = (field_cpu, reduced_cpu)
 
         for visitor in self.visitors:
             visitor.visit_all(self.nodes, t=t, cached=cached, **context)

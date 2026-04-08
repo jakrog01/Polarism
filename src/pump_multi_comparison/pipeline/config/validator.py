@@ -212,6 +212,16 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
                 f"threshold_search.condensation_fraction={cond_frac!r} is not a number"
             )
 
+    out = cfg.get("output", {})
+    for _stride_key in ("field_record_stride", "scalar_record_stride"):
+        _val = out.get(_stride_key)
+        if _val is not None:
+            try:
+                if int(_val) < 1:
+                    errors.append(f"output.{_stride_key}={_val!r} must be >= 1")
+            except (TypeError, ValueError):
+                errors.append(f"output.{_stride_key}={_val!r} must be a positive integer")
+
     scenarios: list = cfg.get("scenarios", [])
     if not scenarios:
         errors.append("No scenarios defined in config")
@@ -492,15 +502,19 @@ def validate_slurm_env(env_path: str) -> list[str]:
         "SLURM_GPUS",
         "SLURM_CPUS",
         "SLURM_TIME",
+        "NVME_GB",
+        "TETYDA_RUNS_BASE",
+        "MAX_CONCURRENT_SCENARIOS",
+        "FINALIZE_MEM",
+        "FINALIZE_CPUS",
+        "FINALIZE_TIME",
     }
     _OPTIONAL_KNOWN: frozenset[str] = frozenset({
         "SLURM_QOS",
-        "MAX_CONCURRENT_SCENARIOS",
-        "SCRATCH", "SLURM_TMPDIR", "TMPDIR",
-        "CPU_PARTITION", "CPU_MEM", "CPU_CPUS", "CPU_TIME",
-        "THRESHOLD_PARTITION", "THRESHOLD_MEM", "THRESHOLD_CPUS", "THRESHOLD_GPUS",
-        "VIZ_PARTITION", "VIZ_MEM", "VIZ_CPUS", "VIZ_TIME",
-        "FINALIZE_PARTITION", "FINALIZE_MEM", "FINALIZE_CPUS", "FINALIZE_TIME",
+        "THRESHOLD_TIME",
+        "SCENARIO_TIME",
+        "FIT_TIME",
+        "TIME_RESPONSE_MEM", "TIME_RESPONSE_CPUS", "TIME_RESPONSE_TIME",
     })
 
     if not os.path.isfile(env_path):

@@ -3,13 +3,12 @@
 ## Entry point
 
 ```bash
-bash submit.sh [--config config.yaml] [--runs-dir /path/to/runs] [--dry-run]
+bash submit.sh [--config config.yaml] [--runs-dir /path/to/runs] [--dry-run] [--wait]
 ```
 
-This is the **only supported entry point**.  It validates config, creates a
-run directory, and submits the full Slurm DAG.  Legacy paths are in
-`legacy/`.  If `--runs-dir` is omitted, runs are written under
-`src/pump_multi_comparison/runs/`.
+This is the only supported entry point. It validates config, creates a run
+directory, and submits the full Rysy workflow as Slurm jobs connected with
+`afterok` dependencies. Legacy paths are in `legacy/`.
 
 ---
 
@@ -33,15 +32,15 @@ pump_multi_comparison/
 │   ├── manifest/
 │   │   └── io.py                 ← Atomic JSON writes, run manifest, scenario index
 │   ├── simulation/
-│   │   └── core.py               ← Physics kernel: AsyncBatchWriter, run_simulation_from_config
+│   │   └── core.py               ← Physics kernel: auto-sized appendable HDF5 writer + run_simulation_from_config
 │   └── stages/
 │       ├── gpu/
 │       │   ├── threshold_search.py  ← GPU: find condensation threshold
-│       │   └── run_scenario.py      ← GPU: simulate one scenario (array task)
+│       │   └── run_scenario.py      ← GPU: simulate one scenario + inline render
 │       └── cpu/
 │           ├── viz_engine.py        ← Visualization engine (pure functions)
-│           ├── visualize.py         ← CPU: per-scenario plots (array task)
-│           └── finalize.py          ← CPU: cross-scenario summary
+│           ├── visualize.py         ← Optional post-hoc plots if raw HDF5 was archived
+│           └── finalize.py          ← CPU: cross-scenario summary from lightweight artifacts
 │
 └── legacy/                       ← DEPRECATED — not used by the pipeline
     ├── DEPRECATED.md
@@ -52,25 +51,21 @@ pump_multi_comparison/
 
 ---
 
-## Slurm DAG
+## Execution model
 
 ```
-submit.sh  (login node — exits immediately after queuing)
+submit.sh  (Rysy login node)
     │
-    ▼
-[1] threshold_search   GPU  single job
-    │  afterok
-    ▼
-[2] scenario array     GPU  --array=0-(N-1)%K   ← K = MAX_CONCURRENT_SCENARIOS
-    │  afterok (ALL tasks must succeed)
-    ├───────────────────────────────────┐
-    ▼                                   ▼
-[3] visualize array    non-GPU          [4] finalize   non-GPU
-    per-scenario                             single job
+    ├── sbatch threshold_search
+    ├── sbatch scenario array  --dependency=afterok:<threshold_job>  --array=0-(N-1)%K
+    │       each task: simulate on NVMe scratch -> render inline -> copy back artifacts
+    └── sbatch finalize        --dependency=afterok:<scenario_array_job>
 ```
 
-- If any scenario GPU job fails, Slurm cancels jobs 3 and 4 via `afterok`
-  dependency.  The run manifest shows which scenario failed.
+- `submit.sh` is asynchronous by default: once all jobs are accepted by Slurm,
+  the terminal can be closed.
+- Pass `--wait` to restore synchronous polling and abort locally on the first
+  failed Rysy job.
 - `--array=0-(N-1)%K` limits simultaneous scenario jobs to K.  Scenario
   temp directories are job-unique:
   `$SCRATCH/polariton/<run>/<SLURM_JOB_ID>_<TASK_ID>/<scenario>/`
@@ -79,16 +74,18 @@ submit.sh  (login node — exits immediately after queuing)
 
 ## Run directories
 
-Every `submit.sh` invocation creates:
+Every `submit.sh` invocation creates a run directory under `TETYDA_RUNS_BASE`
+unless `--runs-dir` overrides it:
 
 ```
-src/pump_multi_comparison/runs/<YYYYMMDD_HHMMSS>_<config-hash>/
+<runs-base>/<YYYYMMDD_HHMMSS>_<config-hash>/
 ├── config.yaml              ← snapshot (jobs never read the live source)
 ├── scenario_index.json      ← ["seq_5spot_p1.0", "seq_5spot_p0.9", ...]
 ├── manifest.json            ← run state
 ├── threshold_result.json    ← written by job 1
 ├── <scenario>_meta.json     ← written by each scenario GPU job
-├── <scenario>.h5            ← HDF5 output from GPU simulation
+├── <scenario>_scalars.npz   ← scalar sidecar for finalize
+├── <scenario>.h5            ← optional raw archive when archive_raw_hdf5=true
 ├── results_summary.json     ← written by finalize
 ├── results/                 ← plots and animations
 └── logs/                    ← Slurm stdout/stderr per job
@@ -195,16 +192,16 @@ from the same fixed RNG seed, so results do not depend on search order.
 | `SLURM_CPUS` | ✓ | CPUs per GPU job |
 | `SLURM_TIME` | ✓ | Walltime for scenario jobs (e.g. `04:00:00`) |
 | `SLURM_QOS` | optional | QOS string |
-| `MAX_CONCURRENT_SCENARIOS` | optional | Max simultaneous scenario GPU jobs (default **1**) |
-| `SCRATCH` | **strongly recommended** | Path to a parallel/network scratch filesystem for HDF5 output (e.g. `/lustre/scratch/$USER`).  Set this explicitly if the cluster's default `$SCRATCH` is node-local `/tmp` — see note below. |
-| `CPU_PARTITION` | optional | Partition for non-GPU stages — see below |
-| `CPU_MEM` | optional | Memory for non-GPU stages (defaults to `SLURM_MEM`) |
-| `CPU_CPUS` | optional | CPUs for non-GPU stages (defaults to `SLURM_CPUS`) |
-| `CPU_TIME` | optional | Walltime for non-GPU stages (defaults to `SLURM_TIME`) |
+| `NVME_GB` | ✓ | NVMe scratch size requested for scenario jobs |
+| `TETYDA_RUNS_BASE` | ✓ | Persistent run base on `/lu/tetyda` |
+| `MAX_CONCURRENT_SCENARIOS` | ✓ | Max simultaneous scenario GPU jobs |
+| `FINALIZE_MEM` | ✓ | Memory for the finalize stage |
+| `FINALIZE_CPUS` | ✓ | CPUs for the finalize stage |
+| `FINALIZE_TIME` | ✓ | Walltime for the finalize stage |
 
 ### Scratch directory requirements
 
-Each scenario GPU job writes its HDF5 output (several GB before compression) to a
+Each scenario GPU job writes its transient HDF5 output (several GB before compression) to a
 job-unique subdirectory under the first usable scratch base it finds, probed in
 this order: `$SCRATCH`, `$SLURM_TMPDIR`, `$TMPDIR`.  The resulting path looks like:
 
@@ -222,30 +219,16 @@ Set and export SCRATCH in slurm.env or provide SLURM_TMPDIR/TMPDIR
 that points to real job scratch, not /tmp.
 ```
 
-On Rysy, `$SCRATCH` is set by the cluster to a path that resolves to `/tmp`.  No
-other scratch variable is typically set, so you must override it in `slurm.env`:
-
-```bash
-SCRATCH=/lustre/scratch/$USER
-```
-
-`submit.sh` exports everything in `slurm.env` into the submitted job environment
-(`set -a; source slurm.env; set +a`), so the compute node uses the value you set
-rather than the cluster default.
+**Current Rysy flow (`submit.sh`):** Do not set `SCRATCH` in `slurm.env`.
+`job_gpu.sh` exports `SCRATCH="/scratch/${SLURM_JOBID}"` at job runtime, using the
+NVMe-oF device allocated via `--gres=nvme:${NVME_GB}`.  Setting `SCRATCH` in
+`slurm.env` would override this with a path that does not exist inside the job.
 
 **Failure mode before this guard:** when `/tmp` was accepted as scratch (it was,
 because the guard only applied to `SLURM_TMPDIR`/`TMPDIR` but not `SCRATCH`), the
 job would complete 100 % of the solver loop and then fail during `writer.close()` /
 HDF5 final flush as `/tmp` filled, exiting with code 1 and no `→ file.h5` line in
 stdout.  With the fix the job fails before the simulation starts.
-
-### Non-GPU stage placement on Rysy
-
-Rysy is a GPU cluster.  If `CPU_PARTITION` is not set (or equals
-`SLURM_PARTITION`), non-GPU stages run on the GPU partition **without** a
-GPU allocation.  `submit.sh` emits a WARNING in this case.
-
-See `cluster/README.md` for the full resource-model discussion.
 
 ---
 
@@ -255,8 +238,8 @@ See `cluster/README.md` for the full resource-model discussion.
 |-------|----------|-------------|
 | Config / schema | `pipeline/config/` | YAML format, dataclass fields |
 | Manifest / atomic I/O | `pipeline/manifest/` | JSON, filesystem atomicity |
-| Physics kernel | `pipeline/simulation/core.py` | polarism API, CuPy/NumPy |
+| Physics kernel | `pipeline/simulation/core.py` | polarism API, CuPy/NumPy, appendable HDF5 writer selection |
 | GPU stages | `pipeline/stages/gpu/` | kernel + config + manifest |
-| CPU stages | `pipeline/stages/cpu/` | HDF5, matplotlib, manifest |
-| Slurm submission | `submit.sh` | Slurm CLI, run-dir layout |
+| CPU stages | `pipeline/stages/cpu/` | scalar sidecars, summary plots, optional post-hoc HDF5 visualisation |
+| Slurm submission | `submit.sh` | local sbatch submission/dependencies on a Rysy login node, run-dir layout |
 | Cluster wrappers | `cluster/` | Module names, PYTHONPATH |

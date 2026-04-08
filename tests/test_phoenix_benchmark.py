@@ -14,7 +14,7 @@ import pytest
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-import polarism.laser  # noqa: F401
+import polarism.laser
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import Config
 
@@ -880,7 +880,6 @@ def _run_benchmark_case(
             if mask.sum() > 0:
                 phase_ph = np.angle(psi_ph[mask])
                 phase_pol = np.angle(psi_pol[mask])
-                # Phase difference wrapped to [-π, π]
                 dphase = np.angle(np.exp(1j * (phase_pol - phase_ph)))
                 metrics["frame_phase_rmse"] = float(np.sqrt(np.mean(dphase**2)))
 

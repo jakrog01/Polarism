@@ -27,6 +27,7 @@ class PhysicsConstants:
     R: float = 0.02
     R_IA: float = 5e-2
     R_AI: float = 2.5e-3
+    kappa: float = 0.05
     init_eps: float = 1e-3
 
 

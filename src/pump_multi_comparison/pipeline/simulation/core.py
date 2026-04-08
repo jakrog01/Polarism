@@ -9,211 +9,32 @@ import math
 import os
 import traceback
 
-import h5py
 import numpy as np
 
+from pipeline.config.output_policy import OutputPolicy
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import Config
 from polarism.grid.create_grid import create_grid
 from polarism.potential.create_potential import create_potential
 from polarism.reservoir.create_reservoir import create_reservoir
+from polarism.results.storage import create_hdf5_writer
+from polarism.results.storage.appendable_hdf5 import compute_batch_size
 from polarism.simulation_state import SimulationState
 from polarism.solver.create_solver import create_solver
 from tqdm import trange
 
-RECORD_STRIDE = 100
 COND_GROWTH_FACTOR = 1e6
 CHECK_EVERY = 50
 MIN_CHECK_TIME = 50.0
-RESERVED_GPU_GB = 4.0
 RNG_SEED = 42
 
-class AsyncBatchWriter:
-    """Write HDF5 frames with double buffering.
-
-    On GPU runs it uses pinned host buffers and a non-blocking stream when
-    that path is available. Otherwise it falls back to a normal copy.
-    """
-
-    def __init__(self, filepath: str, batch_size: int, ny: int, nx: int) -> None:
-        """Set up batch buffers and the HDF5 file."""
-        self.xp = compute_engine.xp
-        self.use_gpu = compute_engine.use_gpu
-        self.batch_size = batch_size
-        self.ny = ny
-        self.nx = nx
-        self.h5 = h5py.File(filepath, "w")
-        self.datasets: dict = {}
-        self.total = 0
-
-        self._cnames = ["psi"]
-        self._rnames = ["nI", "nA", "Pump"]
-        self._all_names = self._cnames + self._rnames
-
-        self._gpu = [{}, {}]
-        for i in range(2):
-            for nm in self._cnames:
-                self._gpu[i][nm] = self.xp.zeros(
-                    (batch_size, ny, nx), dtype=self.xp.complex128
-                )
-            for nm in self._rnames:
-                self._gpu[i][nm] = self.xp.zeros(
-                    (batch_size, ny, nx), dtype=self.xp.float64
-                )
-
-        self._host: dict = {}
-        self._pinned = False
-        if self.use_gpu:
-            try:
-                import cupy as cp
-
-                for nm in self._cnames:
-                    buf = np.empty((batch_size, ny, nx), dtype=np.complex128)
-                    cp.cuda.runtime.hostRegister(buf.ctypes.data, buf.nbytes, 0)
-                    self._host[nm] = buf
-                for nm in self._rnames:
-                    buf = np.empty((batch_size, ny, nx), dtype=np.float64)
-                    cp.cuda.runtime.hostRegister(buf.ctypes.data, buf.nbytes, 0)
-                    self._host[nm] = buf
-                self._transfer_stream = cp.cuda.Stream(non_blocking=True)
-                self._event = cp.cuda.Event()
-                self._pinned = True
-            except Exception:
-                self._host = {}
-                self._pinned = False
-
-        if not self._pinned:
-            for nm in self._cnames:
-                self._host[nm] = np.empty((batch_size, ny, nx), dtype=np.complex128)
-            for nm in self._rnames:
-                self._host[nm] = np.empty((batch_size, ny, nx), dtype=np.float64)
-
-        self._active = 0
-        self._count = 0
-        self._transfer_pending = False
-        self._pending_n = 0
-        self._time_buf: list = []
-        self._mode_buf: list = []
-        self._scalar_bufs: dict = {}
-        self._pend_time = None
-        self._pend_mode = None
-        self._pend_scalars = None
-        self._writes_since_flush = 0
-        self._flush_every = 10
-
-    def register_scalar(self, name: str) -> None:
-        """Register one scalar series for output."""
-        self._scalar_bufs[name] = []
-
-    def record(self, t: float, fields: dict, scalars: dict, mode: int = 0) -> None:
-        """Record one frame in the active batch."""
-        if self._transfer_pending:
-            self._wait_and_write()
-
-        idx = self._count
-        buf = self._gpu[self._active]
-
-        self._time_buf.append(t)
-        self._mode_buf.append(mode)
-        for nm, data in fields.items():
-            buf[nm][idx] = data
-        for nm, val in scalars.items():
-            self._scalar_bufs[nm].append(float(val))
-
-        self._count += 1
-        if self._count >= self.batch_size:
-            self._start_transfer()
-
-    def _start_transfer(self) -> None:
-        """Start copying the active batch to host memory."""
-        n = self._count
-        buf = self._gpu[self._active]
-
-        if self._pinned:
-            for nm in self._all_names:
-                buf[nm][:n].get(out=self._host[nm][:n], stream=self._transfer_stream)
-            self._event.record(self._transfer_stream)
-        else:
-            for nm in self._all_names:
-                self._host[nm][:n] = compute_engine.to_cpu(buf[nm][:n])
-
-        self._pend_time = list(self._time_buf)
-        self._pend_mode = list(self._mode_buf)
-        self._pend_scalars = {k: list(v) for k, v in self._scalar_bufs.items()}
-        self._pending_n = n
-        self._transfer_pending = True
-
-        self._active = 1 - self._active
-        self._count = 0
-        self._time_buf = []
-        self._mode_buf = []
-        for k in self._scalar_bufs:
-            self._scalar_bufs[k] = []
-
-    def _wait_and_write(self) -> None:
-        """Wait for a pending copy and write it to disk."""
-        if self._pinned:
-            self._event.synchronize()
-
-        n = self._pending_n
-        self._append("time", np.array(self._pend_time[:n]), scalar=True)
-        self._append("mode", np.array(self._pend_mode[:n], dtype=np.int8), scalar=True)
-
-        for nm in self._all_names:
-            self._append(f"fields/{nm}", self._host[nm][:n], scalar=False)
-
-        for nm, vals in self._pend_scalars.items():
-            self._append(f"scalars/{nm}", np.array(vals[:n]), scalar=True)
-
-        self.total += n
-        self._transfer_pending = False
-        self._writes_since_flush += 1
-        if self._writes_since_flush >= self._flush_every:
-            self.h5.flush()
-            self._writes_since_flush = 0
-
-    def _append(self, name: str, data: np.ndarray, scalar: bool) -> None:
-        """Append data to one HDF5 dataset."""
-        if name not in self.datasets:
-            if scalar:
-                self.datasets[name] = self.h5.create_dataset(
-                    name,
-                    data=data,
-                    maxshape=(None,),
-                    compression="lzf",
-                    chunks=(min(1000, self.batch_size),),
-                )
-            else:
-                self.datasets[name] = self.h5.create_dataset(
-                    name,
-                    data=data,
-                    maxshape=(None, *data.shape[1:]),
-                    compression="lzf",
-                    chunks=(min(32, self.batch_size), *data.shape[1:]),
-                )
-        else:
-            ds = self.datasets[name]
-            old = ds.shape[0]
-            ds.resize(old + data.shape[0], axis=0)
-            ds[old:] = data
-
-    def close(self) -> None:
-        """Flush pending data and close the writer."""
-        if self._transfer_pending:
-            self._wait_and_write()
-        if self._count > 0:
-            self._start_transfer()
-            self._wait_and_write()
-        if self._pinned:
-            import cupy as cp
-
-            for buf in self._host.values():
-                try:
-                    cp.cuda.runtime.hostUnregister(buf.ctypes.data)
-                except Exception:
-                    pass
-        self.h5.close()
+_FIELD_SPECS: dict[str, np.dtype] = {
+    "psi": np.dtype(np.complex128),
+    "nI": np.dtype(np.float64),
+    "nA": np.dtype(np.float64),
+    "Pump": np.dtype(np.float64),
+}
 
 
 def check_condensation_kspace(psi: object, xp: object) -> float:
@@ -225,35 +46,6 @@ def check_condensation_kspace(psi: object, xp: object) -> float:
     if total_power < 1e-30:
         return 0.0
     return k0_power / total_power
-
-
-def compute_batch_size(ny: int, nx: int) -> int:
-    """Estimate a safe HDF5 write-buffer depth for the current GPU.
-
-    Allocates 75 % of free GPU memory (after reserving ``RESERVED_GPU_GB``
-    GB) across both double-buffer GPU slots.  Returns 1 when memory is too
-    tight to fit even a single frame per slot — correct but slower, as every
-    ``record()`` call triggers an immediate transfer.  Returns 500 on the
-    CPU path where host memory is not the limiting resource.
-
-    Parameters
-    ----------
-    ny, nx : int
-        Spatial grid dimensions.
-
-    Returns
-    -------
-    int
-        Batch depth in frames, in [1, 10000].
-    """
-    xp = compute_engine.xp
-    if not hasattr(xp, "cuda"):
-        return 500
-    free = xp.cuda.Device().mem_info[0]
-    usable = max(0, free - int(RESERVED_GPU_GB * 1024**3))
-    frame_bytes = ny * nx * (16 + 8 + 8 + 8)
-    batch = int(usable * 0.75) // (2 * frame_bytes) if frame_bytes else 0
-    return max(1, min(batch, 10000))
 
 
 def _precompute_spatial_profiles(lasers: list, grid: object) -> list:
@@ -312,36 +104,35 @@ def run_simulation_from_config(
     routine_name: str,
     lasers: list,
     cfg: Config,
-    batch_size: int,
     output_dir: str,
-) -> float | None:
+    output_policy: OutputPolicy | None = None,
+) -> tuple[float | None, str]:
     """Run a simulation with an explicit ``Config`` object.
 
     Parameters
     ----------
     routine_name : str
-        Output filename stem. HDF5 is written as
-        ``<output_dir>/<routine_name>.h5``.
+        Output filename stem.  HDF5 written as
+        ``<output_dir>/<routine_name>.h5``, scalar sidecar as
+        ``<output_dir>/<routine_name>_scalars.npz``.
     lasers : list
         Laser instances (e.g. ``PulseGaussian``).
     cfg : Config
-        Fully constructed simulation config from :mod:`pipeline.config.builder`.
-    batch_size : int
-        HDF5 write-buffer depth in frames; use :func:`compute_batch_size`.
+        Fully constructed simulation config.
     output_dir : str
-        Directory for the output HDF5 file.  Must already exist.
+        Directory for outputs.  Must already exist.
+    output_policy : OutputPolicy or None
+        Recording cadence and archival flags.  Defaults are used when ``None``.
 
     Returns
     -------
-    float or None
-        Condensation time in ps, or ``None`` if no condensation detected.
-
-    Raises
-    ------
-    Exception
-        Any simulation-loop exception is logged and re-raised so the calling
-        Slurm job exits nonzero.
+    tuple[float or None, str]
+        ``(t_cond, sidecar_path)`` — condensation time in ps (or ``None``) and
+        the path of the written scalar ``.npz`` sidecar.
     """
+    if output_policy is None:
+        output_policy = OutputPolicy()
+
     xp = compute_engine.xp
 
     grid = create_grid(cfg.grid)
@@ -370,16 +161,24 @@ def run_simulation_from_config(
 
     n_steps = int(cfg.solver.total_time / cfg.solver.dt)
     dt = cfg.solver.dt
-    print(f"    n_steps={n_steps:,}, dt={dt}")
+    batch_size = compute_batch_size(_FIELD_SPECS, (grid.ny, grid.nx))
+    print(
+        f"    n_steps={n_steps:,}, dt={dt}, batch={batch_size}, "
+        f"field_stride={output_policy.field_record_stride}, "
+        f"scalar_stride={output_policy.scalar_record_stride}"
+    )
 
     out_path = os.path.join(output_dir, f"{routine_name}.h5")
-    writer = AsyncBatchWriter(out_path, batch_size, grid.ny, grid.nx)
+    writer = create_hdf5_writer(out_path, batch_size, _FIELD_SPECS, (grid.ny, grid.nx))
 
     scalar_names = ["psi_sq_max", "nI_max", "nA_max", "k0_frac", "P_max"]
     for li in range(len(lasers)):
         scalar_names.append(f"P_max_{li}")
     for name in scalar_names:
         writer.register_scalar(name)
+
+    scalar_acc: dict[str, list[float]] = {name: [] for name in scalar_names}
+    scalar_times: list[float] = []
 
     spatial_profiles = _precompute_spatial_profiles(lasers, grid)
     spatial_maxes = _precompute_spatial_maxes(spatial_profiles, xp)
@@ -413,7 +212,10 @@ def run_simulation_from_config(
                     condensed = True
                     print(f"\n    Condensation at t={t:.2f} ps (step {step})")
 
-            if step % RECORD_STRIDE == 0:
+            record_scalars = step % output_policy.scalar_record_stride == 0
+            record_fields = step % output_policy.field_record_stride == 0
+
+            if record_scalars or record_fields:
                 nA, nI = reservoir.get_state()
                 psi_sq = xp.abs(state.psi) ** 2
                 k0_f = (
@@ -430,11 +232,20 @@ def run_simulation_from_config(
                 }
                 for li, lp in enumerate(per_laser_max):
                     scalars[f"P_max_{li}"] = lp
+
+            if record_scalars:
+                scalar_times.append((step + 1) * dt)
+                for name in scalar_names:
+                    scalar_acc[name].append(scalars.get(name, 0.0))
+
+            if record_fields:
+                nA, nI = reservoir.get_state()
                 writer.record(
                     (step + 1) * dt,
                     {"psi": state.psi, "nI": nI, "nA": nA, "Pump": P_total},
                     scalars,
                 )
+
     except Exception as e:
         print(f"\n    ERROR at step {step}, t={last_t:.2f} ps: {e}")
         traceback.print_exc()
@@ -444,8 +255,16 @@ def run_simulation_from_config(
         writer.close()
         print("    HDF5 finalized.")
 
+    sidecar_path = os.path.join(output_dir, f"{routine_name}_scalars.npz")
+    np.savez_compressed(
+        sidecar_path,
+        time=np.array(scalar_times, dtype=np.float64),
+        **{k: np.array(v, dtype=np.float64) for k, v in scalar_acc.items()},
+    )
+    print(f"    Scalar sidecar: {sidecar_path}")
+
     print(
         f"    -> {out_path}  ({writer.total} frames, "
         f"last_t={last_t:.1f} ps, t_cond={t_cond})"
     )
-    return t_cond
+    return t_cond, sidecar_path

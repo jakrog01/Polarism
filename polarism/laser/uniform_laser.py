@@ -21,9 +21,11 @@ class UniformLaser(AbstractLaser):
         laser_config: LaserParameters,
         X: Union[np.ndarray, cp.ndarray],
         Y: Union[np.ndarray, cp.ndarray],
+        precision: str = "double",
     ):
         """Set up the uniform laser."""
-        super().__init__(laser_config, X, Y)
+        super().__init__(laser_config, X, Y, precision)
+        self._finalize_spatial_envelope(X, Y)
 
     def _amplitude(self, t: float) -> float:
         """Return the base laser amplitude at time t."""
@@ -34,7 +36,7 @@ class UniformLaser(AbstractLaser):
     ) -> Union[np.ndarray, cp.ndarray]:
         """Return the spatial pump profile."""
         xp = compute_engine.xp
-        return xp.ones_like(X, dtype=xp.float64)
+        return xp.ones_like(X, dtype=self._real_dtype)
 
     def _P_time(self, t: float) -> float:
         """Return the time profile of the pump."""
