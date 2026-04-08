@@ -23,9 +23,9 @@ class PulseGaussian(AbstractLaser):
     cutoff_sigma: float
     n_pulses: int
 
-    def __init__(self, laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]):
+    def __init__(self, laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray], precision: str = "double"):
         """Set up the pulse gaussian."""
-        super().__init__(laser_config, X, Y)
+        super().__init__(laser_config, X, Y, precision)
         self.sigma_space = laser_config.sigma_space
         self.Pmax = laser_config.Pmax
         self.sigma_time = laser_config.sigma_time
@@ -34,6 +34,7 @@ class PulseGaussian(AbstractLaser):
         self.cutoff_sigma = laser_config.cutoff_sigma
         self.n_pulses = laser_config.n_pulses
         self.phase = self.cutoff_sigma * self.sigma_time
+        self._finalize_spatial_envelope(X, Y)
 
     def _pulse_index(self, t: float) -> int:
         return max(0, round((t - self.phase) / self.pulse_separation))

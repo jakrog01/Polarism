@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import matplotlib.pyplot as plt
 import numpy as np
 
-import polarism.laser  # noqa: F401
+import polarism.laser
 from polarism.grid.create_grid import create_grid
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 

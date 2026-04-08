@@ -38,6 +38,10 @@ class StorageVisitor(ResultVisitor):
         if self.cfg.result.save_npy:
             self.storages.append(NPYStorage(self.output_dir, self.batch_size))
 
+    def needs(self, nodes: list[ResultNode]) -> set[str]:
+        """Return names of nodes that are flagged for saving."""
+        return {n.name for n in nodes if n.save}
+
     def visit_all(self, nodes: list[ResultNode], t: float, **context) -> None:
         """Store one result step."""
         for storage in self.storages:

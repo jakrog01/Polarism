@@ -142,7 +142,7 @@ class RK4FDMSolver(AbstractSolver):
             for r0, k1, k2, k3, k4 in zip(res0, k1_res, k2_res, k3_res, k4_res)
         )
 
-        state.psi = psi_new
+        state.psi = psi_new.astype(psi0.dtype, copy=False)
         reservoir.set_state(res_new)
 
     def _rhs(

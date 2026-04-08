@@ -23,11 +23,13 @@ class ContinuousExponentialPump(AbstractLaser):
         laser_config: LaserParameters,
         X: Union[np.ndarray, cp.ndarray],
         Y: Union[np.ndarray, cp.ndarray],
+        precision: str = "double",
     ):
         """Set up the continuous exponential pump."""
-        super().__init__(laser_config, X, Y)
+        super().__init__(laser_config, X, Y, precision)
         self.w = laser_config.sigma_space
         self.cutoff_sigma = laser_config.cutoff_sigma
+        self._finalize_spatial_envelope(X, Y)
 
     def _amplitude(self, t: float) -> float:
         """Return the base laser amplitude at time t."""

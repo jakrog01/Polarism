@@ -14,6 +14,10 @@ class VisualizationVisitor(ResultVisitor):
         """Store the live visualizer."""
         self.visualizer = visualizer
 
+    def needs(self, nodes: list[ResultNode]) -> set[str]:
+        """Return names of nodes that are exposed for visualization."""
+        return {n.name for n in nodes if n.expose}
+
     def visit_all(self, nodes: list[ResultNode], **context):
         """Send one result step to the visualizer."""
         cached = context.get("cached", {})

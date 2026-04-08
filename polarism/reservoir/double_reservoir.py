@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Union
 
 from polarism.compute_engine import compute_engine
+from polarism.config.dtype_utils import real_dtype
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
@@ -31,6 +32,7 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         reservoir_config: ReservoirParameters,
         physics: PhysicsConstants,
         grid: SimulationGrid2D,
+        precision: str = "double",
     ):
         """Set up the double reservoir."""
         self.xp = compute_engine.xp
@@ -40,8 +42,9 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         self.gamma_A = physics.gamma_A
         self.R_IA = physics.R_IA
         self.R_AI = physics.R_AI
-        self.nI = self.xp.zeros((grid.ny, grid.nx), dtype=self.xp.float64)
-        self.nA = self.xp.zeros((grid.ny, grid.nx), dtype=self.xp.float64)
+        rdtype = real_dtype(self.xp, precision)
+        self.nI = self.xp.zeros((grid.ny, grid.nx), dtype=rdtype)
+        self.nA = self.xp.zeros((grid.ny, grid.nx), dtype=rdtype)
 
     def get_state(
         self,
@@ -53,8 +56,8 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         self, state: tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]]
     ) -> None:
         """Set the current state."""
-        self.nA = self.xp.maximum(state[0], 0)
-        self.nI = self.xp.maximum(state[1], 0)
+        self.nA = self.xp.maximum(state[0], 0).astype(self.nA.dtype, copy=False)
+        self.nI = self.xp.maximum(state[1], 0).astype(self.nI.dtype, copy=False)
 
     def get_active_density(
         self,

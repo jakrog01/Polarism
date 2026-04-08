@@ -18,7 +18,10 @@ class LaserFactory:
     """Build laser objects from config data."""
     @staticmethod
     def create_laser(
-        laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]
+        laser_config: LaserParameters,
+        X: Union[np.ndarray, cp.ndarray],
+        Y: Union[np.ndarray, cp.ndarray],
+        precision: str = "double",
     ) -> list[AbstractLaser]:
         """Create one or more lasers from the config."""
         if laser_config.mode == "multiple":
@@ -27,13 +30,16 @@ class LaserFactory:
                     "config_file must be provided for multiple laser mode."
                 )
 
-            return LaserFactory._create_multiple_lasers(laser_config, X, Y)
+            return LaserFactory._create_multiple_lasers(laser_config, X, Y, precision)
 
-        return LaserFactory._create_single_laser(laser_config, X, Y)
+        return LaserFactory._create_single_laser(laser_config, X, Y, precision)
 
     @staticmethod
     def _create_single_laser(
-        laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]
+        laser_config: LaserParameters,
+        X: Union[np.ndarray, cp.ndarray],
+        Y: Union[np.ndarray, cp.ndarray],
+        precision: str = "double",
     ) -> list[AbstractLaser]:
         """Create one laser from the config."""
         laser_type = laser_config.laser_type
@@ -42,11 +48,14 @@ class LaserFactory:
                 f"Unknown laser type: '{laser_type}'. "
                 f"Available: {list(available_lasers.keys())}"
             )
-        return [available_lasers[laser_type](laser_config, X, Y)]
+        return [available_lasers[laser_type](laser_config, X, Y, precision)]
 
     @staticmethod
     def _create_multiple_lasers(
-        laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray]
+        laser_config: LaserParameters,
+        X: Union[np.ndarray, cp.ndarray],
+        Y: Union[np.ndarray, cp.ndarray],
+        precision: str = "double",
     ) -> list[AbstractLaser]:
         """Create all lasers listed in the config file."""
         with open(laser_config.config_file, "r") as f:
@@ -67,7 +76,7 @@ class LaserFactory:
                     f"Available: {list(available_lasers.keys())}"
                 )
             individual_config = LaserParameters(**{**vars(laser_config), **item})
-            lasers.append(available_lasers[laser_type](individual_config, X, Y))
+            lasers.append(available_lasers[laser_type](individual_config, X, Y, precision))
         return lasers
 
 
