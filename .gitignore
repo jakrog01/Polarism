@@ -15,4 +15,3 @@ data/
 !.github/workflows/
 !.github/workflows/*.yml
 site/
-NEW_*.py
