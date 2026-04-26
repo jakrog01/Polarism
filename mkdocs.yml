@@ -5,7 +5,9 @@ docs_dir: docs
 strict: true
 
 nav:
-  - Home: index.md
+  - Home:
+      - Polarism: index.md
+      - About: about.md
   - Getting Started:
       - getting-started/index.md
       - Installation: getting-started/installation.md
@@ -88,3 +90,6 @@ plugins:
 extra_javascript:
   - javascripts/mathjax.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+extra_css:
+  - stylesheets/extra.css
