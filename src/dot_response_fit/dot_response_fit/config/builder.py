@@ -21,6 +21,72 @@ from polarism.config.simulation_parameters import (
 from polarism.laser.pulse_gaussian import PulseGaussian
 
 
+def build_mnist_lasers(
+    encoded_events: dict[str, Any],
+    sigma_space: float,
+    global_cfg: dict[str, Any],
+    grid: Any,
+    pixel_limit: int | None = None,
+) -> list[Any]:
+    """Construct one :class:`PulseGaussian` per encoded MNIST pixel.
+
+    Pixels are encoded only in pulse amplitude and delay.  Every pulse is
+    applied at the same physical dot position from ``global.laser_defaults``;
+    the MNIST pixel coordinates stored in ``encoded_events`` are metadata for
+    input inspection, not pump positions.
+
+    Parameters
+    ----------
+    encoded_events : dict
+        Content of ``reference/encoded_events.json``.
+    sigma_space : float
+        Gaussian dot spatial size (µm) — the fitted parameter.
+    global_cfg : dict
+        The ``global`` section of config.yaml.
+    grid : SimulationGrid2D
+        Pre-built simulation grid.
+    pixel_limit : int or None
+        Use only the first *pixel_limit* encoded pixels (fast fit mode).
+        ``None`` means use all.
+
+    Returns
+    -------
+    list of PulseGaussian
+    """
+    defaults = global_cfg.get("laser_defaults", {})
+    cutoff_sigma = float(defaults.get("cutoff_sigma", 3.0))
+    x0 = float(defaults.get("x0", 0.0))
+    y0 = float(defaults.get("y0", 0.0))
+
+    sigma_time = float(encoded_events["sigma_time"])
+    amplitudes: list[float] = encoded_events["amplitudes"]
+    delays: list[float] = encoded_events["delays"]
+    separation = float(encoded_events["separation"])
+
+    n = len(amplitudes)
+    if pixel_limit is not None:
+        n = min(n, pixel_limit)
+
+    lasers: list[Any] = []
+    for i in range(n):
+        laser_cfg = LaserParameters(
+            mode="single",
+            laser_type="pulse-gaussian",
+            P0=float(amplitudes[i]),
+            Pmax=float(amplitudes[i]),
+            x0=x0,
+            y0=y0,
+            sigma_space=sigma_space,
+            sigma_time=sigma_time,
+            pulse_separation=separation,
+            cutoff_sigma=cutoff_sigma,
+            delay=float(delays[i]),
+            n_pulses=1,
+        )
+        lasers.append(PulseGaussian(laser_cfg, grid.X, grid.Y))
+    return lasers
+
+
 def build_scenario_config(
     global_cfg: dict[str, Any],
     scenario: dict[str, Any],

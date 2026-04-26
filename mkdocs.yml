@@ -20,6 +20,7 @@ nav:
   - Examples:
       - examples/index.md
       - pump_multi_comparison Pipeline: examples/pump-multi-comparison.md
+      - dot_response_fit Pipeline: examples/dot-response-fit.md
   - API Reference:
       - Overview: api/overview.md
       - Option Matrix: api/option-matrix.md

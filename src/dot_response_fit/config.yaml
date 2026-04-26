@@ -26,42 +26,57 @@ global:
     reservoir_type: quadratic-double
 
   solver:
-    total_time: 400.0
+    total_time: 2500.0
     dt: 0.001
     method: rk4-cuda
 
   laser_defaults:
     laser_type: pulse-gaussian
     cutoff_sigma: 3.0
-    sigma_time: 0.1
-    pulse_separation: 1.6
+    x0: 0.0
+    y0: 0.0
 
-time_response:
-  t_start: 0.0
-  t_end: 400.0
-  n_points: 1000
-  amplitudes:
-    start: 0.0
-    end: 160.0
-    count: 60
-  pulse:
-    center: 20.0
-    width_fwhm: 5.0
+mnist:
+  data_path: ~/data/mnist.npz
+  digit_class: null
+  sample_index: null
+  sample_indices: null
+  n_images: 10
+  seed: 42
+  max_pixels: 50
+  spatial_width_um: 80.0
+
+encoding:
+  min_amp: 10.0
+  max_amp: 32.3
+  pulse_width_fwhm: 5.0
+  separation: 43.0
+
+reference:
+  n_points: 2000
+  ode_solver_rtol: 1.0e-6
+  ode_solver_atol: 1.0e-7
+  nc_source: 1.0e-6
 
 fit:
   sigma_space_values: [1.0, 2.0, 3.0, 5.0, 8.0, 12.0, 16.0]
-  amplitude_scale_values: [1.0]
   observable: psi_sq_max
+  aggregate: mean_rmse
   max_runtime_minutes: 120
-  record_stride: 100
+  dt_factor: 5
+  n_fit_pixels: null
+  scalar_stride: 50
+  n_ref_points: 2000
+
+output:
+  render_snapshots: true
+  render_animation: true
+  archive_raw_hdf5: false
+  field_record_stride: 100
+  scalar_record_stride: 10
+  render_mnist_overlay: true
 
 scenarios:
-  - name: fitted_single_dot
+  - name: mnist_dot
     potential:
       potential_type: zero
-    lasers:
-      - id: dot
-        x0: 0.0
-        y0: 0.0
-        P0: 80.0
-        n_pulses: 5

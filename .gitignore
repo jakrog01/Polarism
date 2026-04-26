@@ -16,5 +16,4 @@ slurm.env
 !.github/workflows/
 !.github/workflows/*.yml
 site/
-NEW_*.py
 src/dot_response_fit/runs/

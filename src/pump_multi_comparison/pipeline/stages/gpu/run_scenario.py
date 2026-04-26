@@ -45,7 +45,13 @@ def _make_scratch_dir(run_dir: str, scenario_name: str) -> str:
     outputs can be large.
     """
     run_name = os.path.basename(run_dir.rstrip("/"))
-    job_id = os.environ.get("SLURM_JOB_ID") or os.environ.get("SLURM_ARRAY_JOB_ID", "local")
+    job_id = (
+        os.environ.get("POLARITON_SCRATCH_ID")
+        or os.environ.get("SLURM_JOBID")
+        or os.environ.get("SLURM_JOB_ID")
+        or os.environ.get("SLURM_ARRAY_JOB_ID")
+        or "local"
+    )
     task_id = os.environ.get("SLURM_ARRAY_TASK_ID", "0")
     unique_id = f"{job_id}_{task_id}"
 

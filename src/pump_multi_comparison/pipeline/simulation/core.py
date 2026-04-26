@@ -120,7 +120,7 @@ def run_simulation_from_config(
     cfg : Config
         Fully constructed simulation config.
     output_dir : str
-        Directory for outputs.  Must already exist.
+        Directory for outputs.  Created if it does not already exist.
     output_policy : OutputPolicy or None
         Recording cadence and archival flags.  Defaults are used when ``None``.
 
@@ -132,6 +132,7 @@ def run_simulation_from_config(
     """
     if output_policy is None:
         output_policy = OutputPolicy()
+    os.makedirs(output_dir, exist_ok=True)
 
     xp = compute_engine.xp
 
@@ -256,6 +257,16 @@ def run_simulation_from_config(
         print("    HDF5 finalized.")
 
     sidecar_path = os.path.join(output_dir, f"{routine_name}_scalars.npz")
+    if not os.path.isdir(output_dir):
+        raise RuntimeError(
+            "Simulation output directory disappeared before scalar sidecar write: "
+            f"{output_dir}"
+        )
+    if not os.path.isfile(out_path):
+        raise RuntimeError(
+            "HDF5 output disappeared before scalar sidecar write: "
+            f"{out_path}"
+        )
     np.savez_compressed(
         sidecar_path,
         time=np.array(scalar_times, dtype=np.float64),

@@ -2,31 +2,38 @@
 set -euo pipefail
 
 _pick_scratch_root() {
-    local job_id="${SLURM_JOB_ID:-}"
+    local job_id=""
     local candidate=""
 
-    if [[ -n "$job_id" ]]; then
+    for job_id in "${SLURM_JOBID:-}" "${SLURM_JOB_ID:-}" "${SLURM_ARRAY_JOB_ID:-}"; do
+        [[ -z "$job_id" ]] && continue
         candidate="/scratch/${job_id}"
         if [[ -d "$candidate" ]]; then
             printf "%s\n" "$candidate"
             return 0
         fi
-    fi
+    done
 
     for candidate in "${SLURM_TMPDIR:-}" "${TMPDIR:-}"; do
         if [[ -n "$candidate" && -d "$candidate" && "$(realpath "$candidate")" != "/tmp" ]]; then
+            local base
+            base="$(basename "$(realpath "$candidate")")"
+            if [[ "$candidate" == /scratch/* ]]; then
+                local matches_job_id=0
+                for job_id in "${SLURM_JOBID:-}" "${SLURM_JOB_ID:-}" "${SLURM_ARRAY_JOB_ID:-}"; do
+                    if [[ -n "$job_id" && "$base" == "$job_id" ]]; then
+                        matches_job_id=1
+                        break
+                    fi
+                done
+                if [[ "$matches_job_id" -ne 1 ]]; then
+                    continue
+                fi
+            fi
             printf "%s\n" "$candidate"
             return 0
         fi
     done
-
-    mapfile -t _user_scratch_dirs < <(
-        find /scratch -mindepth 1 -maxdepth 1 -type d -user "$USER" 2>/dev/null | sort
-    )
-    if [[ ${#_user_scratch_dirs[@]} -eq 1 ]]; then
-        printf "%s\n" "${_user_scratch_dirs[0]}"
-        return 0
-    fi
 
     return 1
 }
@@ -45,6 +52,7 @@ if [[ "${ICM_RYSY_NVME:-0}" == "1" ]]; then
         exit 1
     fi
     export SCRATCH="$_SCRATCH_ROOT"
+    export POLARITON_SCRATCH_ID="$(basename "$(realpath "$_SCRATCH_ROOT")")"
 fi
 
 _LOCAL_FFMPEG="$HOME/tools/ffmpeg/8.1/bin/ffmpeg"
@@ -65,18 +73,37 @@ DOT_DIR="$PROJECT_ROOT/src/dot_response_fit"
 
 cd "$PROJECT_ROOT"
 
-module purge
-module load common/python/3.13.2
-module load common/compilers/gcc/13.2.0
-module load gpu/cuda/12.1
+_load_first_module() {
+    local candidate
+    for candidate in "$@"; do
+        [[ -z "$candidate" ]] && continue
+        if module load "$candidate" >/dev/null 2>&1; then
+            echo "Loaded module: $candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+module purge >/dev/null 2>&1 || true
+_load_first_module "${RYSY_PYTHON_MODULE:-}" common/python/3.13.2 python/3.13.2 python/3.13 python || true
+_load_first_module "${RYSY_OPENSSL_MODULE:-}" common/libs/openssl/1.1.1 openssl/1.1.1 OpenSSL/1.1.1 openssl || true
+_load_first_module "${RYSY_GCC_MODULE:-}" common/compilers/gcc/13.2.0 gcc/13.2.0 GCC/13.2.0 gcc || true
+_load_first_module "${RYSY_CUDA_MODULE:-}" gpu/cuda/12.1 cuda/12.1 CUDA/12.1 cuda || true
 
 if [[ -f .venv/bin/activate ]]; then
     source .venv/bin/activate
 elif [[ -f venv/bin/activate ]]; then
     source venv/bin/activate
+else
+    echo "ERROR: project virtualenv not found in $PROJECT_ROOT" >&2
+    echo "Expected .venv/bin/activate or venv/bin/activate." >&2
+    exit 1
 fi
 
 export PYTHONPATH="${PROJECT_ROOT}:${PUMP_DIR}:${DOT_DIR}:${PYTHONPATH:-}"
+export MPLCONFIGDIR="${MPLCONFIGDIR:-${TMPDIR:-/tmp}/matplotlib-${USER:-user}}"
+mkdir -p "$MPLCONFIGDIR" >/dev/null 2>&1 || true
 
 python -c "import cupy; print(f'CuPy OK  -- CUDA {cupy.cuda.runtime.runtimeGetVersion()}')"
 python -c "import h5py;  print(f'h5py OK  -- HDF5 {h5py.version.hdf5_version}')"

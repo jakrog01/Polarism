@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import fields as dc_fields
 from typing import Any, TypeVar
 
-import numpy as np
 import yaml
 
 T = TypeVar("T")
@@ -22,20 +21,19 @@ def load_config(path: str) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
-def extract_time_response_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
-    """Return the ``time_response`` section of the config.
+def extract_mnist_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Return the ``mnist`` section of the config."""
+    return cfg["mnist"]
 
-    Parameters
-    ----------
-    cfg : dict
-        Full parsed config dict.
 
-    Returns
-    -------
-    dict
-        Content of ``cfg["time_response"]``.
-    """
-    return cfg["time_response"]
+def extract_encoding_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Return the ``encoding`` section of the config."""
+    return cfg["encoding"]
+
+
+def extract_reference_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Return the ``reference`` section of the config."""
+    return cfg["reference"]
 
 
 def extract_fit_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -54,7 +52,18 @@ def extract_fit_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
     return cfg["fit"]
 
 
-def build_amplitude_array(amp_cfg: dict[str, Any]) -> np.ndarray:
+def extract_time_response_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Return the ``time_response`` section (legacy; removed from pipeline).
+
+    Raises
+    ------
+    KeyError
+        If the section is absent, signalling the config has been migrated.
+    """
+    return cfg["time_response"]
+
+
+def build_amplitude_array(amp_cfg: dict[str, Any]):
     """Build the amplitude sweep array from a config sub-dict.
 
     Parameters
@@ -67,6 +76,8 @@ def build_amplitude_array(amp_cfg: dict[str, Any]) -> np.ndarray:
     np.ndarray
         Linearly spaced amplitude values.
     """
+    import numpy as np
+
     return np.linspace(
         float(amp_cfg["start"]),
         float(amp_cfg["end"]),
@@ -74,7 +85,7 @@ def build_amplitude_array(amp_cfg: dict[str, Any]) -> np.ndarray:
     )
 
 
-def build_t_eval(tr_cfg: dict[str, Any]) -> np.ndarray:
+def build_t_eval(tr_cfg: dict[str, Any]):
     """Build the time evaluation grid from a ``time_response`` sub-dict.
 
     Parameters
@@ -87,6 +98,8 @@ def build_t_eval(tr_cfg: dict[str, Any]) -> np.ndarray:
     np.ndarray
         Linearly spaced time grid.
     """
+    import numpy as np
+
     return np.linspace(
         float(tr_cfg["t_start"]),
         float(tr_cfg["t_end"]),

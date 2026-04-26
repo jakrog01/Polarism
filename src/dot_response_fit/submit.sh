@@ -2,12 +2,14 @@
 set -euo pipefail
 
 DRY_RUN=0
+WAIT_FOR_COMPLETION=0
 CONFIG=""
 RUNS_BASE_DIR=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run)    DRY_RUN=1; shift ;;
+        --wait)       WAIT_FOR_COMPLETION=1; shift ;;
         --config)     CONFIG="$2"; shift 2 ;;
         --config=*)   CONFIG="${1#--config=}"; shift ;;
         --runs-dir)   RUNS_BASE_DIR="$2"; shift 2 ;;
@@ -58,7 +60,7 @@ echo "  Host      : $HOSTNAME_SHORT"
 echo ""
 
 echo "  Validating config ..."
-python3 -m dot_response_fit.config.validator --config "$CONFIG" --slurm-env "$SLURM_ENV" || {
+python3 -m dot_response_fit.config.validator --config "$CONFIG" --slurm-env "$SLURM_ENV" --check-files || {
     echo "Aborting: fix the validation errors above." >&2; exit 1
 }
 echo ""
@@ -67,18 +69,38 @@ mapfile -t _PARSED < <(python3 - "$CONFIG" <<'PYEOF'
 import sys, yaml
 cfg = yaml.safe_load(open(sys.argv[1]))
 print(cfg.get("fit", {}).get("max_runtime_minutes", 120))
+mnist = cfg.get("mnist", {})
+if mnist.get("sample_indices") is not None:
+    n = len(mnist["sample_indices"])
+    source = "sample_indices"
+elif mnist.get("sample_index") is not None:
+    n = 1
+    source = "sample_index"
+else:
+    n = mnist.get("n_images", 1)
+    source = "n_images"
+print(n)
+print(source)
 for sc in cfg.get("scenarios", []):
     print(sc["name"])
 PYEOF
 )
 FIT_MINUTES="${_PARSED[0]}"
-SCENARIOS=("${_PARSED[@]:1}")
+EFFECTIVE_N_IMAGES="${_PARSED[1]}"
+_N_IMAGES_SOURCE="${_PARSED[2]}"
+SCENARIOS=("${_PARSED[@]:3}")
 N_SCENARIOS="${#SCENARIOS[@]}"
 FIT_HOURS=$((FIT_MINUTES / 60))
 FIT_REMAINDER=$((FIT_MINUTES % 60))
 FIT_TIME_DERIVED=$(printf "%02d:%02d:00" "$FIT_HOURS" "$FIT_REMAINDER")
 
-echo "  Scenarios ($N_SCENARIOS):"
+if [[ "$EFFECTIVE_N_IMAGES" -lt 1 ]]; then
+    echo "ERROR: effective number of images is $EFFECTIVE_N_IMAGES (from mnist.$_N_IMAGES_SOURCE)." >&2
+    echo "  Check mnist.sample_indices (must be non-empty), mnist.sample_index, or mnist.n_images in config." >&2
+    exit 1
+fi
+echo "  Images    : $EFFECTIVE_N_IMAGES  (from mnist.$_N_IMAGES_SOURCE)"
+echo "  Scenarios : $N_SCENARIOS"
 for sc in "${SCENARIOS[@]}"; do echo "    - $sc"; done
 echo ""
 
@@ -109,7 +131,7 @@ fi
 for var in SLURM_ACCOUNT SLURM_PARTITION SLURM_MEM SLURM_GPUS SLURM_CPUS SLURM_TIME NVME_GB \
            TETYDA_RUNS_BASE MAX_CONCURRENT_SCENARIOS \
            FINALIZE_MEM FINALIZE_CPUS FINALIZE_TIME \
-           TIME_RESPONSE_MEM TIME_RESPONSE_CPUS TIME_RESPONSE_TIME; do
+           PREPARE_REF_MEM PREPARE_REF_CPUS PREPARE_REF_TIME; do
     if [[ -z "${!var:-}" ]]; then
         echo "ERROR: slurm.env missing required variable: $var" >&2; exit 1
     fi
@@ -124,7 +146,7 @@ MAX_CONCURRENT="$MAX_CONCURRENT_SCENARIOS"
 echo "  Rysy  GPU : partition=$SLURM_PARTITION  mem=$SLURM_MEM  gpus=$SLURM_GPUS  nvme=${NVME_GB}G"
 echo "  Repo root : $PROJECT_ROOT"
 echo "  Tetyda    : $TETYDA_RUNS_BASE"
-echo "  Max concurrent GPU scenarios: $MAX_CONCURRENT"
+echo "  Max concurrent GPU image jobs: $MAX_CONCURRENT"
 [[ -n "${FFMPEG_BIN:-}" ]] && echo "  FFmpeg    : $FFMPEG_BIN"
 [[ -n "${RENDER_ENCODER:-}" ]] && echo "  Encoder   : $RENDER_ENCODER"
 echo ""
@@ -189,9 +211,15 @@ _rysy_sbatch_nvme() {
         "$@"
 }
 
+_dependency_id() {
+    local job_id="$1"
+    printf "%s" "${job_id%%;*}"
+}
+
 _wait_rysy() {
     local job_id="$1"
     local label="$2"
+    local log_prefix="${3:-$2}"
     echo "  Polling Rysy for $label (job ${job_id}) ..."
     while squeue -j "$job_id" --noheader 2>/dev/null | grep -q .; do
         sleep 60
@@ -203,6 +231,15 @@ _wait_rysy() {
     echo "  $label final states: $states"
     if echo "$states" | grep -qE '(FAILED|CANCELLED|TIMEOUT|NODE_FAIL|OUT_OF_MEMORY)'; then
         echo "ERROR: $label (job $job_id) failed. States: $states" >&2
+        if [[ -n "${LOGS_DIR:-}" ]]; then
+            for log_file in "${LOGS_DIR}/${log_prefix}_${job_id}.out" "${LOGS_DIR}/${log_prefix}_${job_id}.err"; do
+                if [[ -f "$log_file" ]]; then
+                    echo "" >&2
+                    echo "---- tail: $log_file ----" >&2
+                    tail -80 "$log_file" >&2 || true
+                fi
+            done
+        fi
         return 1
     fi
     if ! echo "$states" | grep -q 'COMPLETED'; then
@@ -212,29 +249,33 @@ _wait_rysy() {
 }
 
 if [[ $DRY_RUN -eq 1 ]]; then
-    echo "[1] time_response   (Rysy CPU)  [DRY RUN]"
-    TIME_RESPONSE_JOB="DRY_1"
+    echo "[1] prepare_reference  (Rysy CPU)  [DRY RUN]"
+    PREPARE_REF_JOB="DRY_1"
 else
-    TIME_RESPONSE_JOB=$(_rysy_sbatch \
+    PREPARE_REF_JOB=$(_rysy_sbatch \
         --account="$SLURM_ACCOUNT" \
         --partition="$SLURM_PARTITION" \
-        --mem="$TIME_RESPONSE_MEM" \
-        --cpus-per-task="$TIME_RESPONSE_CPUS" \
-        --time="$TIME_RESPONSE_TIME" \
+        --mem="$PREPARE_REF_MEM" \
+        --cpus-per-task="$PREPARE_REF_CPUS" \
+        --time="$PREPARE_REF_TIME" \
         ${_RYSY_QOS_FLAG:+"$_RYSY_QOS_FLAG"} \
-        --job-name="drf_tr_${RUN_NAME}" \
-        --output="${LOGS_DIR}/time_response_%j.out" \
-        --error="${LOGS_DIR}/time_response_%j.err" \
+        --job-name="drf_ref_${RUN_NAME}" \
+        --output="${LOGS_DIR}/prepare_reference_%j.out" \
+        --error="${LOGS_DIR}/prepare_reference_%j.err" \
         "$PROJECT_ROOT/src/pump_multi_comparison/cluster/job_stage.sh" \
-            python -m dot_response_fit.stages.cpu.time_response \
+            python -m dot_response_fit.stages.cpu.prepare_reference \
                 --config "$RUN_DIR/config.yaml" \
                 --run-dir "$RUN_DIR")
-    echo "[1] time_response   -> Rysy job $TIME_RESPONSE_JOB"
-    _wait_rysy "$TIME_RESPONSE_JOB" "time_response"
+    echo "[1] prepare_reference  -> Rysy job $PREPARE_REF_JOB  (time=${PREPARE_REF_TIME})"
+    if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
+        _wait_rysy "$PREPARE_REF_JOB" "prepare_reference" "prepare_reference"
+    fi
 fi
 
+PREPARE_REF_DEP_ID="$(_dependency_id "$PREPARE_REF_JOB")"
+
 if [[ $DRY_RUN -eq 1 ]]; then
-    echo "[2] fit_dot_size    (GPU, time=${FIT_TIME})  [DRY RUN]"
+    echo "[2] fit_dot_size    (afterok:${PREPARE_REF_DEP_ID}, GPU, time=${FIT_TIME})  [DRY RUN]"
     FIT_JOB="DRY_2"
 else
     FIT_JOB=$(_rysy_sbatch \
@@ -245,20 +286,24 @@ else
         --cpus-per-task="$SLURM_CPUS" \
         --time="$FIT_TIME" \
         ${_RYSY_QOS_FLAG:+"$_RYSY_QOS_FLAG"} \
+        --dependency="afterok:${PREPARE_REF_DEP_ID}" \
         --job-name="drf_fit_${RUN_NAME}" \
         --output="${LOGS_DIR}/fit_%j.out" \
         --error="${LOGS_DIR}/fit_%j.err" \
         "$PROJECT_ROOT/src/pump_multi_comparison/cluster/job_gpu.sh" \
             python -m dot_response_fit.stages.gpu.fit_dot_size \
                 --run-dir "$RUN_DIR")
-    echo "[2] fit_dot_size    -> Rysy job $FIT_JOB  (time=${FIT_TIME})"
-    _wait_rysy "$FIT_JOB" "fit_dot_size"
+    echo "[2] fit_dot_size    -> Rysy job $FIT_JOB  (afterok:${PREPARE_REF_DEP_ID}, time=${FIT_TIME})"
+    if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
+        _wait_rysy "$FIT_JOB" "fit_dot_size" "fit"
+    fi
 fi
 
-SCENARIO_ARRAY_SPEC="0-$((N_SCENARIOS - 1))%${MAX_CONCURRENT}"
+IMAGE_ARRAY_SPEC="0-$((EFFECTIVE_N_IMAGES - 1))%${MAX_CONCURRENT}"
+FIT_DEP_ID="$(_dependency_id "$FIT_JOB")"
 
 if [[ $DRY_RUN -eq 1 ]]; then
-    echo "[3] run_scenario    (GPU, array=${SCENARIO_ARRAY_SPEC}, simulate+render)  [DRY RUN]"
+    echo "[3] run_scenario    (afterok:${FIT_DEP_ID}, GPU, array=${IMAGE_ARRAY_SPEC}, simulate+render)  [DRY RUN]"
     SCENARIO_JOB="DRY_3"
 else
     SCENARIO_JOB=$(_rysy_sbatch_nvme \
@@ -269,19 +314,24 @@ else
         --cpus-per-task="$SLURM_CPUS" \
         --time="$SCENARIO_TIME" \
         ${_RYSY_QOS_FLAG:+"$_RYSY_QOS_FLAG"} \
-        --array="$SCENARIO_ARRAY_SPEC" \
+        --dependency="afterok:${FIT_DEP_ID}" \
+        --array="$IMAGE_ARRAY_SPEC" \
         --job-name="drf_sc_${RUN_NAME}" \
         --output="${LOGS_DIR}/scenario_%A_%a.out" \
         --error="${LOGS_DIR}/scenario_%A_%a.err" \
         "$PROJECT_ROOT/src/pump_multi_comparison/cluster/job_gpu.sh" \
             python -m dot_response_fit.stages.gpu.run_scenario \
                 --run-dir "$RUN_DIR")
-    echo "[3] run_scenario    -> Rysy job $SCENARIO_JOB  (array=${SCENARIO_ARRAY_SPEC}, time=${SCENARIO_TIME})"
-    _wait_rysy "$SCENARIO_JOB" "run_scenario_array"
+    echo "[3] run_scenario    -> Rysy job $SCENARIO_JOB  (afterok:${FIT_DEP_ID}, array=${IMAGE_ARRAY_SPEC}, time=${SCENARIO_TIME})"
+    if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
+        _wait_rysy "$SCENARIO_JOB" "run_scenario_array" "scenario"
+    fi
 fi
 
+SCENARIO_DEP_ID="$(_dependency_id "$SCENARIO_JOB")"
+
 if [[ $DRY_RUN -eq 1 ]]; then
-    echo "[4] finalize        (Rysy)  [DRY RUN]"
+    echo "[4] finalize        (afterok:${SCENARIO_DEP_ID}, Rysy)  [DRY RUN]"
     FINALIZE_JOB="DRY_4"
 else
     FINALIZE_JOB=$(_rysy_sbatch \
@@ -291,23 +341,39 @@ else
         --cpus-per-task="$FINALIZE_CPUS" \
         --time="$FINALIZE_TIME" \
         ${_RYSY_QOS_FLAG:+"$_RYSY_QOS_FLAG"} \
+        --dependency="afterok:${SCENARIO_DEP_ID}" \
         --job-name="drf_fin_${RUN_NAME}" \
         --output="${LOGS_DIR}/finalize_%j.out" \
         --error="${LOGS_DIR}/finalize_%j.err" \
         "$PROJECT_ROOT/src/pump_multi_comparison/cluster/job_stage.sh" \
             python -m dot_response_fit.stages.cpu.finalize \
                 --run-dir "$RUN_DIR")
-    echo "[4] finalize        -> Rysy job $FINALIZE_JOB"
-    _wait_rysy "$FINALIZE_JOB" "finalize"
+    echo "[4] finalize        -> Rysy job $FINALIZE_JOB  (afterok:${SCENARIO_DEP_ID})"
+    if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
+        _wait_rysy "$FINALIZE_JOB" "finalize" "finalize"
+    fi
 fi
 
 echo ""
 echo "========================================"
-echo " All jobs complete."
+if [[ $DRY_RUN -eq 1 ]]; then
+    echo " Dry run complete."
+    echo " Planned Slurm dependencies:"
+    echo "   prepare_reference -> fit_dot_size -> run_scenario image array -> finalize"
+elif [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
+    echo " All jobs complete."
+else
+    echo " Pipeline submitted."
+    echo " Slurm dependencies will run stages in order:"
+    echo "   prepare_reference -> fit_dot_size -> run_scenario image array -> finalize"
+    echo " All jobs queued."
+fi
 echo ""
 echo " Run dir : $RUN_DIR"
 if [[ $DRY_RUN -eq 0 ]]; then
     echo " Logs    : $LOGS_DIR"
+    echo " Jobs    : prepare=$PREPARE_REF_JOB  fit=$FIT_JOB  images=$SCENARIO_JOB  finalize=$FINALIZE_JOB"
     echo " Monitor : squeue -u \$USER"
+    echo " Cancel  : scancel $PREPARE_REF_JOB $FIT_JOB $SCENARIO_JOB $FINALIZE_JOB"
 fi
 echo "========================================"

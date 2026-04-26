@@ -11,6 +11,7 @@ This section documents the example applications that live in `src/`. These are n
 ## Current examples
 
 - [pump_multi_comparison](pump-multi-comparison.md): a Slurm-oriented pipeline for threshold search, scenario sweeps, per-scenario visualization, and final aggregation
+- [dot_response_fit](dot-response-fit.md): a Slurm-oriented MNIST batch workflow for fitting the Gaussian pump spot size against time-only ODE reference traces
 
 ## Relationship to the package
 
