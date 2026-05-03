@@ -195,6 +195,16 @@ _dependency_id() {
     printf "%s" "${job_id%%;*}"
 }
 
+_print_slurm_diagnostics() {
+    local jobs_csv="$1"
+    local jobs_words="${jobs_csv//,/ }"
+    echo " Details : sacct -j ${jobs_csv} \\"
+    echo "           --format=JobID,JobName%35,State,ExitCode,Elapsed,Timelimit,NodeList,ReqTRES%50,AllocTRES%70,MaxRSS,MaxVMSize \\"
+    echo "           --parsable2"
+    echo " Pending : for j in ${jobs_words}; do scontrol show job \"\$j\"; done"
+    echo " Failures: grep -RniE \"error|exception|traceback|cuda|cupy|out.of.memory|oom|timeout|killed|scratch|nvme|no space|hdf5|permission|failed\" \"$LOGS_DIR\" | tail -300"
+}
+
 _wait_rysy() {
     local job_id="$1"
     local label="$2"
@@ -314,9 +324,10 @@ fi
 echo ""
 echo " Run dir : $RUN_DIR"
 if [[ $DRY_RUN -eq 0 ]]; then
+    ALL_JOB_IDS="${THRESHOLD_DEP_ID},${SCENARIO_DEP_ID},$(_dependency_id "$FINALIZE_JOB")"
     echo " Logs    : $LOGS_DIR"
     echo " Jobs    : threshold=$THRESHOLD_JOB  scenarios=$SCENARIO_ARRAY_JOB  finalize=$FINALIZE_JOB"
-    echo " Monitor : squeue -u \$USER"
+    _print_slurm_diagnostics "$ALL_JOB_IDS"
     echo " Cancel  : scancel $THRESHOLD_JOB $SCENARIO_ARRAY_JOB $FINALIZE_JOB"
 fi
 echo "========================================"
