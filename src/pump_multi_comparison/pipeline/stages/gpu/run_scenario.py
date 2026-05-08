@@ -32,7 +32,11 @@ from pipeline.manifest.io import (
 )
 from pipeline.render.nvenc_stream import generate_animation
 from pipeline.simulation.core import RNG_SEED, run_simulation_from_config
-from pipeline.stages.cpu.viz_engine import FIELD_SPECS, generate_field_png
+from pipeline.stages.cpu.viz_engine import (
+    FIELD_SPECS,
+    generate_field_png,
+    generate_scalar_traces,
+)
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import ComputeEngineParameters
 from polarism.grid.create_grid import create_grid
@@ -275,6 +279,12 @@ def main() -> None:
 
     print("\n  Rendering artifacts from scratch ...")
     scratch_results_dir = os.path.join(scratch_dir, "results")
+    try:
+        print("  scalar traces ...", end="", flush=True)
+        generate_scalar_traces(scenario_name, scratch_dir, scratch_results_dir)
+        print(" done")
+    except Exception as e:
+        print(f" WARNING: {e}", file=sys.stderr)
     _render_artifacts(
         scenario_name, scratch_dir, scratch_results_dir,
         extent,
@@ -311,6 +321,7 @@ def main() -> None:
         "sidecar_file": f"{scenario_name}_scalars.npz",
         "n_lasers": len(lasers),
         "phase_offsets": phases,
+        "sweep": scenario.get("sweep"),
         "lasers": [
             {
                 "x0": float(laser.x0), "y0": float(laser.y0),

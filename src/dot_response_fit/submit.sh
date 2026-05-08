@@ -218,11 +218,10 @@ _dependency_id() {
 
 _print_slurm_diagnostics() {
     local jobs_csv="$1"
-    local jobs_words="${jobs_csv//,/ }"
-    echo " Details : sacct -j ${jobs_csv} \\"
-    echo "           --format=JobID,JobName%35,State,ExitCode,Elapsed,Timelimit,NodeList,ReqTRES%50,AllocTRES%70,MaxRSS,MaxVMSize \\"
-    echo "           --parsable2"
-    echo " Pending : for j in ${jobs_words}; do scontrol show job \"\$j\"; done"
+    echo " Status  : sacct -j ${jobs_csv} \\"
+    echo "           --format=JobID,JobName%35,State,ExitCode,Elapsed,Timelimit,NodeList,ReqTRES%50,AllocTRES%70,MaxRSS,MaxVMSize"
+    echo " Queue   : squeue -j ${jobs_csv} -o \"%.18i %.9P %.35j %.8T %.10M %.10l %.6D %R\""
+    echo " Starts  : squeue --start -j ${jobs_csv}"
     echo " Failures: grep -RniE \"error|exception|traceback|cuda|cupy|out.of.memory|oom|timeout|killed|scratch|nvme|no space|hdf5|permission|failed\" \"$LOGS_DIR\" | tail -300"
 }
 

@@ -1,9 +1,9 @@
 global:
   grid:
-    nx: 256
-    ny: 256
-    lx: 250.0
-    ly: 250.0
+    nx: 512
+    ny: 512
+    lx: 128.0
+    ly: 128.0
     grid_type: periodic
 
   physics:
@@ -14,26 +14,24 @@ global:
     g_C: 0.001
     g_R: 0.002
     gamma_I: 0.001
-    gamma_A: 0.005
     R: 0.02
-    R_IA: 0.05
-    R_AI: 0.0025
+    kappa: 0.05
     init_eps: 0.001
 
   boundary_condition:
     absorption: cap
 
   solver:
-    total_time: 750.0
+    total_time: 350.0
     dt: 0.001
     method: rk4-cuda
 
   reservoir:
-    reservoir_type: double
+    reservoir_type: quadratic-double
 
   laser_defaults:
     laser_type: pulse-gaussian
-    sigma_space: 5.0
+    sigma_space: 0.75
     cutoff_sigma: 3.0
 
   threshold_search:
@@ -42,280 +40,57 @@ global:
     dt_multiplier: 5
     n_pulses: 10
     power_values:
-      - 0.5
-      - 1.0
-      - 1.5
-      - 2.0
-      - 3.0
-      - 4.0
-      - 5.0
-      - 6.0
-      - 8.0
-      - 10.0
-      - 15.0
-      - 20.0
-      - 30.0
-      - 40.0
-      - 60.0
-      - 80.0
-    sigma_time_values:
-      - 0.05
-      - 0.075
       - 0.1
-      - 0.15
-      - 0.2
-      - 0.25
-      - 0.35
       - 0.5
-      - 0.75
       - 1.0
-      - 1.5
       - 2.0
+      - 5.0
+      - 10.0
+    sigma_time_values:
+      - 0.85
+      - 1.7
     pulse_separation_formula: "8 * cutoff_sigma * sigma_time"
 
-_timing_vars_seq: &timing_vars_seq
+  parameter_sweep:
+    enabled: true
+    power_values:
+      - 0.05
+      - 0.1
+      - 0.2
+      - 0.5
+      - 1.0
+      - 2.0
+      - 5.0
+    sigma_time_values:
+      - 0.85
+    pulse_separation_values:
+      - 12.0
+      - 20.0
+      - 30.0
+
+output:
+  render_animation: false
+  render_snapshots: true
+  archive_raw_hdf5: false
+  field_record_stride: 200
+  scalar_record_stride: 10
+
+_timing_vars_single: &timing_vars_single
   pulse_duration: "2 * cutoff_sigma * sigma_time"
-  cycle_duration: "4 * pulse_duration"
-  center_wait_cycles: 10.0
+  cycle_duration: "pulse_separation"
 
-_outer_east: &outer_east
-  id: "s0"
-  tags: ["outer"]
-  y0: 0.0
-  delay: 0.0
-  pulse_separation: "cycle_duration"
-  n_pulses: 10
-
-_outer_north: &outer_north
-  id: "s1"
-  tags: ["outer"]
-  x0: 0.0
-  delay: "pulse_duration"
-  pulse_separation: "cycle_duration"
-  n_pulses: 10
-
-_outer_west: &outer_west
-  id: "s2"
-  tags: ["outer"]
-  y0: 0.0
-  delay: "2 * pulse_duration"
-  pulse_separation: "cycle_duration"
-  n_pulses: 10
-
-_outer_south: &outer_south
-  id: "s3"
-  tags: ["outer"]
-  x0: 0.0
-  delay: "3 * pulse_duration"
-  pulse_separation: "cycle_duration"
-  n_pulses: 10
-
-_center_spot: &center_spot
-  id: "center"
-  power: "1.2P"
-  x0: 0.0
-  y0: 0.0
-  delay: "center_wait_cycles * cycle_duration"
-  pulse_separation: "cycle_duration"
-  n_pulses: 1
-
-_lasers_seq_r20: &lasers_seq_r20
-  - <<: *outer_east
-    x0: 20.0
-  - <<: *outer_north
-    y0: 20.0
-  - <<: *outer_west
-    x0: -20.0
-  - <<: *outer_south
-    y0: -20.0
-  - <<: *center_spot
-
-_lasers_seq_r23: &lasers_seq_r23
-  - <<: *outer_east
-    x0: 23.0
-  - <<: *outer_north
-    y0: 23.0
-  - <<: *outer_west
-    x0: -23.0
-  - <<: *outer_south
-    y0: -23.0
-  - <<: *center_spot
-
-_lasers_seq_r26: &lasers_seq_r26
-  - <<: *outer_east
-    x0: 26.0
-  - <<: *outer_north
-    y0: 26.0
-  - <<: *outer_west
-    x0: -26.0
-  - <<: *outer_south
-    y0: -26.0
-  - <<: *center_spot
-
-_lasers_seq_r30: &lasers_seq_r30
-  - <<: *outer_east
-    x0: 30.0
-  - <<: *outer_north
-    y0: 30.0
-  - <<: *outer_west
-    x0: -30.0
-  - <<: *outer_south
-    y0: -30.0
-  - <<: *center_spot
-
-_lasers_seq_r33: &lasers_seq_r33
-  - <<: *outer_east
-    x0: 33.0
-  - <<: *outer_north
-    y0: 33.0
-  - <<: *outer_west
-    x0: -33.0
-  - <<: *outer_south
-    y0: -33.0
-  - <<: *center_spot
-
-_lasers_seq_r36: &lasers_seq_r36
-  - <<: *outer_east
-    x0: 36.0
-  - <<: *outer_north
-    y0: 36.0
-  - <<: *outer_west
-    x0: -36.0
-  - <<: *outer_south
-    y0: -36.0
-  - <<: *center_spot
-
-_lasers_seq_r40: &lasers_seq_r40
-  - <<: *outer_east
-    x0: 40.0
-  - <<: *outer_north
-    y0: 40.0
-  - <<: *outer_west
-    x0: -40.0
-  - <<: *outer_south
-    y0: -40.0
-  - <<: *center_spot
-
-_lasers_seq_r43: &lasers_seq_r43
-  - <<: *outer_east
-    x0: 43.0
-  - <<: *outer_north
-    y0: 43.0
-  - <<: *outer_west
-    x0: -43.0
-  - <<: *outer_south
-    y0: -43.0
-  - <<: *center_spot
-
-_lasers_seq_r46: &lasers_seq_r46
-  - <<: *outer_east
-    x0: 46.0
-  - <<: *outer_north
-    y0: 46.0
-  - <<: *outer_west
-    x0: -46.0
-  - <<: *outer_south
-    y0: -46.0
-  - <<: *center_spot
-
-_lasers_seq_r50: &lasers_seq_r50
-  - <<: *outer_east
-    x0: 50.0
-  - <<: *outer_north
-    y0: 50.0
-  - <<: *outer_west
-    x0: -50.0
-  - <<: *outer_south
-    y0: -50.0
-  - <<: *center_spot
+_single_center_laser: &single_center_laser
+  - id: "center"
+    power: "P"
+    x0: 0.0
+    y0: 0.0
+    delay: 0.0
+    pulse_separation: "cycle_duration"
+    n_pulses: 10
 
 scenarios:
-  - name: seq_5spot_r20
+  - name: single_spot_center
     potential:
       potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "1.2P"
-    lasers: *lasers_seq_r20
-
-  - name: seq_5spot_r23
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "1.2P"
-    lasers: *lasers_seq_r23
-
-  - name: seq_5spot_r26
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "1.2P"
-    lasers: *lasers_seq_r26
-
-  - name: seq_5spot_r30
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "1.2P"
-    lasers: *lasers_seq_r30
-
-  - name: seq_5spot_r33
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "1.2P"
-    lasers: *lasers_seq_r33
-
-  - name: seq_5spot_r36
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "1.2P"
-    lasers: *lasers_seq_r36
-
-  - name: seq_5spot_r40
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "1.2P"
-    lasers: *lasers_seq_r40
-
-  - name: seq_5spot_r43
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "1.2P"
-    lasers: *lasers_seq_r43
-
-  - name: seq_5spot_r46
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "1.2P"
-    lasers: *lasers_seq_r46
-
-  - name: seq_5spot_r50
-    potential:
-      potential_type: zero
-    timing_vars: *timing_vars_seq
-    power_modifiers:
-      - ids: ["s0", "s1", "s2", "s3"]
-        power: "1.2P"
-    lasers: *lasers_seq_r50
+    timing_vars: *timing_vars_single
+    lasers: *single_center_laser

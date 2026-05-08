@@ -20,7 +20,7 @@ from pipeline.manifest.io import (
     scenario_meta_path,
     set_manifest_field,
 )
-from pipeline.stages.cpu.viz_engine import generate_summary
+from pipeline.stages.cpu.viz_engine import generate_summary, generate_sweep_heatmaps
 
 
 def _check_artifacts(run_dir: str, scenarios: list[str]) -> list[str]:
@@ -63,12 +63,14 @@ def main() -> None:
             print(f"  {e}", file=sys.stderr)
         sys.exit(1)
 
-    threshold_path = os.path.join(run_dir, "threshold_result.json")
     import json
+    threshold_path = os.path.join(run_dir, "threshold_result.json")
     with open(threshold_path) as f:
         threshold = json.load(f)
 
+    is_sweep = threshold.get("mode") == "parameter_sweep"
     routines_summary: dict = {}
+    sweep_metas: list[dict] = []
     for name in scenarios:
         meta = load_scenario_meta(run_dir, name)
         t_cond = meta.get("t_cond")
@@ -77,6 +79,8 @@ def main() -> None:
             "n_lasers": meta.get("n_lasers"),
             "phase_offsets": meta.get("phase_offsets"),
         }
+        if meta.get("sweep"):
+            sweep_metas.append(meta)
         print(
             f"  {name}: t_cond="
             f"{'%.1f ps' % t_cond if t_cond is not None else 'NO CONDENSATION'}"
@@ -84,6 +88,7 @@ def main() -> None:
 
     summary = {
         "run_dir": run_dir,
+        "mode": threshold.get("mode", "threshold_search"),
         "P_threshold": threshold["P_threshold"],
         "routines": routines_summary,
     }
@@ -98,6 +103,13 @@ def main() -> None:
         generate_summary(scenarios, run_dir, results_dir)
     except Exception as e:
         print(f"  WARNING: summary plot failed: {e}", file=sys.stderr)
+
+    if sweep_metas:
+        print("  Generating parameter-sweep heatmaps ...")
+        try:
+            generate_sweep_heatmaps(scenarios, run_dir, results_dir)
+        except Exception as e:
+            print(f"  WARNING: sweep heatmaps failed: {e}", file=sys.stderr)
 
     try:
         set_manifest_field(run_dir, "finalize_complete", True)

@@ -10,6 +10,7 @@ scalar-sidecar-based summary plot only.
 from __future__ import annotations
 
 import os
+import json
 
 import h5py
 import matplotlib
@@ -28,9 +29,11 @@ FIELD_SPECS = {
 }
 SCALAR_MAP = {"psi_sq": "psi_sq_max", "nI": "nI_max", "nA": "nA_max", "Pump": "P_max"}
 COMPARISON_SCALARS = [
+    ("P_max", r"$P_{max}$"),
     ("psi_sq_max", r"$|\psi|^2_{max}$"),
     ("nI_max", r"$n_I^{max}$"),
-    ("nA_max", r"$n_A^{max}$"),
+    ("nA_max", r"$n_{active}^{max}$"),
+    ("k0_frac", r"$k=0$ fraction"),
 ]
 
 SNAPSHOT_COUNT = 5
@@ -169,6 +172,55 @@ def generate_field_png(
     print(f"    {out_path}")
 
 
+def generate_scalar_traces(
+    routine: str,
+    data_dir: str,
+    results_dir: str,
+) -> None:
+    """Generate per-scenario scalar traces from the lightweight sidecar."""
+    sidecar = os.path.join(data_dir, f"{routine}_scalars.npz")
+    if not os.path.isfile(sidecar):
+        print(f"  WARNING: scalar sidecar not found, skipping traces: {sidecar}")
+        return
+
+    npz = np.load(sidecar)
+    time = npz["time"]
+    panels = [
+        ("P_max", r"$P_{max}$"),
+        ("psi_sq_max", r"$|\psi|^2_{max}$"),
+        ("nI_max", r"$n_I^{max}$"),
+        ("nA_max", r"$n_{active}^{max}$"),
+        ("k0_frac", r"$k=0$ fraction"),
+    ]
+
+    fig = plt.figure(figsize=(11.0, 12.0), constrained_layout=True)
+    gs = GridSpec(len(panels), 1, figure=fig)
+    for row, (key, label) in enumerate(panels):
+        ax = fig.add_subplot(gs[row, 0])
+        if key in npz:
+            y = npz[key]
+            ax.plot(time[: len(y)], y, color="black", linewidth=1.1, label="total")
+        if key == "P_max":
+            i = 0
+            while f"P_max_{i}" in npz:
+                y = npz[f"P_max_{i}"]
+                ax.plot(time[: len(y)], y, linewidth=0.8, alpha=0.75, label=f"laser {i}")
+                i += 1
+            if i > 0:
+                ax.legend(fontsize=8, ncols=min(i + 1, 4), loc="best")
+        ax.set_ylabel(label)
+        ax.grid(True, alpha=0.3)
+    ax.set_xlabel("t (ps)")
+    fig.suptitle(f"{routine.upper()} scalar traces", fontsize=14, fontweight="bold")
+
+    out_dir = routine_dir(routine, results_dir)
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, "scalar_traces.png")
+    fig.savefig(out_path, dpi=PLOT_DPI)
+    plt.close(fig)
+    print(f"    {out_path}")
+
+
 def generate_summary(
     routines: list[str],
     data_dir: str,
@@ -221,3 +273,84 @@ def generate_summary(
     fig.savefig(out_path, dpi=PLOT_DPI)
     plt.close(fig)
     print(f"    {out_path}")
+
+
+def generate_sweep_heatmaps(
+    routines: list[str],
+    data_dir: str,
+    results_dir: str,
+) -> None:
+    """Generate power/separation heatmaps for parameter-sweep runs.
+
+    Produces one figure per (base_scenario, sigma_time) pair so the sigma_time
+    dimension is never silently collapsed.
+    """
+    rows: list[dict] = []
+    for routine in routines:
+        meta_path = os.path.join(data_dir, f"{routine}_meta.json")
+        sidecar = os.path.join(data_dir, f"{routine}_scalars.npz")
+        if not (os.path.isfile(meta_path) and os.path.isfile(sidecar)):
+            continue
+        with open(meta_path) as f:
+            meta = json.load(f)
+        sweep = meta.get("sweep")
+        if not sweep:
+            continue
+        npz = np.load(sidecar)
+        metrics = {}
+        for key, _ in COMPARISON_SCALARS:
+            if key in npz:
+                metrics[key] = float(np.nanmax(npz[key]))
+        rows.append({**sweep, "routine": routine, "metrics": metrics})
+
+    if not rows:
+        return
+
+    metric_keys = [key for key, _ in COMPARISON_SCALARS if any(key in row["metrics"] for row in rows)]
+    metric_labels = dict(COMPARISON_SCALARS)
+    bases = sorted({str(row["base_scenario"]) for row in rows})
+
+    for base in bases:
+        base_rows = [row for row in rows if row["base_scenario"] == base]
+        sigma_times = sorted({float(row.get("sigma_time", 0.0)) for row in base_rows})
+
+        for sigma_time in sigma_times:
+            sigma_rows = [row for row in base_rows if float(row.get("sigma_time", 0.0)) == sigma_time]
+            powers = sorted({float(row["power"]) for row in sigma_rows})
+            separations = sorted({float(row["pulse_separation"]) for row in sigma_rows})
+            if not powers or not separations:
+                continue
+
+            fig = plt.figure(
+                figsize=(max(5.0, 3.0 * len(metric_keys)), 4.8),
+                constrained_layout=True,
+            )
+            gs = GridSpec(1, len(metric_keys), figure=fig)
+            for col, key in enumerate(metric_keys):
+                arr = np.full((len(powers), len(separations)), np.nan, dtype=float)
+                for row in sigma_rows:
+                    if key not in row["metrics"]:
+                        continue
+                    pi = powers.index(float(row["power"]))
+                    si = separations.index(float(row["pulse_separation"]))
+                    arr[pi, si] = row["metrics"][key]
+                ax = fig.add_subplot(gs[0, col])
+                im = ax.imshow(arr, origin="lower", aspect="auto", cmap="viridis")
+                ax.set_title(metric_labels.get(key, key))
+                ax.set_xlabel("pulse separation (ps)")
+                ax.set_ylabel("power" if col == 0 else "")
+                ax.set_xticks(range(len(separations)), [f"{v:g}" for v in separations], rotation=45)
+                ax.set_yticks(range(len(powers)), [f"{v:g}" for v in powers])
+                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+            sigma_tag = f"{sigma_time:g}".replace(".", "p")
+            fig.suptitle(
+                f"{base}  σ_t={sigma_time:g} ps — parameter sweep peaks",
+                fontsize=14,
+                fontweight="bold",
+            )
+            out_path = os.path.join(results_dir, f"sweep_heatmaps_{base}_sig{sigma_tag}.png")
+            os.makedirs(results_dir, exist_ok=True)
+            fig.savefig(out_path, dpi=PLOT_DPI)
+            plt.close(fig)
+            print(f"    {out_path}")

@@ -19,6 +19,7 @@ import sys
 from typing import Any
 
 from pipeline.config.loader import build_timing_namespace, resolve_delay, resolve_power
+from pipeline.config.sweep import parameter_sweep_enabled
 
 _BASE_TIMING_NAMES: frozenset[str] = frozenset(
     {"sigma_time", "pulse_separation", "cutoff_sigma"}
@@ -120,7 +121,9 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
             if not (math.isfinite(fv) and fv > 0):
                 errors.append(f"global.physics.{key}={val!r} must be finite and positive")
 
+    sweep_enabled = parameter_sweep_enabled(cfg)
     ts = g.get("threshold_search", {})
+    sweep_cfg = g.get("parameter_sweep", {})
     power_values: list = ts.get("power_values", [])
     sigma_time_values: list = ts.get("sigma_time_values", [])
     pulse_sep_values: list = ts.get("pulse_separation_values", [])
@@ -128,89 +131,132 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
     cutoff_sigma: float = float(g.get("laser_defaults", {}).get("cutoff_sigma", 3.0))
     n_pulses = ts.get("n_pulses")
 
-    if not power_values:
-        errors.append("threshold_search.power_values is empty")
-    if not sigma_time_values:
-        errors.append("threshold_search.sigma_time_values is empty")
-    if pulse_sep_formula is None and not pulse_sep_values:
-        errors.append("threshold_search.pulse_separation_values is empty")
-
-    if power_values and not all(
-        isinstance(v, (int, float)) and float(v) > 0 for v in power_values
-    ):
-        errors.append("threshold_search.power_values must all be positive numbers")
-
-    if pulse_sep_formula is not None:
-        try:
-            resolve_delay(
-                pulse_sep_formula,
-                {
-                    "sigma_time": 1.0,
-                    "cutoff_sigma": cutoff_sigma,
-                    "pulse_separation": 1.0,
-                },
-            )
-        except ValueError as exc:
-            errors.append(f"threshold_search.pulse_separation_formula={pulse_sep_formula!r}: {exc}")
-
-    if n_pulses is not None and not (isinstance(n_pulses, int) and n_pulses > 0):
-        errors.append("threshold_search.n_pulses must be a positive integer when set")
-
-    if sigma_time_values and (pulse_sep_values or pulse_sep_formula is not None):
-        valid_pairs = sum(
-            1
-            for st, ps in _resolve_threshold_pulse_sep_values(
-                sigma_time_values,
-                pulse_sep_values,
-                pulse_sep_formula,
-                cutoff_sigma,
-            )
-            if cutoff_sigma * float(st) < float(ps) / 2.0
+    if sweep_enabled:
+        power_values = sweep_cfg.get("power_values", [])
+        pulse_sep_values = sweep_cfg.get("pulse_separation_values", [])
+        sigma_time_values = sweep_cfg.get(
+            "sigma_time_values",
+            ts.get("sigma_time_values", [g.get("laser_defaults", {}).get("sigma_time", 1.0)]),
         )
-        if valid_pairs == 0:
-            errors.append(
-                "All (sigma_time, pulse_separation) pairs violate the pulse-overlap "
-                "constraint (cutoff_sigma * sigma_time < pulse_sep/2).  "
-                "No valid threshold search point exists."
-            )
-
-    max_runtime = ts.get("max_runtime_minutes", 0)
-    try:
-        if float(max_runtime) <= 0:
-            errors.append(
-                f"threshold_search.max_runtime_minutes={max_runtime!r} must be positive"
-            )
-    except (TypeError, ValueError):
-        errors.append(
-            f"threshold_search.max_runtime_minutes={max_runtime!r} is not a number"
-        )
-
-    dt_mult = ts.get("dt_multiplier")
-    if dt_mult is not None:
-        try:
-            if float(dt_mult) <= 0:
-                errors.append(
-                    f"threshold_search.dt_multiplier={dt_mult!r} must be positive"
-                )
-        except (TypeError, ValueError):
-            errors.append(
-                f"threshold_search.dt_multiplier={dt_mult!r} is not a number"
-            )
-
-    cond_frac = ts.get("condensation_fraction")
-    if cond_frac is None:
-        errors.append("threshold_search.condensation_fraction is missing")
+        pulse_sep_formula = None
+        if not power_values:
+            errors.append("parameter_sweep.power_values is empty")
+        if not pulse_sep_values:
+            errors.append("parameter_sweep.pulse_separation_values is empty")
+        if not sigma_time_values:
+            errors.append("parameter_sweep.sigma_time_values is empty")
+        base_scenario_filter = sweep_cfg.get("base_scenarios")
+        if base_scenario_filter is not None:
+            known_scenario_names = {str(sc.get("name", "")) for sc in cfg.get("scenarios", [])}
+            for bname in base_scenario_filter:
+                if str(bname) not in known_scenario_names:
+                    errors.append(
+                        f"parameter_sweep.base_scenarios: unknown scenario name '{bname}'"
+                    )
+        if power_values and not all(
+            isinstance(v, (int, float)) and float(v) > 0 for v in power_values
+        ):
+            errors.append("parameter_sweep.power_values must all be positive numbers")
+        if pulse_sep_values and not all(
+            isinstance(v, (int, float)) and float(v) > 0 for v in pulse_sep_values
+        ):
+            errors.append("parameter_sweep.pulse_separation_values must all be positive numbers")
+        if sigma_time_values and not all(
+            isinstance(v, (int, float)) and float(v) > 0 for v in sigma_time_values
+        ):
+            errors.append("parameter_sweep.sigma_time_values must all be positive numbers")
+        for st in sigma_time_values or []:
+            for ps in pulse_sep_values or []:
+                if float(ps) < 2.0 * cutoff_sigma * float(st):
+                    errors.append(
+                        "parameter_sweep pulse separation must be at least one full "
+                        f"Gaussian support: pulse_separation={float(ps):.3g}, "
+                        f"sigma_time={float(st):.3g}, cutoff_sigma={cutoff_sigma:.3g}"
+                    )
     else:
-        try:
-            cf = float(cond_frac)
-            if not (0 < cf <= 1):
+        if not power_values:
+            errors.append("threshold_search.power_values is empty")
+        if not sigma_time_values:
+            errors.append("threshold_search.sigma_time_values is empty")
+        if pulse_sep_formula is None and not pulse_sep_values:
+            errors.append("threshold_search.pulse_separation_values is empty")
+
+        if power_values and not all(
+            isinstance(v, (int, float)) and float(v) > 0 for v in power_values
+        ):
+            errors.append("threshold_search.power_values must all be positive numbers")
+
+        if pulse_sep_formula is not None:
+            try:
+                resolve_delay(
+                    pulse_sep_formula,
+                    {
+                        "sigma_time": 1.0,
+                        "cutoff_sigma": cutoff_sigma,
+                        "pulse_separation": 1.0,
+                    },
+                )
+            except ValueError as exc:
+                errors.append(f"threshold_search.pulse_separation_formula={pulse_sep_formula!r}: {exc}")
+
+        if n_pulses is not None and not (isinstance(n_pulses, int) and n_pulses > 0):
+            errors.append("threshold_search.n_pulses must be a positive integer when set")
+
+        if sigma_time_values and (pulse_sep_values or pulse_sep_formula is not None):
+            valid_pairs = sum(
+                1
+                for st, ps in _resolve_threshold_pulse_sep_values(
+                    sigma_time_values,
+                    pulse_sep_values,
+                    pulse_sep_formula,
+                    cutoff_sigma,
+                )
+                if cutoff_sigma * float(st) < float(ps) / 2.0
+            )
+            if valid_pairs == 0:
                 errors.append(
-                    f"threshold_search.condensation_fraction={cond_frac!r} must be in (0, 1]"
+                    "All (sigma_time, pulse_separation) pairs violate the pulse-overlap "
+                    "constraint (cutoff_sigma * sigma_time < pulse_sep/2).  "
+                    "No valid threshold search point exists."
+                )
+
+        max_runtime = ts.get("max_runtime_minutes", 0)
+        try:
+            if float(max_runtime) <= 0:
+                errors.append(
+                    f"threshold_search.max_runtime_minutes={max_runtime!r} must be positive"
                 )
         except (TypeError, ValueError):
             errors.append(
-                f"threshold_search.condensation_fraction={cond_frac!r} is not a number"
+                f"threshold_search.max_runtime_minutes={max_runtime!r} is not a number"
             )
+
+        dt_mult = ts.get("dt_multiplier")
+        if dt_mult is not None:
+            try:
+                if float(dt_mult) <= 0:
+                    errors.append(
+                        f"threshold_search.dt_multiplier={dt_mult!r} must be positive"
+                    )
+            except (TypeError, ValueError):
+                errors.append(
+                    f"threshold_search.dt_multiplier={dt_mult!r} is not a number"
+                )
+
+        cond_frac = ts.get("condensation_fraction")
+        if cond_frac is None:
+            errors.append("threshold_search.condensation_fraction is missing")
+        else:
+            try:
+                cf = float(cond_frac)
+                if not (0 < cf <= 1):
+                    errors.append(
+                        f"threshold_search.condensation_fraction={cond_frac!r} must be in (0, 1]"
+                    )
+            except (TypeError, ValueError):
+                errors.append(
+                    f"threshold_search.condensation_fraction={cond_frac!r} is not a number"
+                )
 
     out = cfg.get("output", {})
     for _stride_key in ("field_record_stride", "scalar_record_stride"):
@@ -307,7 +353,8 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
                     )
 
         if (
-            isinstance(total_time, (int, float))
+            not sweep_enabled
+            and isinstance(total_time, (int, float))
             and float(total_time) > 0
             and sigma_time_values
             and (pulse_sep_values or pulse_sep_formula is not None)
@@ -322,6 +369,22 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
                     sigma_time_values=sigma_time_values,
                     pulse_sep_values=pulse_sep_values,
                     pulse_sep_formula=pulse_sep_formula,
+                )
+            )
+        elif (
+            sweep_enabled
+            and isinstance(total_time, (int, float))
+            and float(total_time) > 0
+        ):
+            errors.extend(
+                _validate_sweep_timing_budget(
+                    scenario_name=name,
+                    laser_defs=laser_defs,
+                    timing_vars=timing_vars,
+                    defaults=g.get("laser_defaults", {}),
+                    total_time=float(total_time),
+                    sigma_time_values=sigma_time_values,
+                    pulse_sep_values=pulse_sep_values,
                 )
             )
 
@@ -481,6 +544,88 @@ def _validate_scenario_timing_budget(
     return errors
 
 
+def _validate_sweep_timing_budget(
+    scenario_name: str,
+    laser_defs: list[dict[str, Any]],
+    timing_vars: dict[str, Any],
+    defaults: dict[str, Any],
+    total_time: float,
+    sigma_time_values: list[Any],
+    pulse_sep_values: list[Any],
+) -> list[str]:
+    """Check that each expanded sweep scenario fits inside total_time.
+
+    In sweep mode, the expansion directly sets each laser's pulse_separation to
+    the sweep value and resolves cycle_duration = pulse_sep.  This function
+    replicates that logic: it builds a timing namespace where cycle_duration is
+    replaced by the sweep pulse_sep before evaluating delays.
+    """
+    errors: list[str] = []
+    cutoff_default = float(defaults.get("cutoff_sigma", 3.0))
+
+    for sigma_time in sigma_time_values or []:
+        st = float(sigma_time)
+        for pulse_sep in pulse_sep_values or []:
+            ps = float(pulse_sep)
+            if ps < 2.0 * cutoff_default * st:
+                continue
+
+            base_ns: dict[str, float] = {
+                "sigma_time": st,
+                "pulse_separation": ps,
+                "cutoff_sigma": cutoff_default,
+            }
+            resolved_vars: dict[str, float] = {}
+            timing_var_errors: list[str] = []
+            for var, expr in (timing_vars or {}).items():
+                try:
+                    resolved_vars[var] = resolve_delay(expr, {**base_ns, **resolved_vars})
+                except (ValueError, KeyError) as exc:
+                    timing_var_errors.append(
+                        f"Scenario '{scenario_name}' timing_vars.{var}={expr!r} "
+                        f"failed at sweep point sigma_time={st:.3g}, pulse_sep={ps:.3g}: {exc}"
+                    )
+            errors.extend(timing_var_errors)
+            if timing_var_errors:
+                continue
+            if "cycle_duration" in resolved_vars:
+                resolved_vars["cycle_duration"] = ps
+            timing_ns = {**base_ns, **resolved_vars}
+
+            required_time = 0.0
+            for ldef in laser_defs:
+                merged = {**defaults, **ldef}
+                laser_sigma = float(merged.get("sigma_time", st))
+                laser_cutoff = float(merged.get("cutoff_sigma", cutoff_default))
+                per_laser_ns = {
+                    **timing_ns,
+                    "sigma_time": laser_sigma,
+                    "pulse_separation": ps,
+                    "cutoff_sigma": laser_cutoff,
+                }
+                delay_expr = ldef.get("delay")
+                try:
+                    delay = resolve_delay(delay_expr, per_laser_ns)
+                except (ValueError, KeyError) as exc:
+                    errors.append(
+                        f"Scenario '{scenario_name}' laser delay={delay_expr!r} "
+                        f"failed at sigma_time={st:.3g}, pulse_sep={ps:.3g}: {exc}"
+                    )
+                    delay = 0.0
+                n_pulses_l = ldef.get("n_pulses")
+                pulse_span = (int(n_pulses_l) - 1) * ps if isinstance(n_pulses_l, int) and n_pulses_l > 1 else 0.0
+                required_time = max(required_time, delay + pulse_span + 2.0 * laser_cutoff * laser_sigma)
+
+            if required_time > total_time:
+                errors.append(
+                    f"Scenario '{scenario_name}' sweep point sigma_time={st:.3g}, "
+                    f"pulse_sep={ps:.3g} requires {required_time:.1f} ps but "
+                    f"global.solver.total_time={total_time:.1f} ps"
+                )
+
+    return errors
+
+
 def validate_slurm_env(env_path: str) -> list[str]:
     """Check that slurm.env exists and exports all required variables.
 
@@ -515,6 +660,8 @@ def validate_slurm_env(env_path: str) -> list[str]:
         "SCENARIO_TIME",
         "FIT_TIME",
         "TIME_RESPONSE_MEM", "TIME_RESPONSE_CPUS", "TIME_RESPONSE_TIME",
+        "PREPARE_REF_MEM", "PREPARE_REF_CPUS", "PREPARE_REF_TIME",
+        "SCRATCH",
     })
 
     if not os.path.isfile(env_path):

@@ -105,7 +105,10 @@ done
 
 echo ""
 echo "All jobs queued."
-echo "  Monitor : squeue -u \$USER"
+IDS_CSV="$(echo "$ALL_IDS" | xargs | tr ' ' ',')"
+echo "  Status  : sacct -j $IDS_CSV --format=JobID,JobName%35,State,ExitCode,Elapsed,Timelimit,NodeList"
+echo "  Queue   : squeue -j $IDS_CSV -o \"%.18i %.9P %.35j %.8T %.10M %.10l %.6D %R\""
+echo "  Starts  : squeue --start -j $IDS_CSV"
 if [[ $DRY_RUN -eq 0 ]]; then
     echo "  Cancel  : scancel $ALL_IDS"
 fi
