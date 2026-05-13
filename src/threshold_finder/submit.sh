@@ -79,7 +79,18 @@ PYEOF
 )
 N_POWERS="${_PARSED[0]}"
 MAX_CONCURRENT="${_PARSED[1]}"
-POWER_ARRAY_SPEC="0-$((N_POWERS - 1))%${MAX_CONCURRENT}"
+if [[ "$N_POWERS" -lt 1 ]]; then
+    echo "ERROR: no power values to submit." >&2
+    exit 1
+fi
+POWER_LAST_INDEX=$((N_POWERS - 1))
+if [[ "$N_POWERS" -gt 1 ]]; then
+    POWER_ARRAY_ENABLED=1
+    POWER_ARRAY_SPEC="0-$((N_POWERS - 2))%${MAX_CONCURRENT}"
+else
+    POWER_ARRAY_ENABLED=0
+    POWER_ARRAY_SPEC=""
+fi
 
 set -a
 source "$SLURM_ENV"
@@ -204,8 +215,10 @@ _wait_rysy() {
     fi
 }
 
-if [[ $DRY_RUN -eq 1 ]]; then
-    echo "[1] power sweep array  (array=${POWER_ARRAY_SPEC}, time=${GPU_TIME})  [DRY RUN]"
+if [[ $POWER_ARRAY_ENABLED -eq 0 ]]; then
+    SWEEP_ARRAY_JOB=""
+elif [[ $DRY_RUN -eq 1 ]]; then
+    echo "[1a] power sweep array  (array=${POWER_ARRAY_SPEC}, time=${GPU_TIME})  [DRY RUN]"
     SWEEP_ARRAY_JOB="DRY_1"
 else
     SWEEP_ARRAY_JOB=$(_rysy_sbatch \
@@ -223,13 +236,43 @@ else
         "$CLUSTER_DIR/job_gpu.sh" \
             python -m threshold_finder.stages.gpu.run_power \
                 --run-dir "$RUN_DIR")
-    echo "[1] power sweep array  -> Rysy job $SWEEP_ARRAY_JOB  (array=${POWER_ARRAY_SPEC}, time=${GPU_TIME})"
+    echo "[1a] power sweep array  -> Rysy job $SWEEP_ARRAY_JOB  (array=${POWER_ARRAY_SPEC}, time=${GPU_TIME})"
     if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
         _wait_rysy "$SWEEP_ARRAY_JOB" "sweep_array"
     fi
 fi
 
-SWEEP_DEP_ID="$(_dependency_id "$SWEEP_ARRAY_JOB")"
+if [[ $DRY_RUN -eq 1 ]]; then
+    echo "[1b] power sweep last   (index=${POWER_LAST_INDEX}, singleton, time=${GPU_TIME})  [DRY RUN]"
+    SWEEP_LAST_JOB="DRY_1B"
+else
+    SWEEP_LAST_JOB=$(_rysy_sbatch \
+        --account="$SLURM_ACCOUNT" \
+        --partition="$SLURM_PARTITION" \
+        --mem="$SLURM_MEM" \
+        --gres="gpu:${SLURM_GPUS}" \
+        --cpus-per-task="$SLURM_CPUS" \
+        --time="$GPU_TIME" \
+        ${_RYSY_QOS_FLAG:+"$_RYSY_QOS_FLAG"} \
+        --job-name="tf_sw_last_${RUN_NAME}" \
+        --output="${LOGS_DIR}/sweep_last_%j.out" \
+        --error="${LOGS_DIR}/sweep_last_%j.err" \
+        "$CLUSTER_DIR/job_gpu.sh" \
+            python -m threshold_finder.stages.gpu.run_power \
+                --run-dir "$RUN_DIR" \
+                --power-index "$POWER_LAST_INDEX")
+    echo "[1b] power sweep last   -> Rysy job $SWEEP_LAST_JOB  (index=${POWER_LAST_INDEX}, time=${GPU_TIME})"
+    if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
+        _wait_rysy "$SWEEP_LAST_JOB" "sweep_last"
+    fi
+fi
+
+SWEEP_DEP_IDS=()
+if [[ -n "${SWEEP_ARRAY_JOB:-}" ]]; then
+    SWEEP_DEP_IDS+=("$(_dependency_id "$SWEEP_ARRAY_JOB")")
+fi
+SWEEP_DEP_IDS+=("$(_dependency_id "$SWEEP_LAST_JOB")")
+SWEEP_DEP_ID="$(IFS=:; echo "${SWEEP_DEP_IDS[*]}")"
 
 if [[ $DRY_RUN -eq 1 ]]; then
     echo "[2] finalize           (afterok:${SWEEP_DEP_ID})  [DRY RUN]"
@@ -260,20 +303,24 @@ echo "========================================"
 if [[ $DRY_RUN -eq 1 ]]; then
     echo " Dry run complete."
     echo " Planned Slurm dependencies:"
-    echo "   sweep_array -> finalize"
+    echo "   sweep_array + last singleton -> finalize"
 elif [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
     echo " All jobs complete."
 else
     echo " Pipeline submitted."
-    echo " Slurm dependencies:  sweep_array -> finalize"
+    echo " Slurm dependencies:  sweep_array + last singleton -> finalize"
 fi
 echo ""
 echo " Run dir : $RUN_DIR"
 if [[ $DRY_RUN -eq 0 ]]; then
-    ALL_JOB_IDS="${SWEEP_DEP_ID},$(_dependency_id "$FINALIZE_JOB")"
+    ALL_JOB_IDS="${SWEEP_DEP_ID//:/,},$(_dependency_id "$FINALIZE_JOB")"
     echo " Logs    : $LOGS_DIR"
-    echo " Jobs    : sweep=$SWEEP_ARRAY_JOB  finalize=$FINALIZE_JOB"
+    if [[ -n "${SWEEP_ARRAY_JOB:-}" ]]; then
+        echo " Jobs    : sweep=$SWEEP_ARRAY_JOB  last=$SWEEP_LAST_JOB  finalize=$FINALIZE_JOB"
+    else
+        echo " Jobs    : last=$SWEEP_LAST_JOB  finalize=$FINALIZE_JOB"
+    fi
     _print_slurm_diagnostics "$ALL_JOB_IDS"
-    echo " Cancel  : scancel $SWEEP_ARRAY_JOB $FINALIZE_JOB"
+    echo " Cancel  : scancel ${SWEEP_ARRAY_JOB:-} $SWEEP_LAST_JOB $FINALIZE_JOB"
 fi
 echo "========================================"

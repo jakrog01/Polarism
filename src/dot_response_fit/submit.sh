@@ -308,11 +308,20 @@ else
     fi
 fi
 
-IMAGE_ARRAY_SPEC="0-$((EFFECTIVE_N_IMAGES - 1))%${MAX_CONCURRENT}"
+IMAGE_LAST_INDEX=$((EFFECTIVE_N_IMAGES - 1))
+if [[ "$EFFECTIVE_N_IMAGES" -gt 1 ]]; then
+    IMAGE_ARRAY_ENABLED=1
+    IMAGE_ARRAY_SPEC="0-$((EFFECTIVE_N_IMAGES - 2))%${MAX_CONCURRENT}"
+else
+    IMAGE_ARRAY_ENABLED=0
+    IMAGE_ARRAY_SPEC=""
+fi
 FIT_DEP_ID="$(_dependency_id "$FIT_JOB")"
 
-if [[ $DRY_RUN -eq 1 ]]; then
-    echo "[3] run_scenario    (afterok:${FIT_DEP_ID}, GPU, array=${IMAGE_ARRAY_SPEC}, simulate+render)  [DRY RUN]"
+if [[ $IMAGE_ARRAY_ENABLED -eq 0 ]]; then
+    SCENARIO_JOB=""
+elif [[ $DRY_RUN -eq 1 ]]; then
+    echo "[3a] run_scenario array  (afterok:${FIT_DEP_ID}, GPU, array=${IMAGE_ARRAY_SPEC}, simulate+render)  [DRY RUN]"
     SCENARIO_JOB="DRY_3"
 else
     SCENARIO_JOB=$(_rysy_sbatch_nvme \
@@ -331,13 +340,44 @@ else
         "$PROJECT_ROOT/src/pump_multi_comparison/cluster/job_gpu.sh" \
             python -m dot_response_fit.stages.gpu.run_scenario \
                 --run-dir "$RUN_DIR")
-    echo "[3] run_scenario    -> Rysy job $SCENARIO_JOB  (afterok:${FIT_DEP_ID}, array=${IMAGE_ARRAY_SPEC}, time=${SCENARIO_TIME})"
+    echo "[3a] run_scenario array  -> Rysy job $SCENARIO_JOB  (afterok:${FIT_DEP_ID}, array=${IMAGE_ARRAY_SPEC}, time=${SCENARIO_TIME})"
     if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
         _wait_rysy "$SCENARIO_JOB" "run_scenario_array" "scenario"
     fi
 fi
 
-SCENARIO_DEP_ID="$(_dependency_id "$SCENARIO_JOB")"
+if [[ $DRY_RUN -eq 1 ]]; then
+    echo "[3b] run_scenario last   (afterok:${FIT_DEP_ID}, GPU, index=${IMAGE_LAST_INDEX}, singleton)  [DRY RUN]"
+    SCENARIO_LAST_JOB="DRY_3B"
+else
+    SCENARIO_LAST_JOB=$(_rysy_sbatch_nvme \
+        --account="$SLURM_ACCOUNT" \
+        --partition="$SLURM_PARTITION" \
+        --mem="$SLURM_MEM" \
+        --gres="gpu:${SLURM_GPUS},nvme:${NVME_GB}" \
+        --cpus-per-task="$SLURM_CPUS" \
+        --time="$SCENARIO_TIME" \
+        ${_RYSY_QOS_FLAG:+"$_RYSY_QOS_FLAG"} \
+        --dependency="afterok:${FIT_DEP_ID}" \
+        --job-name="drf_sc_last_${RUN_NAME}" \
+        --output="${LOGS_DIR}/scenario_last_%j.out" \
+        --error="${LOGS_DIR}/scenario_last_%j.err" \
+        "$PROJECT_ROOT/src/pump_multi_comparison/cluster/job_gpu.sh" \
+            python -m dot_response_fit.stages.gpu.run_scenario \
+                --run-dir "$RUN_DIR" \
+                --image-index "$IMAGE_LAST_INDEX")
+    echo "[3b] run_scenario last   -> Rysy job $SCENARIO_LAST_JOB  (afterok:${FIT_DEP_ID}, index=${IMAGE_LAST_INDEX}, time=${SCENARIO_TIME})"
+    if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
+        _wait_rysy "$SCENARIO_LAST_JOB" "run_scenario_last" "scenario"
+    fi
+fi
+
+SCENARIO_DEP_IDS=()
+if [[ -n "${SCENARIO_JOB:-}" ]]; then
+    SCENARIO_DEP_IDS+=("$(_dependency_id "$SCENARIO_JOB")")
+fi
+SCENARIO_DEP_IDS+=("$(_dependency_id "$SCENARIO_LAST_JOB")")
+SCENARIO_DEP_ID="$(IFS=:; echo "${SCENARIO_DEP_IDS[*]}")"
 
 if [[ $DRY_RUN -eq 1 ]]; then
     echo "[4] finalize        (afterok:${SCENARIO_DEP_ID}, Rysy)  [DRY RUN]"
@@ -368,22 +408,26 @@ echo "========================================"
 if [[ $DRY_RUN -eq 1 ]]; then
     echo " Dry run complete."
     echo " Planned Slurm dependencies:"
-    echo "   prepare_reference -> fit_dot_size -> run_scenario image array -> finalize"
+    echo "   prepare_reference -> fit_dot_size -> run_scenario image array + last singleton -> finalize"
 elif [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
     echo " All jobs complete."
 else
     echo " Pipeline submitted."
     echo " Slurm dependencies will run stages in order:"
-    echo "   prepare_reference -> fit_dot_size -> run_scenario image array -> finalize"
+    echo "   prepare_reference -> fit_dot_size -> run_scenario image array + last singleton -> finalize"
     echo " All jobs queued."
 fi
 echo ""
 echo " Run dir : $RUN_DIR"
 if [[ $DRY_RUN -eq 0 ]]; then
-    ALL_JOB_IDS="${PREPARE_REF_DEP_ID},${FIT_DEP_ID},${SCENARIO_DEP_ID},$(_dependency_id "$FINALIZE_JOB")"
+    ALL_JOB_IDS="${PREPARE_REF_DEP_ID},${FIT_DEP_ID},${SCENARIO_DEP_ID//:/,},$(_dependency_id "$FINALIZE_JOB")"
     echo " Logs    : $LOGS_DIR"
-    echo " Jobs    : prepare=$PREPARE_REF_JOB  fit=$FIT_JOB  images=$SCENARIO_JOB  finalize=$FINALIZE_JOB"
+    if [[ -n "${SCENARIO_JOB:-}" ]]; then
+        echo " Jobs    : prepare=$PREPARE_REF_JOB  fit=$FIT_JOB  images=$SCENARIO_JOB  last=$SCENARIO_LAST_JOB  finalize=$FINALIZE_JOB"
+    else
+        echo " Jobs    : prepare=$PREPARE_REF_JOB  fit=$FIT_JOB  last=$SCENARIO_LAST_JOB  finalize=$FINALIZE_JOB"
+    fi
     _print_slurm_diagnostics "$ALL_JOB_IDS"
-    echo " Cancel  : scancel $PREPARE_REF_JOB $FIT_JOB $SCENARIO_JOB $FINALIZE_JOB"
+    echo " Cancel  : scancel $PREPARE_REF_JOB $FIT_JOB ${SCENARIO_JOB:-} $SCENARIO_LAST_JOB $FINALIZE_JOB"
 fi
 echo "========================================"

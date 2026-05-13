@@ -249,7 +249,19 @@ _wait_rysy() {
     fi
 }
 
-SCENARIO_ARRAY_SPEC="0-$((N_SCENARIOS - 1))%${MAX_CONCURRENT}"
+if [[ "$N_SCENARIOS" -lt 1 ]]; then
+    echo "ERROR: no scenarios to submit." >&2
+    exit 1
+fi
+
+SCENARIO_LAST_INDEX=$((N_SCENARIOS - 1))
+if [[ "$N_SCENARIOS" -gt 1 ]]; then
+    SCENARIO_ARRAY_ENABLED=1
+    SCENARIO_ARRAY_SPEC="0-$((N_SCENARIOS - 2))%${MAX_CONCURRENT}"
+else
+    SCENARIO_ARRAY_ENABLED=0
+    SCENARIO_ARRAY_SPEC=""
+fi
 
 if [[ $IS_SWEEP -eq 1 ]]; then
     THRESHOLD_JOB=""
@@ -288,8 +300,10 @@ else
 fi
 
 if [[ $IS_SWEEP -eq 1 ]]; then
-    if [[ $DRY_RUN -eq 1 ]]; then
-        echo "[2] scenario array    (no threshold dependency, array=${SCENARIO_ARRAY_SPEC}, simulate+render)  [DRY RUN]"
+    if [[ $SCENARIO_ARRAY_ENABLED -eq 0 ]]; then
+        SCENARIO_ARRAY_JOB=""
+    elif [[ $DRY_RUN -eq 1 ]]; then
+        echo "[2a] scenario array   (no threshold dependency, array=${SCENARIO_ARRAY_SPEC}, simulate+render)  [DRY RUN]"
         SCENARIO_ARRAY_JOB="DRY_2"
     else
         SCENARIO_ARRAY_JOB=$(_rysy_sbatch_nvme \
@@ -307,14 +321,40 @@ if [[ $IS_SWEEP -eq 1 ]]; then
             "$CLUSTER_DIR/job_gpu.sh" \
                 python -m pipeline.stages.gpu.run_scenario \
                     --run-dir "$RUN_DIR")
-        echo "[2] scenario array    -> Rysy job $SCENARIO_ARRAY_JOB  (no dep, array=${SCENARIO_ARRAY_SPEC}, time=${SCENARIO_TIME})"
+        echo "[2a] scenario array   -> Rysy job $SCENARIO_ARRAY_JOB  (no dep, array=${SCENARIO_ARRAY_SPEC}, time=${SCENARIO_TIME})"
         if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
             _wait_rysy "$SCENARIO_ARRAY_JOB" "scenario_array"
         fi
     fi
-else
     if [[ $DRY_RUN -eq 1 ]]; then
-        echo "[2] scenario array    (afterok:${THRESHOLD_DEP_ID}, array=${SCENARIO_ARRAY_SPEC}, simulate+render)  [DRY RUN]"
+        echo "[2b] scenario last    (no threshold dependency, index=${SCENARIO_LAST_INDEX}, singleton)  [DRY RUN]"
+        SCENARIO_LAST_JOB="DRY_2B"
+    else
+        SCENARIO_LAST_JOB=$(_rysy_sbatch_nvme \
+            --account="$SLURM_ACCOUNT" \
+            --partition="$SLURM_PARTITION" \
+            --mem="$SLURM_MEM" \
+            --gres="gpu:${SLURM_GPUS},nvme:${NVME_GB}" \
+            --cpus-per-task="$SLURM_CPUS" \
+            --time="$SCENARIO_TIME" \
+            ${_RYSY_QOS_FLAG:+"$_RYSY_QOS_FLAG"} \
+            --job-name="pol_sc_last_${RUN_NAME}" \
+            --output="${LOGS_DIR}/scenario_last_%j.out" \
+            --error="${LOGS_DIR}/scenario_last_%j.err" \
+            "$CLUSTER_DIR/job_gpu.sh" \
+                python -m pipeline.stages.gpu.run_scenario \
+                    --run-dir "$RUN_DIR" \
+                    --scenario-index "$SCENARIO_LAST_INDEX")
+        echo "[2b] scenario last    -> Rysy job $SCENARIO_LAST_JOB  (no dep, index=${SCENARIO_LAST_INDEX}, time=${SCENARIO_TIME})"
+        if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
+            _wait_rysy "$SCENARIO_LAST_JOB" "scenario_last"
+        fi
+    fi
+else
+    if [[ $SCENARIO_ARRAY_ENABLED -eq 0 ]]; then
+        SCENARIO_ARRAY_JOB=""
+    elif [[ $DRY_RUN -eq 1 ]]; then
+        echo "[2a] scenario array   (afterok:${THRESHOLD_DEP_ID}, array=${SCENARIO_ARRAY_SPEC}, simulate+render)  [DRY RUN]"
         SCENARIO_ARRAY_JOB="DRY_2"
     else
         SCENARIO_ARRAY_JOB=$(_rysy_sbatch_nvme \
@@ -333,14 +373,44 @@ else
             "$CLUSTER_DIR/job_gpu.sh" \
                 python -m pipeline.stages.gpu.run_scenario \
                     --run-dir "$RUN_DIR")
-        echo "[2] scenario array    -> Rysy job $SCENARIO_ARRAY_JOB  (afterok:${THRESHOLD_DEP_ID}, array=${SCENARIO_ARRAY_SPEC}, time=${SCENARIO_TIME})"
+        echo "[2a] scenario array   -> Rysy job $SCENARIO_ARRAY_JOB  (afterok:${THRESHOLD_DEP_ID}, array=${SCENARIO_ARRAY_SPEC}, time=${SCENARIO_TIME})"
         if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
             _wait_rysy "$SCENARIO_ARRAY_JOB" "scenario_array"
         fi
     fi
+    if [[ $DRY_RUN -eq 1 ]]; then
+        echo "[2b] scenario last    (afterok:${THRESHOLD_DEP_ID}, index=${SCENARIO_LAST_INDEX}, singleton)  [DRY RUN]"
+        SCENARIO_LAST_JOB="DRY_2B"
+    else
+        SCENARIO_LAST_JOB=$(_rysy_sbatch_nvme \
+            --account="$SLURM_ACCOUNT" \
+            --partition="$SLURM_PARTITION" \
+            --mem="$SLURM_MEM" \
+            --gres="gpu:${SLURM_GPUS},nvme:${NVME_GB}" \
+            --cpus-per-task="$SLURM_CPUS" \
+            --time="$SCENARIO_TIME" \
+            ${_RYSY_QOS_FLAG:+"$_RYSY_QOS_FLAG"} \
+            --dependency="afterok:${THRESHOLD_DEP_ID}" \
+            --job-name="pol_sc_last_${RUN_NAME}" \
+            --output="${LOGS_DIR}/scenario_last_%j.out" \
+            --error="${LOGS_DIR}/scenario_last_%j.err" \
+            "$CLUSTER_DIR/job_gpu.sh" \
+                python -m pipeline.stages.gpu.run_scenario \
+                    --run-dir "$RUN_DIR" \
+                    --scenario-index "$SCENARIO_LAST_INDEX")
+        echo "[2b] scenario last    -> Rysy job $SCENARIO_LAST_JOB  (afterok:${THRESHOLD_DEP_ID}, index=${SCENARIO_LAST_INDEX}, time=${SCENARIO_TIME})"
+        if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
+            _wait_rysy "$SCENARIO_LAST_JOB" "scenario_last"
+        fi
+    fi
 fi
 
-SCENARIO_DEP_ID="$(_dependency_id "$SCENARIO_ARRAY_JOB")"
+SCENARIO_DEP_IDS=()
+if [[ -n "${SCENARIO_ARRAY_JOB:-}" ]]; then
+    SCENARIO_DEP_IDS+=("$(_dependency_id "$SCENARIO_ARRAY_JOB")")
+fi
+SCENARIO_DEP_IDS+=("$(_dependency_id "$SCENARIO_LAST_JOB")")
+SCENARIO_DEP_ID="$(IFS=:; echo "${SCENARIO_DEP_IDS[*]}")"
 
 if [[ $DRY_RUN -eq 1 ]]; then
     echo "[3] finalize          (afterok:${SCENARIO_DEP_ID}, Rysy)  [DRY RUN]"
@@ -372,9 +442,9 @@ if [[ $DRY_RUN -eq 1 ]]; then
     echo " Dry run complete."
     echo " Planned Slurm dependencies:"
     if [[ $IS_SWEEP -eq 1 ]]; then
-        echo "   scenario array -> finalize  (parameter_sweep; no threshold job)"
+        echo "   scenario array + last singleton -> finalize  (parameter_sweep; no threshold job)"
     else
-        echo "   threshold_search -> scenario array -> finalize"
+        echo "   threshold_search -> scenario array + last singleton -> finalize"
     fi
 elif [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
     echo " All jobs complete."
@@ -382,9 +452,9 @@ else
     echo " Pipeline submitted."
     echo " Slurm dependencies will run stages in order:"
     if [[ $IS_SWEEP -eq 1 ]]; then
-        echo "   scenario array -> finalize  (parameter_sweep; no threshold job)"
+        echo "   scenario array + last singleton -> finalize  (parameter_sweep; no threshold job)"
     else
-        echo "   threshold_search -> scenario array -> finalize"
+        echo "   threshold_search -> scenario array + last singleton -> finalize"
     fi
     echo " All jobs queued."
 fi
@@ -392,17 +462,25 @@ echo ""
 echo " Run dir : $RUN_DIR"
 if [[ $DRY_RUN -eq 0 ]]; then
     if [[ $IS_SWEEP -eq 1 ]]; then
-        ALL_JOB_IDS="${SCENARIO_DEP_ID},$(_dependency_id "$FINALIZE_JOB")"
+        ALL_JOB_IDS="${SCENARIO_DEP_ID//:/,},$(_dependency_id "$FINALIZE_JOB")"
         echo " Logs    : $LOGS_DIR"
-        echo " Jobs    : scenarios=$SCENARIO_ARRAY_JOB  finalize=$FINALIZE_JOB"
+        if [[ -n "${SCENARIO_ARRAY_JOB:-}" ]]; then
+            echo " Jobs    : scenarios=$SCENARIO_ARRAY_JOB  last=$SCENARIO_LAST_JOB  finalize=$FINALIZE_JOB"
+        else
+            echo " Jobs    : last=$SCENARIO_LAST_JOB  finalize=$FINALIZE_JOB"
+        fi
         _print_slurm_diagnostics "$ALL_JOB_IDS"
-        echo " Cancel  : scancel $SCENARIO_ARRAY_JOB $FINALIZE_JOB"
+        echo " Cancel  : scancel ${SCENARIO_ARRAY_JOB:-} $SCENARIO_LAST_JOB $FINALIZE_JOB"
     else
-        ALL_JOB_IDS="${THRESHOLD_DEP_ID},${SCENARIO_DEP_ID},$(_dependency_id "$FINALIZE_JOB")"
+        ALL_JOB_IDS="${THRESHOLD_DEP_ID},${SCENARIO_DEP_ID//:/,},$(_dependency_id "$FINALIZE_JOB")"
         echo " Logs    : $LOGS_DIR"
-        echo " Jobs    : threshold=$THRESHOLD_JOB  scenarios=$SCENARIO_ARRAY_JOB  finalize=$FINALIZE_JOB"
+        if [[ -n "${SCENARIO_ARRAY_JOB:-}" ]]; then
+            echo " Jobs    : threshold=$THRESHOLD_JOB  scenarios=$SCENARIO_ARRAY_JOB  last=$SCENARIO_LAST_JOB  finalize=$FINALIZE_JOB"
+        else
+            echo " Jobs    : threshold=$THRESHOLD_JOB  last=$SCENARIO_LAST_JOB  finalize=$FINALIZE_JOB"
+        fi
         _print_slurm_diagnostics "$ALL_JOB_IDS"
-        echo " Cancel  : scancel $THRESHOLD_JOB $SCENARIO_ARRAY_JOB $FINALIZE_JOB"
+        echo " Cancel  : scancel $THRESHOLD_JOB ${SCENARIO_ARRAY_JOB:-} $SCENARIO_LAST_JOB $FINALIZE_JOB"
     fi
 fi
 echo "========================================"
