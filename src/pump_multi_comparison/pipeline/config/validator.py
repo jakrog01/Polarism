@@ -199,8 +199,8 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
             except ValueError as exc:
                 errors.append(f"threshold_search.pulse_separation_formula={pulse_sep_formula!r}: {exc}")
 
-        if n_pulses is not None and not (isinstance(n_pulses, int) and n_pulses > 0):
-            errors.append("threshold_search.n_pulses must be a positive integer when set")
+        if n_pulses is not None and not (isinstance(n_pulses, int) and n_pulses >= 0):
+            errors.append("threshold_search.n_pulses must be a non-negative integer when set")
 
         if sigma_time_values and (pulse_sep_values or pulse_sep_formula is not None):
             valid_pairs = sum(
@@ -333,9 +333,9 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
                 errors.extend(_validate_delay_expr(name, lid, delay_expr, allowed_delay_names))
 
             n_pulses = ldef.get("n_pulses")
-            if n_pulses is not None and not (isinstance(n_pulses, int) and n_pulses > 0):
+            if n_pulses is not None and not (isinstance(n_pulses, int) and n_pulses >= 0):
                 errors.append(
-                    f"Scenario '{name}' laser '{lid}'.n_pulses={n_pulses!r} must be a positive integer"
+                    f"Scenario '{name}' laser '{lid}'.n_pulses={n_pulses!r} must be a non-negative integer"
                 )
 
         for mod in sc.get("power_modifiers", []):

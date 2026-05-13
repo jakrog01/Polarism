@@ -326,7 +326,9 @@ def main() -> None:
             {
                 "x0": float(laser.x0), "y0": float(laser.y0),
                 "P0": float(laser.P0), "sigma_time": float(laser.sigma_time),
+                "sigma_space": float(laser.sigma_space),
                 "pulse_separation": float(laser.pulse_separation),
+                "n_pulses": int(getattr(laser, "n_pulses", 0)),
                 "delay": float(laser.delay),
             }
             for laser in lasers

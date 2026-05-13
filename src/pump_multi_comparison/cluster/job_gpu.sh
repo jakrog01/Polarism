@@ -1,6 +1,14 @@
 #!/bin/bash -l
 set -euo pipefail
 
+if [[ "${POLARITON_ARRAY_DUMMY_MAX:-0}" == "1" \
+      && -n "${SLURM_ARRAY_TASK_ID:-}" \
+      && ( ( -n "${SLURM_ARRAY_TASK_MAX:-}" && "${SLURM_ARRAY_TASK_ID}" == "${SLURM_ARRAY_TASK_MAX}" ) \
+           || ( -n "${POLARITON_ARRAY_DUMMY_INDEX:-}" && "${SLURM_ARRAY_TASK_ID}" == "${POLARITON_ARRAY_DUMMY_INDEX}" ) ) ]]; then
+    echo "Dummy Slurm array placeholder task ${SLURM_ARRAY_TASK_ID}; exiting before NVMe scratch setup."
+    exit 0
+fi
+
 _pick_scratch_root() {
     local job_id=""
     local candidate=""

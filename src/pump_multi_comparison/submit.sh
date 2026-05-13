@@ -209,7 +209,7 @@ _rysy_sbatch() {
 
 _rysy_sbatch_nvme() {
     sbatch --parsable \
-        --export="ALL,PROJECT_ROOT=${PROJECT_ROOT},ICM_RYSY_NVME=1" \
+        --export="ALL,PROJECT_ROOT=${PROJECT_ROOT},ICM_RYSY_NVME=1,POLARITON_ARRAY_DUMMY_MAX=1" \
         "$@"
 }
 
@@ -255,9 +255,13 @@ if [[ "$N_SCENARIOS" -lt 1 ]]; then
 fi
 
 SCENARIO_LAST_INDEX=$((N_SCENARIOS - 1))
+export POLARITON_ARRAY_DUMMY_INDEX="$SCENARIO_LAST_INDEX"
 if [[ "$N_SCENARIOS" -gt 1 ]]; then
     SCENARIO_ARRAY_ENABLED=1
-    SCENARIO_ARRAY_SPEC="0-$((N_SCENARIOS - 2))%${MAX_CONCURRENT}"
+    # Rysy/Slurm executes the max array index as a parent placeholder without
+    # per-task NVMe scratch. Submit that index as a singleton below; the array
+    # max task exits early in job_gpu.sh.
+    SCENARIO_ARRAY_SPEC="0-${SCENARIO_LAST_INDEX}%${MAX_CONCURRENT}"
 else
     SCENARIO_ARRAY_ENABLED=0
     SCENARIO_ARRAY_SPEC=""

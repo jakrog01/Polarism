@@ -112,30 +112,48 @@ def expand_parameter_sweep(
             threshold_cfg.get("sigma_time_values", [defaults.get("sigma_time", 1.0)]),
         )
     ]
+    sigma_spaces = [
+        float(v)
+        for v in sweep_cfg.get(
+            "sigma_space_values",
+            [defaults.get("sigma_space", 5.0)],
+        )
+    ]
 
     base_scenarios = _selected_base_scenarios(expanded_cfg.get("scenarios", []), sweep_cfg)
     expanded_scenarios: list[dict[str, Any]] = []
 
     multiple_sigma = len(sigma_times) > 1
+    multiple_sigma_space = len(sigma_spaces) > 1
     for base in base_scenarios:
         base_name = str(base["name"])
+        first_laser_n_pulses = int(
+            base.get("lasers", [{}])[0].get("n_pulses", 0)
+        ) if base.get("lasers") else 0
         for sigma_time in sigma_times:
             for pulse_sep in separations:
-                for power in powers:
-                    sc = copy.deepcopy(base)
-                    suffix = f"P{_fmt_value(power)}_sep{_fmt_value(pulse_sep)}"
-                    if multiple_sigma:
-                        suffix += f"_sig{_fmt_value(sigma_time)}"
-                    sc["name"] = f"{base_name}_{suffix}"
-                    _apply_absolute_power(sc, power)
-                    _apply_timing_grid_point(sc, pulse_sep, sigma_time, cutoff_sigma)
-                    sc["sweep"] = {
-                        "base_scenario": base_name,
-                        "power": float(power),
-                        "pulse_separation": float(pulse_sep),
-                        "sigma_time": float(sigma_time),
-                    }
-                    expanded_scenarios.append(sc)
+                for sigma_space in sigma_spaces:
+                    for power in powers:
+                        sc = copy.deepcopy(base)
+                        suffix = f"P{_fmt_value(power)}_sep{_fmt_value(pulse_sep)}"
+                        if multiple_sigma:
+                            suffix += f"_sig{_fmt_value(sigma_time)}"
+                        if multiple_sigma_space:
+                            suffix += f"_sp{_fmt_value(sigma_space)}"
+                        sc["name"] = f"{base_name}_{suffix}"
+                        _apply_absolute_power(sc, power)
+                        _apply_timing_grid_point(sc, pulse_sep, sigma_time, cutoff_sigma)
+                        for ldef in sc.get("lasers", []):
+                            ldef["sigma_space"] = float(sigma_space)
+                        sc["sweep"] = {
+                            "base_scenario": base_name,
+                            "power": float(power),
+                            "pulse_separation": float(pulse_sep),
+                            "sigma_time": float(sigma_time),
+                            "sigma_space": float(sigma_space),
+                            "n_pulses": first_laser_n_pulses,
+                        }
+                        expanded_scenarios.append(sc)
 
     expanded_cfg["scenarios"] = expanded_scenarios
     names = [sc["name"] for sc in expanded_scenarios]
@@ -148,7 +166,7 @@ def expand_parameter_sweep(
         "sigma_time": sigma_times[0],
         "pulse_separation": separations[0],
         "cutoff_sigma": cutoff_sigma,
-        "sigma_space": float(defaults.get("sigma_space", 5.0)),
+        "sigma_space": sigma_spaces[0],
         "lx": float(grid.get("lx", 100.0)),
         "ly": float(grid.get("ly", 100.0)),
     }

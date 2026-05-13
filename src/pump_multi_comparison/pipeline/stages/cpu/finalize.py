@@ -20,7 +20,11 @@ from pipeline.manifest.io import (
     scenario_meta_path,
     set_manifest_field,
 )
-from pipeline.stages.cpu.viz_engine import generate_summary, generate_sweep_heatmaps
+from pipeline.stages.cpu.viz_engine import (
+    generate_summary,
+    generate_sweep_diagnostics,
+    generate_sweep_heatmaps,
+)
 
 
 def _check_artifacts(run_dir: str, scenarios: list[str]) -> list[str]:
@@ -110,6 +114,11 @@ def main() -> None:
             generate_sweep_heatmaps(scenarios, run_dir, results_dir)
         except Exception as e:
             print(f"  WARNING: sweep heatmaps failed: {e}", file=sys.stderr)
+        print("  Generating parameter-sweep diagnostics ...")
+        try:
+            generate_sweep_diagnostics(scenarios, run_dir, results_dir)
+        except Exception as e:
+            print(f"  WARNING: sweep diagnostics failed: {e}", file=sys.stderr)
 
     try:
         set_manifest_field(run_dir, "finalize_complete", True)

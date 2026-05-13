@@ -14,6 +14,7 @@ import json
 
 import h5py
 import matplotlib
+import yaml
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -39,6 +40,7 @@ COMPARISON_SCALARS = [
 SNAPSHOT_COUNT = 5
 PLOT_DPI = 200
 PUMP_NORM_GAMMA = 0.3
+PSI_DIAGNOSTIC_IGNORE_PS = 5.0
 
 
 def routine_dir(routine: str, results_dir: str) -> str:
@@ -301,7 +303,7 @@ def generate_sweep_heatmaps(
         for key, _ in COMPARISON_SCALARS:
             if key in npz:
                 metrics[key] = float(np.nanmax(npz[key]))
-        rows.append({**sweep, "routine": routine, "metrics": metrics})
+        rows.append({"sigma_space": 0.0, **sweep, "routine": routine, "metrics": metrics})
 
     if not rows:
         return
@@ -315,42 +317,201 @@ def generate_sweep_heatmaps(
         sigma_times = sorted({float(row.get("sigma_time", 0.0)) for row in base_rows})
 
         for sigma_time in sigma_times:
-            sigma_rows = [row for row in base_rows if float(row.get("sigma_time", 0.0)) == sigma_time]
-            powers = sorted({float(row["power"]) for row in sigma_rows})
-            separations = sorted({float(row["pulse_separation"]) for row in sigma_rows})
-            if not powers or not separations:
-                continue
+            st_rows = [row for row in base_rows if float(row.get("sigma_time", 0.0)) == sigma_time]
+            sigma_spaces = sorted({float(row.get("sigma_space", 0.0)) for row in st_rows})
 
-            fig = plt.figure(
-                figsize=(max(5.0, 3.0 * len(metric_keys)), 4.8),
-                constrained_layout=True,
-            )
-            gs = GridSpec(1, len(metric_keys), figure=fig)
-            for col, key in enumerate(metric_keys):
-                arr = np.full((len(powers), len(separations)), np.nan, dtype=float)
+            for sigma_space in sigma_spaces:
+                sigma_rows = [
+                    row for row in st_rows
+                    if float(row.get("sigma_space", 0.0)) == sigma_space
+                ]
+                powers = sorted({float(row["power"]) for row in sigma_rows})
+                separations = sorted({float(row["pulse_separation"]) for row in sigma_rows})
+                if not powers or not separations:
+                    continue
+
+                fig = plt.figure(
+                    figsize=(max(5.0, 3.0 * len(metric_keys)), 4.8),
+                    constrained_layout=True,
+                )
+                gs = GridSpec(1, len(metric_keys), figure=fig)
+                for col, key in enumerate(metric_keys):
+                    arr = np.full((len(powers), len(separations)), np.nan, dtype=float)
+                    for row in sigma_rows:
+                        if key not in row["metrics"]:
+                            continue
+                        pi = powers.index(float(row["power"]))
+                        si = separations.index(float(row["pulse_separation"]))
+                        arr[pi, si] = row["metrics"][key]
+                    ax = fig.add_subplot(gs[0, col])
+                    im = ax.imshow(arr, origin="lower", aspect="auto", cmap="viridis")
+                    ax.set_title(metric_labels.get(key, key))
+                    ax.set_xlabel("pulse separation (ps)")
+                    ax.set_ylabel("power" if col == 0 else "")
+                    ax.set_xticks(range(len(separations)), [f"{v:g}" for v in separations], rotation=45)
+                    ax.set_yticks(range(len(powers)), [f"{v:g}" for v in powers])
+                    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+                sigma_tag = f"{sigma_time:g}".replace(".", "p")
+                sp_tag = f"{sigma_space:g}".replace(".", "p")
+                fig.suptitle(
+                    f"{base}  σ_t={sigma_time:g} ps  σ_s={sigma_space:g} μm — parameter sweep peaks",
+                    fontsize=14,
+                    fontweight="bold",
+                )
+                out_path = os.path.join(results_dir, f"sweep_heatmaps_{base}_sig{sigma_tag}_sp{sp_tag}.png")
+                os.makedirs(results_dir, exist_ok=True)
+                fig.savefig(out_path, dpi=PLOT_DPI)
+                plt.close(fig)
+                print(f"    {out_path}")
+
+
+def _load_physics_for_diagnostics(data_dir: str) -> tuple[float, float]:
+    """Return (R, gamma_C) from the run-local config if available."""
+    config_path = os.path.join(data_dir, "config.yaml")
+    if not os.path.isfile(config_path):
+        return 0.02, 0.083
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f) or {}
+    physics = cfg.get("global", {}).get("physics", {})
+    return float(physics.get("R", 0.02)), float(physics.get("gamma_C", 0.083))
+
+
+def _load_sweep_diagnostic_rows(routines: list[str], data_dir: str) -> list[dict]:
+    """Load scalar sidecars and sweep metadata into row dictionaries."""
+    rows: list[dict] = []
+    for routine in routines:
+        meta_path = os.path.join(data_dir, f"{routine}_meta.json")
+        sidecar = os.path.join(data_dir, f"{routine}_scalars.npz")
+        if not (os.path.isfile(meta_path) and os.path.isfile(sidecar)):
+            continue
+        with open(meta_path) as f:
+            meta = json.load(f)
+        sweep = meta.get("sweep")
+        if not sweep:
+            continue
+        npz = np.load(sidecar)
+        rows.append({
+            "sigma_space": 0.0,
+            **sweep,
+            "routine": routine,
+            "time": np.array(npz["time"], dtype=float),
+            "psi_sq_max": np.array(npz["psi_sq_max"], dtype=float) if "psi_sq_max" in npz else None,
+            "nA_max": np.array(npz["nA_max"], dtype=float) if "nA_max" in npz else None,
+            "nI_max": np.array(npz["nI_max"], dtype=float) if "nI_max" in npz else None,
+            "k0_frac": np.array(npz["k0_frac"], dtype=float) if "k0_frac" in npz else None,
+        })
+    return rows
+
+
+def _positive_duration(time: np.ndarray, mask: np.ndarray) -> float:
+    """Approximate total duration where mask is true on a sampled time grid."""
+    if time.size < 2 or mask.size == 0:
+        return 0.0
+    dt = np.diff(time, prepend=time[0])
+    if dt.size > 1:
+        dt[0] = dt[1]
+    return float(np.sum(dt[: len(mask)][mask]))
+
+
+def generate_sweep_diagnostics(
+    routines: list[str],
+    data_dir: str,
+    results_dir: str,
+) -> None:
+    """Generate diagnostic sweep maps focused on threshold-search usefulness."""
+    rows = _load_sweep_diagnostic_rows(routines, data_dir)
+    if not rows:
+        return
+
+    R, gamma_C = _load_physics_for_diagnostics(data_dir)
+    bases = sorted({str(row["base_scenario"]) for row in rows})
+
+    for base in bases:
+        base_rows = [row for row in rows if row["base_scenario"] == base]
+        sigma_times = sorted({float(row.get("sigma_time", 0.0)) for row in base_rows})
+
+        for sigma_time in sigma_times:
+            st_rows = [
+                row for row in base_rows
+                if float(row.get("sigma_time", 0.0)) == sigma_time
+            ]
+            sigma_spaces = sorted({float(row.get("sigma_space", 0.0)) for row in st_rows})
+
+            for sigma_space in sigma_spaces:
+                sigma_rows = [
+                    row for row in st_rows
+                    if float(row.get("sigma_space", 0.0)) == sigma_space
+                ]
+                powers = sorted({float(row["power"]) for row in sigma_rows})
+                separations = sorted({float(row["pulse_separation"]) for row in sigma_rows})
+                if not powers or not separations:
+                    continue
+
+                maps = {
+                    "log10 psi peak / psi0": np.full((len(powers), len(separations)), np.nan),
+                    "log10 psi final / psi0": np.full((len(powers), len(separations)), np.nan),
+                    "n_active peak": np.full((len(powers), len(separations)), np.nan),
+                    "max(R n_active - gamma_C)": np.full((len(powers), len(separations)), np.nan),
+                    "time gain > 0 (ps)": np.full((len(powers), len(separations)), np.nan),
+                    "nI peak": np.full((len(powers), len(separations)), np.nan),
+                }
+
                 for row in sigma_rows:
-                    if key not in row["metrics"]:
-                        continue
                     pi = powers.index(float(row["power"]))
                     si = separations.index(float(row["pulse_separation"]))
-                    arr[pi, si] = row["metrics"][key]
-                ax = fig.add_subplot(gs[0, col])
-                im = ax.imshow(arr, origin="lower", aspect="auto", cmap="viridis")
-                ax.set_title(metric_labels.get(key, key))
-                ax.set_xlabel("pulse separation (ps)")
-                ax.set_ylabel("power" if col == 0 else "")
-                ax.set_xticks(range(len(separations)), [f"{v:g}" for v in separations], rotation=45)
-                ax.set_yticks(range(len(powers)), [f"{v:g}" for v in powers])
-                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                    time = row["time"]
+                    psi = row["psi_sq_max"]
+                    nA = row["nA_max"]
+                    nI = row["nI_max"]
 
-            sigma_tag = f"{sigma_time:g}".replace(".", "p")
-            fig.suptitle(
-                f"{base}  σ_t={sigma_time:g} ps — parameter sweep peaks",
-                fontsize=14,
-                fontweight="bold",
-            )
-            out_path = os.path.join(results_dir, f"sweep_heatmaps_{base}_sig{sigma_tag}.png")
-            os.makedirs(results_dir, exist_ok=True)
-            fig.savefig(out_path, dpi=PLOT_DPI)
-            plt.close(fig)
-            print(f"    {out_path}")
+                    if psi is not None and psi.size:
+                        psi0 = max(float(psi[0]), 1e-300)
+                        late = psi[time[: len(psi)] >= PSI_DIAGNOSTIC_IGNORE_PS]
+                        if late.size:
+                            maps["log10 psi peak / psi0"][pi, si] = float(
+                                np.log10(max(float(np.nanmax(late)), 1e-300) / psi0)
+                            )
+                        maps["log10 psi final / psi0"][pi, si] = float(
+                            np.log10(max(float(psi[-1]), 1e-300) / psi0)
+                        )
+                    if nA is not None and nA.size:
+                        gain_margin = R * nA - gamma_C
+                        maps["n_active peak"][pi, si] = float(np.nanmax(nA))
+                        maps["max(R n_active - gamma_C)"][pi, si] = float(np.nanmax(gain_margin))
+                        maps["time gain > 0 (ps)"][pi, si] = _positive_duration(
+                            time[: len(gain_margin)], gain_margin > 0.0
+                        )
+                    if nI is not None and nI.size:
+                        maps["nI peak"][pi, si] = float(np.nanmax(nI))
+
+                fig = plt.figure(figsize=(13.0, 7.2), constrained_layout=True)
+                gs = GridSpec(2, 3, figure=fig)
+                for idx, (title, arr) in enumerate(maps.items()):
+                    ax = fig.add_subplot(gs[idx // 3, idx % 3])
+                    im = ax.imshow(arr, origin="lower", aspect="auto", cmap="viridis")
+                    ax.set_title(title, fontsize=10)
+                    ax.set_xlabel("pulse separation (ps)")
+                    ax.set_ylabel("power" if idx % 3 == 0 else "")
+                    ax.set_xticks(range(len(separations)), [f"{v:g}" for v in separations])
+                    ax.set_yticks(range(len(powers)), [f"{v:g}" for v in powers])
+                    for pi, _ in enumerate(powers):
+                        for si, _ in enumerate(separations):
+                            val = arr[pi, si]
+                            if np.isfinite(val):
+                                ax.text(si, pi, f"{val:.2g}", ha="center", va="center",
+                                        color="white", fontsize=7)
+                    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+                sigma_tag = f"{sigma_time:g}".replace(".", "p")
+                sp_tag = f"{sigma_space:g}".replace(".", "p")
+                fig.suptitle(
+                    f"{base}  sigma_t={sigma_time:g} ps  sigma_s={sigma_space:g} μm — sweep diagnostics",
+                    fontsize=14,
+                    fontweight="bold",
+                )
+                out_path = os.path.join(results_dir, f"sweep_diagnostics_{base}_sig{sigma_tag}_sp{sp_tag}.png")
+                os.makedirs(results_dir, exist_ok=True)
+                fig.savefig(out_path, dpi=PLOT_DPI)
+                plt.close(fig)
+                print(f"    {out_path}")
