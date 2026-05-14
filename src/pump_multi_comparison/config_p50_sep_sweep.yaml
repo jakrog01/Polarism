@@ -1,0 +1,108 @@
+global:
+  grid:
+    nx: 512
+    ny: 512
+    lx: 128.0
+    ly: 128.0
+    grid_type: periodic
+
+  physics:
+    hbar: 0.6582119514
+    m_eff: 0.284
+    gamma_R: 0.005
+    gamma_C: 0.083
+    g_C: 0.001
+    g_R: 0.002
+    gamma_I: 0.001
+    R: 0.02
+    kappa: 0.05
+    init_eps: 0.001
+
+  boundary_condition:
+    absorption: cap
+
+  solver:
+    total_time: 800.0
+    dt: 0.001
+    method: rk4-cuda
+
+  reservoir:
+    reservoir_type: quadratic-double
+
+  laser_defaults:
+    laser_type: pulse-gaussian
+    sigma_space: 0.75
+    cutoff_sigma: 3.0
+
+  threshold_search:
+    max_runtime_minutes: 120
+    condensation_fraction: 0.7
+    dt_multiplier: 5
+    n_pulses: 0
+    power_values:
+      - 50.0
+    sigma_time_values:
+      - 0.85
+    pulse_separation_formula: "8 * cutoff_sigma * sigma_time"
+
+  parameter_sweep:
+    enabled: true
+    power_values:
+      - 50.0
+    sigma_time_values:
+      - 0.85
+    pulse_separation_values:
+      - 30.0
+      - 35.0
+      - 40.0
+      - 45.0
+      - 50.0
+      - 55.0
+      - 60.0
+      - 65.0
+      - 70.0
+      - 75.0
+      - 80.0
+      - 85.0
+      - 90.0
+      - 95.0
+      - 100.0
+      - 105.0
+      - 110.0
+      - 115.0
+      - 120.0
+      - 125.0
+      - 130.0
+      - 135.0
+      - 140.0
+      - 145.0
+      - 150.0
+    sigma_space_values:
+      - 0.75
+
+output:
+  render_animation: false
+  render_snapshots: true
+  archive_raw_hdf5: false
+  field_record_stride: 400
+  scalar_record_stride: 10
+
+_timing_vars_single: &timing_vars_single
+  pulse_duration: "2 * cutoff_sigma * sigma_time"
+  cycle_duration: "pulse_separation"
+
+_single_center_laser: &single_center_laser
+  - id: "center"
+    power: "P"
+    x0: 0.0
+    y0: 0.0
+    delay: 0.0
+    pulse_separation: "cycle_duration"
+    n_pulses: 0
+
+scenarios:
+  - name: single_spot_center
+    potential:
+      potential_type: zero
+    timing_vars: *timing_vars_single
+    lasers: *single_center_laser
