@@ -50,14 +50,14 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
         "grid_types": {"periodic", "closed-interval"},
         "supports_potential": True,
         "boundary_types": {"no-absorption", "mask", "cap"},
-        "reservoir_types": {"single", "double"},
-        "description": "GPU-fused CUDA RK4 solver. Supports single and double reservoir.",
+        "reservoir_types": {"single", "double", "quadratic-double"},
+        "description": "GPU-fused CUDA RK4 solver. Supports single, double, and quadratic-double reservoir.",
     },
     "split-step-fft": {
         "grid_types": {"periodic", "closed-interval"},
         "supports_potential": False,
         "boundary_types": {"no-absorption", "mask", "cap"},
-        "reservoir_types": {"single", "double"},
+        "reservoir_types": {"single", "double", "quadratic-double"},
         "description": (
             "Spectral split-step solver. Operator splitting error [K, V] "
             "makes it inaccurate with non-zero external potentials."
@@ -134,6 +134,20 @@ def check_solver_compatibility(cfg: Config) -> None:
             f"finite-difference Neumann Laplacian, so results may differ "
             f"from FDM-based solvers. For best accuracy on closed-interval "
             f"grids, use 'rk4-fdm', 'rk4-fdm-fused', or 'rk4-cuda'.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    if solver in _SPECTRAL_SOLVERS and reservoir_type == "quadratic-double":
+        warnings.warn(
+            f"Solver '{solver}' with reservoir_type='quadratic-double' uses "
+            f"operator splitting: psi evolves via split-step (FFT), while the "
+            f"reservoir (nR, nI) is integrated separately with RK2 using psi "
+            f"at the end of the full step. This introduces an O(dt) global "
+            f"splitting error in the psi-reservoir coupling, unlike 'rk4-cuda' "
+            f"which integrates both fields with the same RK4 scheme. "
+            f"Suitable for diagnostics; not recommended for quantitative "
+            f"threshold or amplitude comparisons.",
             UserWarning,
             stacklevel=2,
         )

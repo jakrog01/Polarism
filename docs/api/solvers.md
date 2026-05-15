@@ -27,9 +27,30 @@ At the abstraction level, every solver must:
 The package includes explicit compatibility checks and warnings. In practice:
 
 - `rk4-fdm` is the safest baseline when you need a reference answer
+- `rk4-cuda` is the production path for large coupled GPE/reservoir campaigns
 - spectral solvers require more care when external potentials or closed-interval grids are involved
 - `etd-rk2` is restricted to periodic grids
 - CUDA solvers are meaningful only when the GPU backend is actually active
+
+## RK4 CUDA Laplacian Options
+
+The `rk4-cuda` solver supports a selectable finite-difference Laplacian through
+`solver.laplacian`.
+
+| `solver.laplacian` | Description | Notes |
+| --- | --- | --- |
+| `five-point` | nearest-neighbor 2D Laplacian | default, historical behavior |
+| `isotropic-9pt` | 9-point isotropic stencil | requires square cells (`dx == dy`) |
+
+The 9-point stencil is a numerical discretization of the same kinetic operator,
+not a new physical term.  It is useful when high-k modes expose the angular
+anisotropy of the five-point stencil.  It does not replace grid-convergence or
+time-step checks.
+
+For `quadratic-double`, use `rk4-cuda` for quantitative threshold/amplitude
+studies.  The split-step FFT path can be useful as a geometry diagnostic, but its
+operator splitting is not the production reference for coupled `psi`, `nR`, `nI`
+threshold measurements.
 
 ## Selection strategy
 

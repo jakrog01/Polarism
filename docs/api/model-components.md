@@ -81,3 +81,8 @@ Reservoir models share the `AbstractReservoir` contract:
 | --- | --- |
 | `single` | one effective active reservoir |
 | `double` | inactive plus active reservoir with transfer between them |
+| `quadratic-double` | inactive reservoir directly fed by the pump and active reservoir fed by quadratic transfer `kappa*nI^2` |
+
+In `quadratic-double`, the active density exposed to the condensate is `nR`.
+The inactive density `nI` is useful for pulsed excitation because it can retain
+memory of recent pulses before feeding the active reservoir.

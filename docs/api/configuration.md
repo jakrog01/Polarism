@@ -57,12 +57,23 @@
 | `pulse_separation` | distance between pulses | positive float |
 | `cutoff_sigma` | pulse truncation radius in sigma units | positive float |
 | `delay` | start delay before pump turns on; for `pulse-gaussian`, the first peak occurs later at `delay + cutoff_sigma * sigma_time` | nonnegative float |
+| `n_pulses` | finite pulse-train length for pulsed lasers; `0` means an unbounded pulse train | nonnegative integer |
 
 ## Reservoir options
 
 | Field | Meaning | Main options |
 | --- | --- | --- |
-| `reservoir_type` | reservoir-model selection | `single`, `double` |
+| `reservoir_type` | reservoir-model selection | `single`, `double`, `quadratic-double` |
+
+`quadratic-double` uses an inactive reservoir directly fed by the pump and an
+active reservoir that feeds the condensate:
+
+```text
+dnI/dt = P(x,y,t) - kappa*nI^2 - gamma_I*nI
+dnR/dt = kappa*nI^2 - gamma_R*nR - R*nR*|psi|^2
+```
+
+The condensate equation receives `nR` as the active reservoir density.
 
 ## Solver options
 
@@ -72,6 +83,11 @@
 | `dt` | timestep | positive float |
 | `total_time` | total simulation time | positive float |
 | `precision` | arithmetic mode where supported | typically `single`, `double` |
+| `laplacian` | finite-difference Laplacian stencil for `rk4-cuda` | `five-point`, `isotropic-9pt` |
+
+`solver.laplacian` defaults to `five-point`.  `isotropic-9pt` is available for
+square cells (`dx == dy`) and discretizes the same physical operator, `nabla^2`,
+with reduced grid-direction anisotropy.
 
 ## Result options
 
@@ -100,6 +116,19 @@ The `physics` block stores the scalar coefficients entering the condensate and r
 - `gamma_C`, `gamma_R`, `gamma_I`, `gamma_A`
 - `g_C`, `g_R`
 - `R`, `R_IA`, `R_AI`
-- `init_eps`
+- `kappa` for the `quadratic-double` reservoir
+- `init_eps`, `init_mode`, `init_k_cutoff_um`, `init_seed`
 
 These values are model parameters, not high-level feature flags, so they should be changed with physical units and stability constraints in mind.
+
+Initial-condition options:
+
+| Field | Meaning | Main options |
+| --- | --- | --- |
+| `init_eps` | amplitude scale of the initial condensate seed | positive float |
+| `init_mode` | initial seed generator | `legacy_positive_uniform`, `complex_gaussian_zero_mean`, `filtered_complex_gaussian` |
+| `init_k_cutoff_um` | radial cutoff in rad/um for `filtered_complex_gaussian` | positive float, required for filtered mode |
+| `init_seed` | optional RNG seed | integer or `null` |
+
+The legacy mode is kept for reproducibility.  For geometry-sensitive runs, prefer
+zero-mean or filtered seeds and record the cutoff in run metadata.

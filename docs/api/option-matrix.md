@@ -46,6 +46,7 @@ This page collects the main configuration choices in one place. It is meant as a
 | --- | --- | --- |
 | `single` | one effective active reservoir is enough for the physics you want to resolve | cleanest baseline model |
 | `double` | you need to separate inactive and active reservoir populations | adds inter-reservoir transfer timescales and more stiffness risk |
+| `quadratic-double` | you model pulsed nonresonant excitation with delayed inactive-to-active feeding | uses `kappa*nI^2` transfer and can retain pulse-train memory |
 
 ## Solver method
 
@@ -58,6 +59,21 @@ This page collects the main configuration choices in one place. It is meant as a
 | `split-step-fft` | you want a spectral split-step method and the problem matches its assumptions | be careful with nonzero potentials and bounded grids |
 | `etd-rk2` | you want an exponential time-differencing spectral method on a periodic grid | periodic only |
 | `ip-rk4` | you want an interaction-picture spectral-style RK4 method | requires more care on `closed-interval` grids |
+
+## RK4 CUDA Laplacian
+
+| Option | Use when | Notes |
+| --- | --- | --- |
+| `five-point` | you want historical `rk4-cuda` behavior | fastest and backward-compatible |
+| `isotropic-9pt` | diagonal/axis artifacts suggest stencil anisotropy | requires square cells and should still be grid-checked |
+
+## Initial seed mode
+
+| Option | Use when | Notes |
+| --- | --- | --- |
+| `legacy_positive_uniform` | you need to reproduce old runs | biased positive-uniform complex seed |
+| `complex_gaussian_zero_mean` | you want an unbiased stochastic seed | no spectral cutoff |
+| `filtered_complex_gaussian` | you want an explicit condensate-band seed cutoff | requires `init_k_cutoff_um`; report/sweep the cutoff |
 
 ## Backend choice
 
