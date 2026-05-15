@@ -75,6 +75,7 @@ def main() -> None:
     is_sweep = threshold.get("mode") == "parameter_sweep"
     routines_summary: dict = {}
     sweep_metas: list[dict] = []
+    effective_powers: dict = {}
     for name in scenarios:
         meta = load_scenario_meta(run_dir, name)
         t_cond = meta.get("t_cond")
@@ -85,6 +86,8 @@ def main() -> None:
         }
         if meta.get("sweep"):
             sweep_metas.append(meta)
+        if is_sweep and meta.get("effective_power") is not None:
+            effective_powers[name] = meta["effective_power"]
         print(
             f"  {name}: t_cond="
             f"{'%.1f ps' % t_cond if t_cond is not None else 'NO CONDENSATION'}"
@@ -94,6 +97,7 @@ def main() -> None:
         "run_dir": run_dir,
         "mode": threshold.get("mode", "threshold_search"),
         "P_threshold": threshold["P_threshold"],
+        **({"effective_powers": effective_powers} if is_sweep else {}),
         "routines": routines_summary,
     }
     summary_path = os.path.join(run_dir, "results_summary.json")

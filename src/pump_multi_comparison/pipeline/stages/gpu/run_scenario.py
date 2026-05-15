@@ -209,7 +209,11 @@ def main() -> None:
     print(f" GPU Scenario: {scenario_name}  (index {scenario_index})")
     print("=" * 60)
     print(f"  Run dir     : {run_dir}")
-    print(f"  P_threshold : {threshold['P_threshold']:.1f}")
+    _is_sweep = threshold.get("mode") == "parameter_sweep"
+    if _is_sweep:
+        print(f"  P_threshold : {threshold['P_threshold']:.1f}  (stub — effective P set per laser)")
+    else:
+        print(f"  P_threshold : {threshold['P_threshold']:.1f}")
     print(f"  archive_h5  : {output_policy.archive_raw_hdf5}")
     print(
         f"  SLURM job   : "
@@ -336,6 +340,7 @@ def main() -> None:
         "scenario": scenario_name,
         "scenario_index": scenario_index,
         "P_threshold": threshold["P_threshold"],
+        "effective_power": float(lasers[0].P0) if lasers else None,
         "t_cond": t_cond,
         "h5_file": f"{scenario_name}.h5" if output_policy.archive_raw_hdf5 else None,
         "sidecar_file": f"{scenario_name}_scalars.npz",
