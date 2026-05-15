@@ -116,6 +116,8 @@ Scenario timing is deterministic:
   output through `timing_vars`
 - finite pulse trains use `n_pulses`; after the train is exhausted, that laser stops
   contributing pump
+- `n_pulses: 0` is intentionally reserved for an unbounded pulse train; it is
+  used in memory/pulse-train campaigns and must not be read as "one pulse"
 - the legacy relational `timing:` block is no longer supported
 
 Scenario power remains threshold-relative:
@@ -163,6 +165,114 @@ first pulse support window. For each laser the latest required end time is:
 For generalized scenario support, threshold search is deterministic even for legacy
 scenarios that still rely on random phase offsets: each candidate evaluation starts
 from the same fixed RNG seed, so results do not depend on search order.
+
+Threshold search and scenario simulation use the same initial-condition helper
+(`polarism.init_condition.make_initial_psi`).  This matters for threshold studies:
+when `physics.init_mode` is changed from the legacy seed to a filtered or
+zero-mean seed, both threshold calibration and production scenarios see the same
+initial field semantics.
+
+---
+
+## Initial conditions and spatial-artifact controls
+
+The pipeline supports explicit initial-condition modes through the `physics`
+block.  Defaults preserve historical behavior.
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `init_eps` | `0.001` | amplitude scale of the initial condensate seed |
+| `init_mode` | `legacy_positive_uniform` | seed-generation mode |
+| `init_k_cutoff_um` | `null` | radial k cutoff in rad/um for filtered seed mode |
+| `init_seed` | `null` | optional RNG seed; pipeline runs use the fixed pipeline seed when unset |
+
+Supported `init_mode` values:
+
+| Mode | Behavior | Use |
+|------|----------|-----|
+| `legacy_positive_uniform` | historical `eps * (Uniform[0,1) + i Uniform[0,1))` | backward compatibility and reproducing old runs |
+| `complex_gaussian_zero_mean` | complex Gaussian, mean-subtracted, RMS-normalized to `init_eps` | unbiased stochastic seed without k filtering |
+| `filtered_complex_gaussian` | zero-mean complex Gaussian, FFT low-pass filtered to `|k| <= init_k_cutoff_um`, mean-subtracted again, RMS-normalized | diagnostic/production seed when high-k grid noise must be controlled |
+
+The filtered seed is not a hidden smoothing pass applied during time evolution.
+It only defines the initial stochastic condensate band.  The cutoff is written to
+metadata and should be swept or justified in any run where geometry is interpreted
+physically.
+
+The scalar sidecar now records k-space diagnostics:
+
+| Key | Meaning |
+|-----|---------|
+| `k0_frac` | fraction of spectral power in the DC bin |
+| `high_k_frac_0p5_nyq` | fraction of spectral power above `0.5 * min(pi/dx, pi/dy)` |
+| `high_k_frac_0p8_nyq` | fraction of spectral power above `0.8 * min(pi/dx, pi/dy)` |
+| `k_peak_um` | radial k of peak spectral power, excluding DC |
+| `k_centroid_um` | power-weighted radial k, excluding DC |
+
+These diagnostics are written at scalar-record cadence.  They are intended to
+separate physical filamentation from numerical UV/Nyquist artifacts.
+
+---
+
+## Solver Laplacian Selection
+
+`rk4-cuda` supports a selectable finite-difference Laplacian:
+
+```yaml
+global:
+  solver:
+    method: rk4-cuda
+    laplacian: five-point
+```
+
+| `solver.laplacian` | Meaning |
+|--------------------|---------|
+| `five-point` | historical nearest-neighbor stencil; fastest and backward-compatible |
+| `isotropic-9pt` | 9-point isotropic stencil for square cells (`dx == dy`) |
+
+The 9-point option still discretizes the same physical operator, `nabla^2`; it is
+not a physical damping term.  It reduces angular grid anisotropy of the spatial
+operator and is useful when diagonal/axis-aligned patterns appear in `psi_sq` and
+`psi_k`.  The solver raises a clear error if `isotropic-9pt` is requested on
+non-square cells.
+
+---
+
+## Artifact-mitigation validation campaign
+
+`config_artifact_mitigation_validation.yaml` is a diagnostic campaign for the
+diagonal X/star-like pattern seen in `|psi|^2`.  It preserves the intended pulse
+train semantics (`n_pulses: 0`) and compares seed, resolution, domain size, and
+Laplacian effects.
+
+Scenarios:
+
+| Scenario | Domain/grid | Seed | Laplacian | Purpose |
+|----------|-------------|------|-----------|---------|
+| `baseline_P50_sep100` | 128 um / 512^2 | legacy positive-uniform | five-point | reproduce historical artifact |
+| `filtered_seed_P50_sep100` | 128 um / 512^2 | filtered, `k_cutoff=3.0` | five-point | isolate initial high-k/biased seed contribution |
+| `small_domain_P50_sep100` | 64 um / 512^2 | filtered | five-point | cheaper higher spatial sampling, but boundary/CAP distance changes |
+| `small_domain_9pt_P50_sep100` | 64 um / 512^2 | filtered | isotropic-9pt | practical production candidate if 9pt helps |
+| `same_domain_1024_P50_sep100` | 128 um / 1024^2 | filtered | five-point | isolate sampling at fixed physical domain |
+| `same_domain_1024_9pt_P50_sep100` | 128 um / 1024^2 | filtered | isotropic-9pt | isolate 9pt effect at fixed physical domain |
+
+Run on Rysy:
+
+```bash
+cd ~/polaritonSNN/PolaritonSNN/src/pump_multi_comparison
+bash submit.sh --config config_artifact_mitigation_validation.yaml --dry-run
+bash submit.sh --config config_artifact_mitigation_validation.yaml
+```
+
+Interpretation:
+
+- `filtered_seed` vs `baseline`: effect of biased/unfiltered initial condition
+- `same_domain_1024` vs `filtered_seed`: spatial sampling at fixed physical box
+- `small_domain` vs `filtered_seed`: cheaper production domain, but with changed CAP distance
+- each `*_9pt` vs its five-point counterpart: angular anisotropy of the Laplacian
+- if a diagonal X remains with filtered seed, fixed-domain 1024 grid, and 9-point
+  stencil while high-k power still accumulates near Nyquist, the next suspect is
+  missing physical energy relaxation/high-k damping, not RK order
 
 ---
 

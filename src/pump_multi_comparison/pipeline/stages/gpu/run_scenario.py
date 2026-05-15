@@ -18,6 +18,7 @@ import shutil
 import sys
 import time
 import traceback
+import warnings
 
 import numpy as np
 
@@ -36,6 +37,10 @@ from pipeline.manifest.io import (
 )
 from pipeline.render.nvenc_stream import generate_animation
 from pipeline.simulation.core import RNG_SEED, run_simulation_from_config
+from polarism.solver.solver_compatibility import (
+    SolverCompatibilityError,
+    check_solver_compatibility,
+)
 from pipeline.stages.cpu.viz_engine import (
     FIELD_SPECS,
     generate_field_png,
@@ -80,6 +85,72 @@ def _make_scratch_dir(run_dir: str, scenario_name: str) -> str:
         )
 
     return run_dir
+
+
+def _compute_laser_centering(
+    sim_cfg: "Config",
+    lasers: list,
+    laser_ids: list[str],
+) -> dict:
+    """Return grid centering diagnostics for each laser.
+
+    Computes nearest grid node and sub-cell offset for each laser's (x0, y0)
+    without touching CuPy arrays — uses grid config parameters only.
+    """
+    from polarism.config.simulation_parameters import Config as _Config
+
+    gc = sim_cfg.grid
+    nx, ny = int(gc.nx), int(gc.ny)
+    lx, ly = float(gc.lx), float(gc.ly)
+    grid_type = str(getattr(gc, "grid_type", "periodic"))
+
+    if grid_type == "closed-interval":
+        dx = lx / (nx - 1)
+        dy = ly / (ny - 1)
+        has_origin_x = (nx % 2 == 1)
+        has_origin_y = (ny % 2 == 1)
+
+        def _nearest(val: float, n: int, length: float, d: float) -> float:
+            i = round((val + length / 2) / d)
+            i = max(0, min(n - 1, i))
+            return -length / 2 + i * d
+    else:
+        dx = lx / nx
+        dy = ly / ny
+        has_origin_x = (nx % 2 == 1)
+        has_origin_y = (ny % 2 == 1)
+
+        def _nearest(val: float, n: int, length: float, d: float) -> float:
+            i = round(val / d + (n - 1) * 0.5)
+            i = max(0, min(n - 1, i))
+            return (i - (n - 1) * 0.5) * d
+
+    laser_centering = []
+    for lid, laser in zip(laser_ids, lasers):
+        x0, y0 = float(laser.x0), float(laser.y0)
+        nx_node = _nearest(x0, nx, lx, dx)
+        ny_node = _nearest(y0, ny, ly, dy)
+        ox = x0 - nx_node
+        oy = y0 - ny_node
+        laser_centering.append({
+            "id": lid,
+            "x0": x0,
+            "y0": y0,
+            "nearest_grid_x": round(nx_node, 10),
+            "nearest_grid_y": round(ny_node, 10),
+            "offset_from_nearest_grid_x": round(ox, 10),
+            "offset_from_nearest_grid_y": round(oy, 10),
+            "offset_in_dx": round(ox / dx, 6),
+            "offset_in_dy": round(oy / dy, 6),
+        })
+
+    return {
+        "dx": dx,
+        "dy": dy,
+        "has_origin_node_x": has_origin_x,
+        "has_origin_node_y": has_origin_y,
+        "laser_centering": laser_centering,
+    }
 
 
 def _render_artifacts(
@@ -224,6 +295,17 @@ def main() -> None:
     compute_engine.configure(ComputeEngineParameters(use_gpu=True))
 
     sim_cfg = build_scenario_config(global_cfg, threshold, scenario)
+
+    try:
+        with warnings.catch_warnings(record=True) as _compat_warns:
+            warnings.simplefilter("always")
+            check_solver_compatibility(sim_cfg)
+        for w in _compat_warns:
+            print(f"  SOLVER WARNING: {w.message}", file=sys.stderr)
+    except SolverCompatibilityError as exc:
+        print(f"  SOLVER COMPATIBILITY ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     grid = create_grid(sim_cfg.grid)
     extent = [
         -sim_cfg.grid.lx / 2,
@@ -291,7 +373,7 @@ def main() -> None:
     try:
         print("\n  Running simulation ...")
         t_sim_start = time.monotonic()
-        t_cond, sidecar_path = run_simulation_from_config(
+        t_cond, sidecar_path, ic_meta = run_simulation_from_config(
             scenario_name, lasers, sim_cfg, scratch_dir, output_policy, roi_specs=roi_specs,
         )
         elapsed_sim = time.monotonic() - t_sim_start
@@ -336,9 +418,17 @@ def main() -> None:
 
     h5_final = os.path.join(run_dir, f"{scenario_name}.h5")
     h5_bytes = os.path.getsize(h5_final) if os.path.isfile(h5_final) else 0
+
+    laser_ids = [
+        str(ld.get("id", f"laser_{i}"))
+        for i, ld in enumerate(scenario.get("lasers", []))
+    ]
+    centering = _compute_laser_centering(sim_cfg, lasers, laser_ids)
+
     meta: dict = {
         "scenario": scenario_name,
         "scenario_index": scenario_index,
+        "initial_condition": ic_meta,
         "P_threshold": threshold["P_threshold"],
         "effective_power": float(lasers[0].P0) if lasers else None,
         "t_cond": t_cond,
@@ -353,18 +443,25 @@ def main() -> None:
             "lx": float(sim_cfg.grid.lx),
             "ly": float(sim_cfg.grid.ly),
             "grid_type": str(sim_cfg.grid.grid_type),
+            "dx": centering["dx"],
+            "dy": centering["dy"],
+            "has_origin_node_x": centering["has_origin_node_x"],
+            "has_origin_node_y": centering["has_origin_node_y"],
         },
         "rois": roi_specs,
         "lasers": [
             {
+                "id": laser_ids[i] if i < len(laser_ids) else f"laser_{i}",
                 "x0": float(laser.x0), "y0": float(laser.y0),
                 "P0": float(laser.P0), "sigma_time": float(laser.sigma_time),
                 "sigma_space": float(laser.sigma_space),
                 "pulse_separation": float(laser.pulse_separation),
                 "n_pulses": int(getattr(laser, "n_pulses", 0)),
                 "delay": float(laser.delay),
+                **{k: v for k, v in centering["laser_centering"][i].items()
+                   if k not in ("id", "x0", "y0")},
             }
-            for laser in lasers
+            for i, laser in enumerate(lasers)
         ],
         "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
         "slurm_task_id": os.environ.get("SLURM_ARRAY_TASK_ID"),

@@ -82,7 +82,14 @@ class SimulationController:
         self.potential = create_potential(cfg.potential, self.grid)
         self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self.grid.Y, cfg.solver.precision)
         self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid, cfg.solver.precision)
-        self.state = SimulationState(self.grid, cfg.physics.init_eps, cfg.solver.precision)
+        self.state = SimulationState(
+            self.grid,
+            cfg.physics.init_eps,
+            cfg.solver.precision,
+            mode=getattr(cfg.physics, "init_mode", "legacy_positive_uniform"),
+            k_cutoff_um=getattr(cfg.physics, "init_k_cutoff_um", None),
+            seed=getattr(cfg.physics, "init_seed", None),
+        )
         self.solver = create_solver(cfg, self.grid)
         self.max_laser_power = self._compute_max_laser_power()
 

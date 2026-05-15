@@ -64,6 +64,7 @@ from polarism.config.simulation_parameters import (
     SolverParameters,
 )
 from polarism.grid.create_grid import create_grid
+from polarism.init_condition import make_initial_psi
 from polarism.laser.pulse_gaussian import PulseGaussian
 from polarism.potential.create_potential import create_potential
 from polarism.reservoir.create_reservoir import create_reservoir
@@ -141,14 +142,18 @@ class _SearchInfra:
         self.n_steps = int(t_max / dt)
         self.dt = dt
 
-        rng = self.xp.random.default_rng(RNG_SEED)
-        self._init_psi = (
-            cfg.physics.init_eps
-            * (
-                rng.random((self.grid.ny, self.grid.nx), dtype=self.xp.float64)
-                + 1j * rng.random((self.grid.ny, self.grid.nx), dtype=self.xp.float64)
-            )
-        ).astype(self.xp.complex128)
+        init_seed_cfg = getattr(cfg.physics, "init_seed", None)
+        self._init_psi = make_initial_psi(
+            self.xp, self.grid.ny, self.grid.nx,
+            eps=cfg.physics.init_eps,
+            mode=getattr(cfg.physics, "init_mode", "legacy_positive_uniform"),
+            dx=self.grid.dx,
+            dy=self.grid.dy,
+            k_cutoff_um=getattr(cfg.physics, "init_k_cutoff_um", None),
+            seed=init_seed_cfg if init_seed_cfg is not None else RNG_SEED,
+            cdtype=self.xp.complex128,
+            rdtype=self.xp.float64,
+        )
         self.N_initial = float(self.xp.sum(self.xp.abs(self._init_psi) ** 2))
 
     def fresh_state(self) -> SimulationState:

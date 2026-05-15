@@ -364,7 +364,7 @@ def main() -> None:
     try:
         print("\n  Running simulation ...")
         t_sim_start = time.monotonic()
-        t_cond, sidecar_path = run_simulation_from_config(
+        t_cond, sidecar_path, _ic_meta = run_simulation_from_config(
             image_id, lasers, sim_cfg, scratch_dir, output_policy
         )
         elapsed_sim = time.monotonic() - t_sim_start

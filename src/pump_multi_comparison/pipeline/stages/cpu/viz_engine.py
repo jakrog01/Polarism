@@ -23,12 +23,14 @@ from matplotlib.colors import PowerNorm
 from matplotlib.gridspec import GridSpec
 
 FIELD_SPECS = {
-    "psi_sq": {"source": "psi", "label": r"$|\psi|^2$", "cmap": "magma", "transform": "abs2"},
+    "psi_sq": {"source": "psi", "label": r"$|\psi|^2$", "cmap": "magma", "transform": "abs2", "norm": "power", "norm_gamma": 0.5},
+    "psi_k":  {"source": "psi", "label": r"$\log_{10}|\psi_k|^2$ (norm.)", "cmap": "inferno", "transform": "kspace_log"},
     "nI": {"source": "nI", "label": r"$n_I$", "cmap": "plasma", "transform": None},
     "nA": {"source": "nA", "label": r"$n_A$", "cmap": "viridis", "transform": None},
     "Pump": {"source": "Pump", "label": "Pump", "cmap": "inferno", "transform": None, "norm": "power"},
 }
 SCALAR_MAP = {"psi_sq": "psi_sq_max", "nI": "nI_max", "nA": "nA_max", "Pump": "P_max"}
+_PEAK_FIELDS: frozenset[str] = frozenset({"psi_sq", "nI", "nA"})
 COMPARISON_SCALARS = [
     ("P_max", r"$P_{max}$"),
     ("psi_sq_max", r"$|\psi|^2_{max}$"),
@@ -71,6 +73,13 @@ def _read_field_frame(h5: h5py.File, spec: dict, idx: int) -> np.ndarray:
     raw = h5[f"fields/{spec['source']}"][idx]
     if spec["transform"] == "abs2":
         return np.abs(raw) ** 2
+    if spec["transform"] == "kspace_log":
+        psi_k = np.fft.fftshift(np.fft.fft2(raw))
+        power = np.abs(psi_k) ** 2
+        peak = float(power.max())
+        if peak > 0:
+            return np.log10(power / peak + 1e-10)
+        return np.zeros_like(power, dtype=np.float64)
     return raw
 
 
@@ -84,7 +93,8 @@ def pick_indices(n: int, count: int = SNAPSHOT_COUNT) -> list[int]:
 def _make_norm(spec: dict, vmin: float, vmax: float):
     """Build the color normalization for a plot."""
     if spec.get("norm") == "power":
-        return PowerNorm(gamma=PUMP_NORM_GAMMA, vmin=max(vmin, 1e-12), vmax=vmax)
+        gamma = spec.get("norm_gamma", PUMP_NORM_GAMMA)
+        return PowerNorm(gamma=gamma, vmin=max(vmin, 1e-12), vmax=vmax)
     return None
 
 
@@ -107,7 +117,6 @@ def generate_field_png(
         n_frames = time_sorted.shape[0]
 
         snap_logical = pick_indices(n_frames)
-        snap_physical = [int(sort_order[i]) for i in snap_logical]
 
         scalar_key = SCALAR_MAP.get(field_key)
         has_scalar = scalar_key is not None and f"scalars/{scalar_key}" in h5
@@ -124,14 +133,36 @@ def generate_field_png(
                 per_laser_keys.append(f"psi_sq_max_w{i}")
                 i += 1
 
-        snapshots = [_read_field_frame(h5, spec, pi) for pi in snap_physical]
         scalar_data = h5[f"scalars/{scalar_key}"][:][sort_order] if has_scalar else None
         laser_data_map = {lk: h5[f"scalars/{lk}"][:][sort_order] for lk in per_laser_keys}
+
+        peak_logical: int | None = None
+        if field_key in _PEAK_FIELDS and scalar_data is not None:
+            peak_logical = int(np.argmax(scalar_data))
+            if peak_logical not in snap_logical:
+                snap_logical = sorted(set(snap_logical) | {peak_logical})
+
+        snap_physical = [int(sort_order[i]) for i in snap_logical]
+        snapshots = [_read_field_frame(h5, spec, pi) for pi in snap_physical]
 
     n_cols = len(snap_logical)
     show_scalar_row = has_scalar or per_laser_keys
     n_rows = 2 if show_scalar_row else 1
     height_ratios = [3, 1] if n_rows == 2 else [1]
+
+    if field_key == "psi_k":
+        lx = abs(extent[1] - extent[0])
+        ly = abs(extent[3] - extent[2])
+        ny_grid, nx_grid = snapshots[0].shape
+        kmax_x = np.pi * nx_grid / lx
+        kmax_y = np.pi * ny_grid / ly
+        plot_extent = [-kmax_x, kmax_x, -kmax_y, kmax_y]
+        x_label = r"$k_x$ ($\mu$m$^{-1}$)"
+        y_label = r"$k_y$ ($\mu$m$^{-1}$)"
+    else:
+        plot_extent = extent
+        x_label = r"x ($\mu$m)"
+        y_label = r"y ($\mu$m)"
 
     fig = plt.figure(figsize=(4.5 * n_cols, 4 * n_rows), constrained_layout=True)
     gs = GridSpec(n_rows, n_cols, figure=fig, height_ratios=height_ratios)
@@ -145,14 +176,17 @@ def generate_field_png(
     for col, (li, snapshot) in enumerate(zip(snap_logical, snapshots)):
         ax = fig.add_subplot(gs[0, col])
         im = ax.imshow(
-            snapshot, origin="lower", extent=extent, cmap=spec["cmap"],
+            snapshot, origin="lower", extent=plot_extent, cmap=spec["cmap"],
             norm=norm, **({"vmin": vmin, "vmax": vmax} if norm is None else {}),
             aspect="equal",
         )
-        ax.set_title(f"t = {time_sorted[li]:.1f} ps", fontsize=10)
+        is_peak = li == peak_logical
+        t_label = f"t = {time_sorted[li]:.1f} ps"
+        ax.set_title(f"{t_label} [PEAK]" if is_peak else t_label, fontsize=10,
+                     color="crimson" if is_peak else "black", fontweight="bold" if is_peak else "normal")
         if col == 0:
-            ax.set_ylabel(r"y ($\mu$m)")
-        ax.set_xlabel(r"x ($\mu$m)")
+            ax.set_ylabel(y_label)
+        ax.set_xlabel(x_label)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     if show_scalar_row:
@@ -170,7 +204,12 @@ def generate_field_png(
         ax_sc.legend(fontsize=8, loc="best")
         ax_sc.grid(True, alpha=0.3)
         for li in snap_logical:
-            ax_sc.axvline(time_sorted[li], color="gray", linestyle="--", alpha=0.4, linewidth=0.6)
+            is_peak = li == peak_logical
+            ax_sc.axvline(time_sorted[li],
+                          color="crimson" if is_peak else "gray",
+                          linestyle="--" if is_peak else ":",
+                          alpha=0.8 if is_peak else 0.4,
+                          linewidth=1.2 if is_peak else 0.6)
 
     fig.suptitle(f"{routine.upper()} \u2014 {spec['label']}", fontsize=14, fontweight="bold")
 

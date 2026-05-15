@@ -55,7 +55,7 @@ def build_scenario_config(
     """
     g = global_cfg
     defaults = g.get("laser_defaults", {})
-    solver_cfg = g.get("solver", {})
+    solver_cfg = {**g.get("solver", {}), **scenario.get("solver", {})}
     potential_cfg = scenario.get("potential", {"potential_type": "zero"})
 
     sigma_space: float = defaults.get("sigma_space", threshold.get("sigma_space", 5.0))
@@ -66,6 +66,7 @@ def build_scenario_config(
     )
 
     grid_cfg = {**g.get("grid", {}), **scenario.get("grid", {})}
+    physics_cfg = {**g.get("physics", {}), **scenario.get("physics", {})}
 
     return Config(
         grid=make_dataclass(GridParameters, grid_cfg),
@@ -73,7 +74,7 @@ def build_scenario_config(
             BoundaryConditionParameters, g.get("boundary_condition", {})
         ),
         potential=make_dataclass(PotentialParameters, potential_cfg),
-        physics=make_dataclass(PhysicsConstants, g.get("physics", {})),
+        physics=make_dataclass(PhysicsConstants, physics_cfg),
         laser=LaserParameters(
             mode="single",
             laser_type=defaults.get("laser_type", "pulse-gaussian"),
@@ -86,11 +87,15 @@ def build_scenario_config(
             pulse_separation=pulse_sep,
             cutoff_sigma=cutoff_sigma,
         ),
-        reservoir=make_dataclass(ReservoirParameters, g.get("reservoir", {})),
+        reservoir=make_dataclass(
+            ReservoirParameters,
+            {**g.get("reservoir", {}), **scenario.get("reservoir", {})},
+        ),
         solver=SolverParameters(
             total_time=solver_cfg.get("total_time", 500.0),
             dt=solver_cfg.get("dt", 0.001),
             method=solver_cfg.get("method", "rk4-cuda"),
+            laplacian=solver_cfg.get("laplacian", "five-point"),
         ),
         result=ResultParameters(real_time_view=False, save_results=False),
         compute_engine=ComputeEngineParameters(use_gpu=True),

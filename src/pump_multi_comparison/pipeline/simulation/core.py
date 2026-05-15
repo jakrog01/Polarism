@@ -21,6 +21,7 @@ from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import Config
 from polarism.grid.create_grid import create_grid
+from polarism.init_condition import make_initial_psi
 from polarism.potential.create_potential import create_potential
 from polarism.reservoir.create_reservoir import create_reservoir
 from polarism.results.storage import create_hdf5_writer
@@ -51,6 +52,63 @@ def check_condensation_kspace(psi: object, xp: object) -> float:
     if total_power < 1e-30:
         return 0.0
     return k0_power / total_power
+
+
+def _compute_kspace_metrics(psi, k_r, k_nyquist_min: float, xp) -> dict:
+    """Compute spectral power distribution metrics for *psi*.
+
+    Parameters
+    ----------
+    psi : array
+        Complex wavefunction.
+    k_r : array
+        Radial k-values in rad/um for each FFT bin, shape (ny, nx).
+    k_nyquist_min : float
+        min(π/dx, π/dy) in rad/um.
+    xp : module
+        Compute backend.
+
+    Returns
+    -------
+    dict with keys: k0_frac, high_k_frac_0p5_nyq, high_k_frac_0p8_nyq,
+    k_peak_um, k_centroid_um.
+    """
+    psi_k = xp.fft.fft2(psi)
+    power = xp.abs(psi_k) ** 2
+    total_power = float(xp.sum(power))
+    if total_power < 1e-30:
+        return {
+            "k0_frac": 0.0,
+            "high_k_frac_0p5_nyq": 0.0,
+            "high_k_frac_0p8_nyq": 0.0,
+            "k_peak_um": 0.0,
+            "k_centroid_um": 0.0,
+        }
+
+    k0_frac = float(power[0, 0]) / total_power
+    thresh_0p5 = 0.5 * k_nyquist_min
+    thresh_0p8 = 0.8 * k_nyquist_min
+    high_k_0p5 = float(xp.sum(power * (k_r > thresh_0p5))) / total_power
+    high_k_0p8 = float(xp.sum(power * (k_r > thresh_0p8))) / total_power
+
+    dc_mask = k_r > 0.0
+    power_no_dc = power * dc_mask
+    total_no_dc = float(xp.sum(power_no_dc))
+    if total_no_dc > 1e-30:
+        peak_idx = int(xp.argmax(power_no_dc))
+        k_peak = float(k_r.ravel()[peak_idx])
+        k_centroid = float(xp.sum(k_r * power_no_dc) / total_no_dc)
+    else:
+        k_peak = 0.0
+        k_centroid = 0.0
+
+    return {
+        "k0_frac": k0_frac,
+        "high_k_frac_0p5_nyq": high_k_0p5,
+        "high_k_frac_0p8_nyq": high_k_0p8,
+        "k_peak_um": k_peak,
+        "k_centroid_um": k_centroid,
+    }
 
 
 def _precompute_spatial_profiles(lasers: list, grid: object) -> list:
@@ -105,6 +163,24 @@ def _compute_pump_fast(
     return P_total, per_laser_max
 
 
+def _active_inactive_reservoir_fields(reservoir: object, inactive_zero: object):
+    """Return active and inactive reservoir fields for all reservoir models.
+
+    The pipeline stores the active reservoir as ``nA`` in HDF5 for backward
+    compatibility, even when the model calls that field ``nR``. Single-reservoir
+    models have no inactive field, so a reusable zero array is emitted as ``nI``.
+    """
+    state = reservoir.get_state()
+    if len(state) == 1:
+        return state[0], inactive_zero
+    if len(state) == 2:
+        return state[0], state[1]
+    raise ValueError(
+        "Reservoir state must contain one active field or active/inactive fields; "
+        f"got {len(state)} entries"
+    )
+
+
 def run_simulation_from_config(
     routine_name: str,
     lasers: list,
@@ -112,7 +188,7 @@ def run_simulation_from_config(
     output_dir: str,
     output_policy: OutputPolicy | None = None,
     roi_specs: list[dict] | None = None,
-) -> tuple[float | None, str]:
+) -> tuple[float | None, str, dict]:
     """Run a simulation with an explicit ``Config`` object.
 
     Parameters
@@ -134,9 +210,10 @@ def run_simulation_from_config(
 
     Returns
     -------
-    tuple[float or None, str]
-        ``(t_cond, sidecar_path)`` — condensation time in ps (or ``None``) and
-        the path of the written scalar ``.npz`` sidecar.
+    tuple[float or None, str, dict]
+        ``(t_cond, sidecar_path, initial_condition_meta)`` — condensation time
+        in ps (or ``None``), the path of the written scalar ``.npz`` sidecar,
+        and a dict with initial-condition metadata and spectral metrics.
     """
     if output_policy is None:
         output_policy = OutputPolicy()
@@ -149,16 +226,41 @@ def run_simulation_from_config(
     potential = create_potential(cfg.potential, grid)
     reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid)
 
-    rng_gpu = xp.random.default_rng(RNG_SEED)
+    init_mode = getattr(cfg.physics, "init_mode", "legacy_positive_uniform")
+    init_k_cutoff_um = getattr(cfg.physics, "init_k_cutoff_um", None)
+    init_seed_cfg = getattr(cfg.physics, "init_seed", None)
+    effective_seed = init_seed_cfg if init_seed_cfg is not None else RNG_SEED
+
     state = SimulationState.__new__(SimulationState)
-    state.psi = (
-        cfg.physics.init_eps
-        * (
-            rng_gpu.random((grid.ny, grid.nx), dtype=xp.float64)
-            + 1j * rng_gpu.random((grid.ny, grid.nx), dtype=xp.float64)
-        )
-    ).astype(xp.complex128)
+    state.psi = make_initial_psi(
+        xp, grid.ny, grid.nx,
+        eps=cfg.physics.init_eps,
+        mode=init_mode,
+        dx=grid.dx,
+        dy=grid.dy,
+        k_cutoff_um=init_k_cutoff_um,
+        seed=effective_seed,
+        cdtype=xp.complex128,
+        rdtype=xp.float64,
+    )
     state.t = 0.0
+
+    kx_rad = 2.0 * math.pi * xp.fft.fftfreq(grid.nx, d=grid.dx)
+    ky_rad = 2.0 * math.pi * xp.fft.fftfreq(grid.ny, d=grid.dy)
+    KX_k, KY_k = xp.meshgrid(kx_rad, ky_rad)
+    k_r = xp.sqrt(KX_k ** 2 + KY_k ** 2)
+    k_nyquist_min = float(min(math.pi / grid.dx, math.pi / grid.dy))
+
+    initial_kspace = _compute_kspace_metrics(state.psi, k_r, k_nyquist_min, xp)
+    initial_condition_meta: dict = {
+        "init_mode": init_mode,
+        "init_eps": cfg.physics.init_eps,
+        "init_k_cutoff_um": init_k_cutoff_um,
+        "init_seed": init_seed_cfg,
+        "initial_k0_frac": initial_kspace["k0_frac"],
+        "initial_high_k_frac_0p5_nyq": initial_kspace["high_k_frac_0p5_nyq"],
+        "initial_high_k_frac_0p8_nyq": initial_kspace["high_k_frac_0p8_nyq"],
+    }
 
     solver = create_solver(cfg, grid)
 
@@ -189,7 +291,19 @@ def run_simulation_from_config(
             )
         )
 
-    scalar_names = ["psi_sq_max", "nI_max", "nA_max", "k0_frac", "P_max"]
+    hbar_over_2m = cfg.physics.hbar / (2.0 * cfg.physics.m_eff)
+    kinetic_relaxation_eta = getattr(cfg.physics, "kinetic_relaxation_eta", 0.0)
+
+    scalar_names = [
+        "psi_sq_max", "nI_max", "nA_max",
+        "k0_frac",
+        "high_k_frac_0p5_nyq", "high_k_frac_0p8_nyq",
+        "k_peak_um", "k_centroid_um",
+        "P_max",
+        "nyquist_k_um",
+        "estimated_nyquist_damping_max",
+        "estimated_nyquist_growth_margin_max",
+    ]
     scalar_names.extend(scalar_names_for_rois(rois))
     for li in range(len(lasers)):
         scalar_names.append(f"P_max_{li}")
@@ -202,6 +316,7 @@ def run_simulation_from_config(
     spatial_profiles = _precompute_spatial_profiles(lasers, grid)
     spatial_maxes = _precompute_spatial_maxes(spatial_profiles, xp)
     P_zero = xp.zeros((grid.ny, grid.nx), dtype=xp.float64)
+    inactive_zero = xp.zeros((grid.ny, grid.nx), dtype=xp.float64)
 
     N_initial = float(xp.sum(xp.abs(state.psi) ** 2))
     t_cond = None
@@ -235,19 +350,25 @@ def run_simulation_from_config(
             record_fields = step % output_policy.field_record_stride == 0
 
             if record_scalars or record_fields:
-                nA, nI = reservoir.get_state()
+                nA, nI = _active_inactive_reservoir_fields(reservoir, inactive_zero)
                 psi_sq = xp.abs(state.psi) ** 2
-                k0_f = (
-                    check_condensation_kspace(state.psi, xp)
-                    if step % CHECK_EVERY == 0
-                    else 0.0
-                )
+                kspace_metrics = _compute_kspace_metrics(state.psi, k_r, k_nyquist_min, xp)
+                nA_max_val = float(xp.max(nA))
+                damping_nyq = kinetic_relaxation_eta * nA_max_val * hbar_over_2m * k_nyquist_min ** 2
+                gain_amp = 0.5 * (cfg.physics.R * nA_max_val - cfg.physics.gamma_C)
                 scalars = {
                     "psi_sq_max": float(xp.max(psi_sq)),
                     "nI_max": float(xp.max(nI)),
-                    "nA_max": float(xp.max(nA)),
-                    "k0_frac": k0_f,
+                    "nA_max": nA_max_val,
+                    "k0_frac": kspace_metrics["k0_frac"],
+                    "high_k_frac_0p5_nyq": kspace_metrics["high_k_frac_0p5_nyq"],
+                    "high_k_frac_0p8_nyq": kspace_metrics["high_k_frac_0p8_nyq"],
+                    "k_peak_um": kspace_metrics["k_peak_um"],
+                    "k_centroid_um": kspace_metrics["k_centroid_um"],
                     "P_max": float(xp.max(P_total)),
+                    "nyquist_k_um": k_nyquist_min,
+                    "estimated_nyquist_damping_max": damping_nyq,
+                    "estimated_nyquist_growth_margin_max": gain_amp - damping_nyq,
                 }
                 if rois:
                     scalars.update(
@@ -264,7 +385,7 @@ def run_simulation_from_config(
                     scalar_acc[name].append(scalars.get(name, 0.0))
 
             if record_fields:
-                nA, nI = reservoir.get_state()
+                nA, nI = _active_inactive_reservoir_fields(reservoir, inactive_zero)
                 writer.record(
                     (step + 1) * dt,
                     {"psi": state.psi, "nI": nI, "nA": nA, "Pump": P_total},
@@ -302,4 +423,4 @@ def run_simulation_from_config(
         f"    -> {out_path}  ({writer.total} frames, "
         f"last_t={last_t:.1f} ps, t_cond={t_cond})"
     )
-    return t_cond, sidecar_path
+    return t_cond, sidecar_path, initial_condition_meta

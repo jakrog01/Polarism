@@ -99,6 +99,59 @@ This keeps the scenario description readable while remaining flexible for
 regular or irregular spatial layouts. The older relational `timing:` syntax is
 not part of the current schema.
 
+For pulsed Gaussian lasers, `n_pulses` has two distinct meanings:
+
+- `n_pulses > 0`: finite train length; the laser stops after that many pulses
+- `n_pulses: 0`: unbounded pulse train; used intentionally in memory-response
+  studies
+
+This is important when interpreting repeated reservoir excitation. A run with
+`n_pulses: 0` is not a single-pulse experiment.
+
+## Current artifact-diagnostics workflow
+
+The repository includes `config_artifact_mitigation_validation.yaml` to diagnose
+the diagonal X/star-like spatial pattern that can appear in `|psi|^2`.
+
+The config does not change the physical GPE during time evolution. It compares:
+
+- legacy positive-uniform seed vs filtered zero-mean seed
+- 128 um / 512^2 vs 128 um / 1024^2 at fixed physical domain
+- 64 um / 512^2 as a cheaper high-resolution production domain
+- five-point vs isotropic 9-point Laplacian in `rk4-cuda`
+
+Run it from a Rysy login node:
+
+```bash
+cd ~/polaritonSNN/PolaritonSNN/src/pump_multi_comparison
+bash submit.sh --config config_artifact_mitigation_validation.yaml --dry-run
+bash submit.sh --config config_artifact_mitigation_validation.yaml
+```
+
+Primary artifacts:
+
+| File | Purpose |
+| --- | --- |
+| `psi_sq.png` | real-space condensate-density snapshots, including peak frame |
+| `psi_k.png` | log k-space power snapshots |
+| `nA.png`, `nI.png` | active/inactive reservoir fields for `quadratic-double` |
+| `<scenario>_scalars.npz` | scalar traces, including high-k metrics |
+| `<scenario>_meta.json` | grid, laser, solver, and initial-condition metadata |
+
+Interpretation:
+
+- if `filtered_seed` improves over `baseline`, the old biased/unfiltered seed was
+  a major contributor
+- if `same_domain_1024` improves over `filtered_seed`, sampling at fixed physical
+  domain matters
+- if `small_domain` improves, it may be a useful production domain, but remember
+  that CAP/boundary distance also changed
+- if `*_9pt` improves over its five-point counterpart, stencil anisotropy was
+  significant
+- if high-k power still accumulates near Nyquist after filtered seed, higher
+  resolution, and 9-point stencil, the missing ingredient is likely a physical
+  relaxation/high-k damping mechanism, not a higher-order RK time integrator
+
 ## Why it lives in `src/`
 
 The pipeline mixes domain-specific orchestration concerns with package usage:

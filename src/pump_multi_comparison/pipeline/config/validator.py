@@ -115,6 +115,13 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
             if not (math.isfinite(fv) and fv > 0):
                 errors.append(f"global.physics.{key}={val!r} must be finite and positive")
 
+    errors.extend(_validate_physics_init_keys("global.physics", physics))
+    errors.extend(_validate_merged_physics_init("global", physics))
+
+    global_laplacian = solver.get("laplacian")
+    if global_laplacian is not None:
+        errors.extend(_validate_laplacian("global.solver", global_laplacian))
+
     sweep_enabled = parameter_sweep_enabled(cfg)
     ts = g.get("threshold_search", {})
     sweep_cfg = g.get("parameter_sweep", {})
@@ -280,6 +287,16 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
         scenario_grid = sc.get("grid")
         if scenario_grid is not None:
             errors.extend(_validate_scenario_grid(name, scenario_grid))
+
+        scenario_solver = sc.get("solver")
+        if scenario_solver is not None:
+            errors.extend(_validate_scenario_solver(name, scenario_solver))
+
+        scenario_physics = sc.get("physics")
+        if scenario_physics is not None:
+            merged_physics = {**physics, **scenario_physics}
+            errors.extend(_validate_physics_init_keys(f"scenario '{name}' physics", scenario_physics))
+            errors.extend(_validate_merged_physics_init(f"scenario '{name}'", merged_physics))
 
         if sc.get("rois") is not None:
             errors.extend(_validate_rois(name, sc.get("rois")))
@@ -471,6 +488,85 @@ def _validate_rois(scenario_name: str, rois: Any) -> list[str]:
                 errors.append(
                     f"Scenario '{scenario_name}' rois[{i}].radius={value!r} must resolve positive"
                 )
+    return errors
+
+
+def _validate_laplacian(location: str, laplacian: Any) -> list[str]:
+    valid = {"five-point", "isotropic-9pt"}
+    if laplacian not in valid:
+        return [f"{location}.laplacian={laplacian!r} must be one of {sorted(valid)}"]
+    return []
+
+
+def _validate_physics_init_keys(location: str, physics: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    init_mode = physics.get("init_mode")
+    if init_mode is not None:
+        valid_modes = {"legacy_positive_uniform", "complex_gaussian_zero_mean", "filtered_complex_gaussian"}
+        if init_mode not in valid_modes:
+            errors.append(
+                f"{location}.init_mode={init_mode!r} must be one of {sorted(valid_modes)}"
+            )
+
+    init_k_cutoff_um = physics.get("init_k_cutoff_um")
+    if init_k_cutoff_um is not None:
+        try:
+            fv = float(init_k_cutoff_um)
+            if not (math.isfinite(fv) and fv > 0):
+                errors.append(
+                    f"{location}.init_k_cutoff_um={init_k_cutoff_um!r} must be a finite positive number"
+                )
+        except (TypeError, ValueError):
+            errors.append(f"{location}.init_k_cutoff_um={init_k_cutoff_um!r} is not a number")
+
+    init_seed = physics.get("init_seed")
+    if init_seed is not None and not isinstance(init_seed, int):
+        errors.append(f"{location}.init_seed={init_seed!r} must be an integer")
+
+    return errors
+
+
+def _validate_merged_physics_init(location: str, physics: dict[str, Any]) -> list[str]:
+    init_mode = physics.get("init_mode")
+    init_k_cutoff_um = physics.get("init_k_cutoff_um")
+    if init_mode == "filtered_complex_gaussian" and init_k_cutoff_um is None:
+        return [
+            f"{location}: init_mode='filtered_complex_gaussian' requires init_k_cutoff_um to be set"
+        ]
+    return []
+
+
+def _validate_scenario_solver(scenario_name: str, solver: Any) -> list[str]:
+    """Validate an optional per-scenario solver override block."""
+    if not isinstance(solver, dict):
+        return [
+            f"Scenario '{scenario_name}' solver override must be a mapping, "
+            f"got {type(solver).__name__!r}"
+        ]
+    errors: list[str] = []
+    laplacian = solver.get("laplacian")
+    if laplacian is not None:
+        errors.extend(_validate_laplacian(f"scenario '{scenario_name}' solver", laplacian))
+
+    method = solver.get("method")
+    if method is None:
+        return errors
+    if not isinstance(method, str) or not method.strip():
+        errors.append(
+            f"Scenario '{scenario_name}' solver.method={method!r} must be a non-empty string"
+        )
+        return errors
+    try:
+        from polarism.solver.solver_registry import available_solvers
+        import polarism.solver  # noqa: F401 — triggers @register_solver decorators
+        known = set(available_solvers.keys())
+        if known and method not in known:
+            errors.append(
+                f"Scenario '{scenario_name}' solver.method={method!r} is not a known solver. "
+                f"Known: {sorted(known)}"
+            )
+    except Exception:
+        pass
     return errors
 
 

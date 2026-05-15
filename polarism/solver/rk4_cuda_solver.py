@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
+    from polarism.reservoir.abstract_reservoir import AbstractReservoir
     from polarism.grid.simulation_grid_2d import SimulationGrid2D
 
 PREAMBLE_1D = """
@@ -56,7 +57,8 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs(
     const {REAL} neg_hbar2_over_2m,
     const {REAL} inv_hbar,
     const {REAL} g_C, const {REAL} g_R,
-    const {REAL} R_cond, const {REAL} gamma_C, const {REAL} gamma_R
+    const {REAL} R_cond, const {REAL} gamma_C, const {REAL} gamma_R,
+    const {REAL} kinetic_relaxation_eta, const {REAL} diff_R
 ) {{
     {PREAMBLE}
 
@@ -64,11 +66,9 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs(
     const {REAL} pim = psi[2*tid + 1];
 
     {NEIGHBOR_CODE}
+    {DIAG_NEIGHBORS}
 
-    const {REAL} lap_re = (psi[2*dn]   - 2*pre + psi[2*up])   * inv_dy2
-                        + (psi[2*rt]   - 2*pre + psi[2*lt])   * inv_dx2;
-    const {REAL} lap_im = (psi[2*dn+1] - 2*pim + psi[2*up+1]) * inv_dy2
-                        + (psi[2*rt+1] - 2*pim + psi[2*lt+1]) * inv_dx2;
+    {LAP_BLOCK_RHS}
 
     const {REAL} rho = pre*pre + pim*pim;
     const {REAL} nR_val = nR[tid];
@@ -78,10 +78,15 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs(
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
     const {REAL} A_im = neg_hbar2_over_2m * lap_im + eff * pim;
 
-    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre;
-    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim;
+    const {REAL} hbar_over_2m = -neg_hbar2_over_2m * inv_hbar;
+    const {REAL} relax = kinetic_relaxation_eta * nR_val * hbar_over_2m;
 
-    dnR_dt[tid] = pump[tid] - (gamma_R + R_cond * rho) * nR_val;
+    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre + relax * lap_re;
+    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim + relax * lap_im;
+
+    const {REAL} lap_nR = (nR[dn] - 2*nR_val + nR[up]) * inv_dy2
+                        + (nR[rt] - 2*nR_val + nR[lt]) * inv_dx2;
+    dnR_dt[tid] = pump[tid] - (gamma_R + R_cond * rho) * nR_val + diff_R * lap_nR;
 }}
 """
 
@@ -102,7 +107,8 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs(
     const {REAL} neg_hbar2_over_2m,
     const {REAL} inv_hbar,
     const {REAL} g_C, const {REAL} g_R,
-    const {REAL} R_cond, const {REAL} gamma_C, const {REAL} gamma_R
+    const {REAL} R_cond, const {REAL} gamma_C, const {REAL} gamma_R,
+    const {REAL} kinetic_relaxation_eta, const {REAL} diff_R
 ) {{
     {PREAMBLE}
 
@@ -112,6 +118,8 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs(
 
     {NEIGHBOR_CODE}
 
+        {DIAG_NEIGHBORS}
+
     const {REAL} psi_up_re = psi0[2*up]   + c_dt * k_psi[2*up];
     const {REAL} psi_up_im = psi0[2*up+1] + c_dt * k_psi[2*up+1];
     const {REAL} psi_dn_re = psi0[2*dn]   + c_dt * k_psi[2*dn];
@@ -120,11 +128,9 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs(
     const {REAL} psi_lt_im = psi0[2*lt+1] + c_dt * k_psi[2*lt+1];
     const {REAL} psi_rt_re = psi0[2*rt]   + c_dt * k_psi[2*rt];
     const {REAL} psi_rt_im = psi0[2*rt+1] + c_dt * k_psi[2*rt+1];
+    {EXTRA_PSI_DIAG}
 
-    const {REAL} lap_re = (psi_dn_re - 2*pre + psi_up_re) * inv_dy2
-                        + (psi_rt_re - 2*pre + psi_lt_re) * inv_dx2;
-    const {REAL} lap_im = (psi_dn_im - 2*pim + psi_up_im) * inv_dy2
-                        + (psi_rt_im - 2*pim + psi_lt_im) * inv_dx2;
+    {LAP_BLOCK_FUSED}
 
     const {REAL} rho = pre*pre + pim*pim;
     const {REAL} eff = V_re[tid] + g_C * rho + g_R * nR_val;
@@ -133,10 +139,19 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs(
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
     const {REAL} A_im = neg_hbar2_over_2m * lap_im + eff * pim;
 
-    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre;
-    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim;
+    const {REAL} hbar_over_2m = -neg_hbar2_over_2m * inv_hbar;
+    const {REAL} relax = kinetic_relaxation_eta * nR_val * hbar_over_2m;
 
-    dnR_dt[tid] = pump[tid] - (gamma_R + R_cond * rho) * nR_val;
+    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre + relax * lap_re;
+    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim + relax * lap_im;
+
+    const {REAL} nR_up = nR0[up] + c_dt * k_nR[up];
+    const {REAL} nR_dn = nR0[dn] + c_dt * k_nR[dn];
+    const {REAL} nR_lt = nR0[lt] + c_dt * k_nR[lt];
+    const {REAL} nR_rt = nR0[rt] + c_dt * k_nR[rt];
+    const {REAL} lap_nR = (nR_dn - 2*nR_val + nR_up) * inv_dy2
+                        + (nR_rt - 2*nR_val + nR_lt) * inv_dx2;
+    dnR_dt[tid] = pump[tid] - (gamma_R + R_cond * rho) * nR_val + diff_R * lap_nR;
 }}
 """
 
@@ -180,7 +195,8 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_double(
     const {REAL} g_C, const {REAL} g_R,
     const {REAL} R_cond, const {REAL} gamma_C,
     const {REAL} gamma_I, const {REAL} gamma_A,
-    const {REAL} R_IA, const {REAL} R_AI
+    const {REAL} R_IA, const {REAL} R_AI,
+    const {REAL} kinetic_relaxation_eta, const {REAL} diff_I, const {REAL} diff_A
 ) {{
     {PREAMBLE}
 
@@ -188,11 +204,9 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_double(
     const {REAL} pim = psi[2*tid + 1];
 
     {NEIGHBOR_CODE}
+    {DIAG_NEIGHBORS}
 
-    const {REAL} lap_re = (psi[2*dn]   - 2*pre + psi[2*up])   * inv_dy2
-                        + (psi[2*rt]   - 2*pre + psi[2*lt])   * inv_dx2;
-    const {REAL} lap_im = (psi[2*dn+1] - 2*pim + psi[2*up+1]) * inv_dy2
-                        + (psi[2*rt+1] - 2*pim + psi[2*lt+1]) * inv_dx2;
+    {LAP_BLOCK_RHS}
 
     const {REAL} rho = pre*pre + pim*pim;
     const {REAL} nA_val = nA[tid];
@@ -204,11 +218,18 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_double(
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
     const {REAL} A_im = neg_hbar2_over_2m * lap_im + eff * pim;
 
-    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre;
-    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim;
+    const {REAL} hbar_over_2m = -neg_hbar2_over_2m * inv_hbar;
+    const {REAL} relax = kinetic_relaxation_eta * nA_val * hbar_over_2m;
 
-    dnI_dt[tid] = pump[tid] - (gamma_I + R_IA) * nI_val + R_AI * nA_val;
-    dnA_dt[tid] = R_IA * nI_val - (gamma_A + R_AI + R_cond * rho) * nA_val;
+    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre + relax * lap_re;
+    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim + relax * lap_im;
+
+    const {REAL} lap_nI = (nI[dn] - 2*nI_val + nI[up]) * inv_dy2
+                        + (nI[rt] - 2*nI_val + nI[lt]) * inv_dx2;
+    const {REAL} lap_nA = (nA[dn] - 2*nA_val + nA[up]) * inv_dy2
+                        + (nA[rt] - 2*nA_val + nA[lt]) * inv_dx2;
+    dnI_dt[tid] = pump[tid] - (gamma_I + R_IA) * nI_val + R_AI * nA_val + diff_I * lap_nI;
+    dnA_dt[tid] = R_IA * nI_val - (gamma_A + R_AI + R_cond * rho) * nA_val + diff_A * lap_nA;
 }}
 """
 
@@ -234,7 +255,8 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_double(
     const {REAL} g_C, const {REAL} g_R,
     const {REAL} R_cond, const {REAL} gamma_C,
     const {REAL} gamma_I, const {REAL} gamma_A,
-    const {REAL} R_IA, const {REAL} R_AI
+    const {REAL} R_IA, const {REAL} R_AI,
+    const {REAL} kinetic_relaxation_eta, const {REAL} diff_I, const {REAL} diff_A
 ) {{
     {PREAMBLE}
 
@@ -244,6 +266,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_double(
     const {REAL} nI_val = nI0[tid] + c_dt * k_nI[tid];
 
     {NEIGHBOR_CODE}
+    {DIAG_NEIGHBORS}
 
     const {REAL} psi_up_re = psi0[2*up]   + c_dt * k_psi[2*up];
     const {REAL} psi_up_im = psi0[2*up+1] + c_dt * k_psi[2*up+1];
@@ -253,11 +276,9 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_double(
     const {REAL} psi_lt_im = psi0[2*lt+1] + c_dt * k_psi[2*lt+1];
     const {REAL} psi_rt_re = psi0[2*rt]   + c_dt * k_psi[2*rt];
     const {REAL} psi_rt_im = psi0[2*rt+1] + c_dt * k_psi[2*rt+1];
+    {EXTRA_PSI_DIAG}
 
-    const {REAL} lap_re = (psi_dn_re - 2*pre + psi_up_re) * inv_dy2
-                        + (psi_rt_re - 2*pre + psi_lt_re) * inv_dx2;
-    const {REAL} lap_im = (psi_dn_im - 2*pim + psi_up_im) * inv_dy2
-                        + (psi_rt_im - 2*pim + psi_lt_im) * inv_dx2;
+    {LAP_BLOCK_FUSED}
 
     const {REAL} rho = pre*pre + pim*pim;
     const {REAL} eff = V_re[tid] + g_C * rho + g_R * nA_val;
@@ -266,11 +287,28 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_double(
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
     const {REAL} A_im = neg_hbar2_over_2m * lap_im + eff * pim;
 
-    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre;
-    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim;
+    const {REAL} hbar_over_2m = -neg_hbar2_over_2m * inv_hbar;
+    const {REAL} relax = kinetic_relaxation_eta * nA_val * hbar_over_2m;
 
-    dnI_dt[tid] = pump[tid] - (gamma_I + R_IA) * nI_val + R_AI * nA_val;
-    dnA_dt[tid] = R_IA * nI_val - (gamma_A + R_AI + R_cond * rho) * nA_val;
+    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre + relax * lap_re;
+    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim + relax * lap_im;
+
+    const {REAL} nI_up = nI0[up] + c_dt * k_nI[up];
+    const {REAL} nI_dn = nI0[dn] + c_dt * k_nI[dn];
+    const {REAL} nI_lt = nI0[lt] + c_dt * k_nI[lt];
+    const {REAL} nI_rt = nI0[rt] + c_dt * k_nI[rt];
+    const {REAL} lap_nI = (nI_dn - 2*nI_val + nI_up) * inv_dy2
+                        + (nI_rt - 2*nI_val + nI_lt) * inv_dx2;
+
+    const {REAL} nA_up = nA0[up] + c_dt * k_nA[up];
+    const {REAL} nA_dn = nA0[dn] + c_dt * k_nA[dn];
+    const {REAL} nA_lt = nA0[lt] + c_dt * k_nA[lt];
+    const {REAL} nA_rt = nA0[rt] + c_dt * k_nA[rt];
+    const {REAL} lap_nA = (nA_dn - 2*nA_val + nA_up) * inv_dy2
+                        + (nA_rt - 2*nA_val + nA_lt) * inv_dx2;
+
+    dnI_dt[tid] = pump[tid] - (gamma_I + R_IA) * nI_val + R_AI * nA_val + diff_I * lap_nI;
+    dnA_dt[tid] = R_IA * nI_val - (gamma_A + R_AI + R_cond * rho) * nA_val + diff_A * lap_nA;
 }}
 """
 
@@ -319,7 +357,8 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_qdouble(
     const {REAL} inv_hbar,
     const {REAL} g_C, const {REAL} g_R,
     const {REAL} R_cond, const {REAL} gamma_C,
-    const {REAL} gamma_R, const {REAL} gamma_I, const {REAL} kappa
+    const {REAL} gamma_R, const {REAL} gamma_I, const {REAL} kappa,
+    const {REAL} kinetic_relaxation_eta, const {REAL} diff_I, const {REAL} diff_R
 ) {{
     {PREAMBLE}
 
@@ -327,11 +366,9 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_qdouble(
     const {REAL} pim = psi[2*tid + 1];
 
     {NEIGHBOR_CODE}
+    {DIAG_NEIGHBORS}
 
-    const {REAL} lap_re = (psi[2*dn]   - 2*pre + psi[2*up])   * inv_dy2
-                        + (psi[2*rt]   - 2*pre + psi[2*lt])   * inv_dx2;
-    const {REAL} lap_im = (psi[2*dn+1] - 2*pim + psi[2*up+1]) * inv_dy2
-                        + (psi[2*rt+1] - 2*pim + psi[2*lt+1]) * inv_dx2;
+    {LAP_BLOCK_RHS}
 
     const {REAL} rho = pre*pre + pim*pim;
     const {REAL} nR_val = nR[tid];
@@ -344,11 +381,18 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_qdouble(
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
     const {REAL} A_im = neg_hbar2_over_2m * lap_im + eff * pim;
 
-    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre;
-    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim;
+    const {REAL} hbar_over_2m = -neg_hbar2_over_2m * inv_hbar;
+    const {REAL} relax = kinetic_relaxation_eta * nR_val * hbar_over_2m;
 
-    dnR_dt[tid] = transfer - (gamma_R + R_cond * rho) * nR_val;
-    dnI_dt[tid] = pump[tid] - transfer - gamma_I * nI_val;
+    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre + relax * lap_re;
+    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim + relax * lap_im;
+
+    const {REAL} lap_nR = (nR[dn] - 2*nR_val + nR[up]) * inv_dy2
+                        + (nR[rt] - 2*nR_val + nR[lt]) * inv_dx2;
+    const {REAL} lap_nI = (nI[dn] - 2*nI_val + nI[up]) * inv_dy2
+                        + (nI[rt] - 2*nI_val + nI[lt]) * inv_dx2;
+    dnR_dt[tid] = transfer - (gamma_R + R_cond * rho) * nR_val + diff_R * lap_nR;
+    dnI_dt[tid] = pump[tid] - transfer - gamma_I * nI_val + diff_I * lap_nI;
 }}
 """
 
@@ -373,7 +417,8 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_qdouble(
     const {REAL} inv_hbar,
     const {REAL} g_C, const {REAL} g_R,
     const {REAL} R_cond, const {REAL} gamma_C,
-    const {REAL} gamma_R, const {REAL} gamma_I, const {REAL} kappa
+    const {REAL} gamma_R, const {REAL} gamma_I, const {REAL} kappa,
+    const {REAL} kinetic_relaxation_eta, const {REAL} diff_I, const {REAL} diff_R
 ) {{
     {PREAMBLE}
 
@@ -383,6 +428,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_qdouble(
     const {REAL} nI_val = nI0[tid] + c_dt * k_nI[tid];
 
     {NEIGHBOR_CODE}
+    {DIAG_NEIGHBORS}
 
     const {REAL} psi_up_re = psi0[2*up]   + c_dt * k_psi[2*up];
     const {REAL} psi_up_im = psi0[2*up+1] + c_dt * k_psi[2*up+1];
@@ -392,11 +438,9 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_qdouble(
     const {REAL} psi_lt_im = psi0[2*lt+1] + c_dt * k_psi[2*lt+1];
     const {REAL} psi_rt_re = psi0[2*rt]   + c_dt * k_psi[2*rt];
     const {REAL} psi_rt_im = psi0[2*rt+1] + c_dt * k_psi[2*rt+1];
+    {EXTRA_PSI_DIAG}
 
-    const {REAL} lap_re = (psi_dn_re - 2*pre + psi_up_re) * inv_dy2
-                        + (psi_rt_re - 2*pre + psi_lt_re) * inv_dx2;
-    const {REAL} lap_im = (psi_dn_im - 2*pim + psi_up_im) * inv_dy2
-                        + (psi_rt_im - 2*pim + psi_lt_im) * inv_dx2;
+    {LAP_BLOCK_FUSED}
 
     const {REAL} rho = pre*pre + pim*pim;
     const {REAL} transfer = kappa * nI_val * nI_val;
@@ -407,11 +451,28 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_qdouble(
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
     const {REAL} A_im = neg_hbar2_over_2m * lap_im + eff * pim;
 
-    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre;
-    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim;
+    const {REAL} hbar_over_2m = -neg_hbar2_over_2m * inv_hbar;
+    const {REAL} relax = kinetic_relaxation_eta * nR_val * hbar_over_2m;
 
-    dnR_dt[tid] = transfer - (gamma_R + R_cond * rho) * nR_val;
-    dnI_dt[tid] = pump[tid] - transfer - gamma_I * nI_val;
+    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre + relax * lap_re;
+    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim + relax * lap_im;
+
+    const {REAL} nR_up = nR0[up] + c_dt * k_nR[up];
+    const {REAL} nR_dn = nR0[dn] + c_dt * k_nR[dn];
+    const {REAL} nR_lt = nR0[lt] + c_dt * k_nR[lt];
+    const {REAL} nR_rt = nR0[rt] + c_dt * k_nR[rt];
+    const {REAL} lap_nR = (nR_dn - 2*nR_val + nR_up) * inv_dy2
+                        + (nR_rt - 2*nR_val + nR_lt) * inv_dx2;
+
+    const {REAL} nI_up = nI0[up] + c_dt * k_nI[up];
+    const {REAL} nI_dn = nI0[dn] + c_dt * k_nI[dn];
+    const {REAL} nI_lt = nI0[lt] + c_dt * k_nI[lt];
+    const {REAL} nI_rt = nI0[rt] + c_dt * k_nI[rt];
+    const {REAL} lap_nI = (nI_dn - 2*nI_val + nI_up) * inv_dy2
+                        + (nI_rt - 2*nI_val + nI_lt) * inv_dx2;
+
+    dnR_dt[tid] = transfer - (gamma_R + R_cond * rho) * nR_val + diff_R * lap_nR;
+    dnI_dt[tid] = pump[tid] - transfer - gamma_I * nI_val + diff_I * lap_nI;
 }}
 """
 
@@ -443,10 +504,97 @@ extern "C" __global__ {LAUNCH_BOUNDS} void rk4_combine_qdouble(
 }}
 """
 
+def _build_laplacian_code(
+    laplacian_type: str,
+    bc_type: str,
+    real_type: str,
+) -> tuple[str, str, str, str]:
+    """Return (diag_neighbors, extra_psi_diag, lap_block_rhs, lap_block_fused).
+
+    The first value goes into the RHS and fused templates after the cardinal
+    neighbors.  The second is appended to the fused cardinal-psi declarations.
+    The third and fourth replace the lap_re/lap_im lines in RHS and fused kernels.
+    """
+    rt = real_type
+    if laplacian_type == "five-point":
+        lap_block_rhs = (
+            f"const {rt} lap_re = (psi[2*dn]   - 2*pre + psi[2*up])   * inv_dy2\n"
+            f"                        + (psi[2*rt]   - 2*pre + psi[2*lt])   * inv_dx2;\n"
+            f"    const {rt} lap_im = (psi[2*dn+1] - 2*pim + psi[2*up+1]) * inv_dy2\n"
+            f"                        + (psi[2*rt+1] - 2*pim + psi[2*lt+1]) * inv_dx2;"
+        )
+        lap_block_fused = (
+            f"const {rt} lap_re = (psi_dn_re - 2*pre + psi_up_re) * inv_dy2\n"
+            f"                        + (psi_rt_re - 2*pre + psi_lt_re) * inv_dx2;\n"
+            f"    const {rt} lap_im = (psi_dn_im - 2*pim + psi_up_im) * inv_dy2\n"
+            f"                        + (psi_rt_im - 2*pim + psi_lt_im) * inv_dx2;"
+        )
+        return "", "", lap_block_rhs, lap_block_fused
+
+    if laplacian_type == "isotropic-9pt":
+        if bc_type == "closed-interval":
+            diag_neighbors = (
+                "const int i_up = (i > 0)    ? i - 1 : 1;\n"
+                "    const int i_dn = (i < ny-1) ? i + 1 : ny - 2;\n"
+                "    const int j_lt = (j > 0)    ? j - 1 : 1;\n"
+                "    const int j_rt = (j < nx-1) ? j + 1 : nx - 2;\n"
+                "    const int ul = i_up * nx + j_lt;\n"
+                "    const int ur = i_up * nx + j_rt;\n"
+                "    const int dl = i_dn * nx + j_lt;\n"
+                "    const int dr = i_dn * nx + j_rt;"
+            )
+        else:
+            diag_neighbors = (
+                "const int i_up = (i > 0)    ? i - 1 : ny - 1;\n"
+                "    const int i_dn = (i < ny-1) ? i + 1 : 0;\n"
+                "    const int j_lt = (j > 0)    ? j - 1 : nx - 1;\n"
+                "    const int j_rt = (j < nx-1) ? j + 1 : 0;\n"
+                "    const int ul = i_up * nx + j_lt;\n"
+                "    const int ur = i_up * nx + j_rt;\n"
+                "    const int dl = i_dn * nx + j_lt;\n"
+                "    const int dr = i_dn * nx + j_rt;"
+            )
+        extra_psi_diag = (
+            f"const {rt} psi_ul_re = psi0[2*ul]   + c_dt * k_psi[2*ul];\n"
+            f"    const {rt} psi_ul_im = psi0[2*ul+1] + c_dt * k_psi[2*ul+1];\n"
+            f"    const {rt} psi_ur_re = psi0[2*ur]   + c_dt * k_psi[2*ur];\n"
+            f"    const {rt} psi_ur_im = psi0[2*ur+1] + c_dt * k_psi[2*ur+1];\n"
+            f"    const {rt} psi_dl_re = psi0[2*dl]   + c_dt * k_psi[2*dl];\n"
+            f"    const {rt} psi_dl_im = psi0[2*dl+1] + c_dt * k_psi[2*dl+1];\n"
+            f"    const {rt} psi_dr_re = psi0[2*dr]   + c_dt * k_psi[2*dr];\n"
+            f"    const {rt} psi_dr_im = psi0[2*dr+1] + c_dt * k_psi[2*dr+1];"
+        )
+        lap_block_rhs = (
+            f"const {rt} inv_6h2 = inv_dx2 / ({rt})6.0;\n"
+            f"    const {rt} lap_re = (({rt})4.0*(psi[2*dn]+psi[2*up]+psi[2*rt]+psi[2*lt])\n"
+            f"                         + psi[2*ul]+psi[2*ur]+psi[2*dl]+psi[2*dr]\n"
+            f"                         - ({rt})20.0*pre) * inv_6h2;\n"
+            f"    const {rt} lap_im = (({rt})4.0*(psi[2*dn+1]+psi[2*up+1]+psi[2*rt+1]+psi[2*lt+1])\n"
+            f"                         + psi[2*ul+1]+psi[2*ur+1]+psi[2*dl+1]+psi[2*dr+1]\n"
+            f"                         - ({rt})20.0*pim) * inv_6h2;"
+        )
+        lap_block_fused = (
+            f"const {rt} inv_6h2 = inv_dx2 / ({rt})6.0;\n"
+            f"    const {rt} lap_re = (({rt})4.0*(psi_dn_re+psi_up_re+psi_rt_re+psi_lt_re)\n"
+            f"                         + psi_ul_re+psi_ur_re+psi_dl_re+psi_dr_re\n"
+            f"                         - ({rt})20.0*pre) * inv_6h2;\n"
+            f"    const {rt} lap_im = (({rt})4.0*(psi_dn_im+psi_up_im+psi_rt_im+psi_lt_im)\n"
+            f"                         + psi_ul_im+psi_ur_im+psi_dl_im+psi_dr_im\n"
+            f"                         - ({rt})20.0*pim) * inv_6h2;"
+        )
+        return diag_neighbors, extra_psi_diag, lap_block_rhs, lap_block_fused
+
+    raise ValueError(
+        f"Unknown laplacian_type '{laplacian_type}'. "
+        "Valid values: 'five-point', 'isotropic-9pt'."
+    )
+
+
 def build_kernel_source_1d(
     bc_type: str,
     real_type: str = "double",
     reservoir_type: str = "single",
+    laplacian_type: str = "five-point",
     preamble: str = PREAMBLE_1D,
     combine_preamble: str = COMBINE_PREAMBLE_1D,
     launch_bounds: str = "",
@@ -468,12 +616,19 @@ def build_kernel_source_1d(
         fused_tmpl = _KERNEL_FUSED_STAGE_RHS_TEMPLATE
         combine_tmpl = _KERNEL_COMBINE
 
+    diag_neighbors, extra_psi_diag, lap_block_rhs, lap_block_fused = _build_laplacian_code(
+        laplacian_type, bc_type, real_type
+    )
     fmt = dict(
         REAL=real_type,
         NEIGHBOR_CODE=neighbor_code,
         PREAMBLE=preamble,
         COMBINE_PREAMBLE=combine_preamble,
         LAUNCH_BOUNDS=launch_bounds,
+        DIAG_NEIGHBORS=diag_neighbors,
+        EXTRA_PSI_DIAG=extra_psi_diag,
+        LAP_BLOCK_RHS=lap_block_rhs,
+        LAP_BLOCK_FUSED=lap_block_fused,
     )
     return (
         rhs_tmpl.format(**fmt),
@@ -534,6 +689,10 @@ class RK4CudaSolver(AbstractSolver):
         self._gamma_C = config.physics.gamma_C
         self._gamma_R = config.physics.gamma_R
         self._dt = config.solver.dt
+        self._kinetic_relaxation_eta = getattr(config.physics, "kinetic_relaxation_eta", 0.0)
+        self._reservoir_diffusion_I = getattr(config.physics, "reservoir_diffusion_I", 0.0)
+        self._reservoir_diffusion_A = getattr(config.physics, "reservoir_diffusion_A", 0.0)
+        self._reservoir_diffusion_R = getattr(config.physics, "reservoir_diffusion_R", 0.0)
 
         if self._reservoir_type == "double":
             self._gamma_I = config.physics.gamma_I
@@ -548,6 +707,21 @@ class RK4CudaSolver(AbstractSolver):
         self._inv_dy2 = 1.0 / (grid.dy ** 2)
         self._neg_hbar2_over_2m = -(self._hbar ** 2) / (2.0 * self._m_eff)
         self._inv_hbar = 1.0 / self._hbar
+
+        laplacian = getattr(config.solver, "laplacian", "five-point")
+        if laplacian not in ("five-point", "isotropic-9pt"):
+            raise ValueError(
+                f"solver.laplacian='{laplacian}' is not recognised. "
+                "Valid values: 'five-point', 'isotropic-9pt'."
+            )
+        if laplacian == "isotropic-9pt":
+            rel_diff = abs(grid.dx - grid.dy) / max(grid.dx, grid.dy)
+            if rel_diff > 1e-8:
+                raise ValueError(
+                    f"solver.laplacian='isotropic-9pt' requires dx == dy, "
+                    f"got dx={grid.dx}, dy={grid.dy} (relative difference {rel_diff:.2e})."
+                )
+        self._laplacian_type = laplacian
 
         self._use_gpu = hasattr(self.xp, "cuda")
 
@@ -570,6 +744,10 @@ class RK4CudaSolver(AbstractSolver):
             self._k_half_dt = _cast(0.5 * self._dt)
             self._k_dt = _cast(self._dt)
             self._k_dt6 = _cast(self._dt / 6.0)
+            self._k_kinetic_relaxation_eta = _cast(self._kinetic_relaxation_eta)
+            self._k_diff_I = _cast(self._reservoir_diffusion_I)
+            self._k_diff_A = _cast(self._reservoir_diffusion_A)
+            self._k_diff_R = _cast(self._reservoir_diffusion_R)
 
             if self._reservoir_type == "double":
                 self._k_gamma_I = _cast(self._gamma_I)
@@ -592,7 +770,10 @@ class RK4CudaSolver(AbstractSolver):
         self, bc_type: str, real_type: str, reservoir_type: str
     ) -> tuple[str, str, str]:
         """Build the CUDA kernel source."""
-        return build_kernel_source_1d(bc_type, real_type, reservoir_type)
+        return build_kernel_source_1d(
+            bc_type, real_type, reservoir_type,
+            laplacian_type=self._laplacian_type,
+        )
 
     def _select_block_size(self) -> int:
         """Pick the CUDA block size."""
@@ -709,6 +890,7 @@ class RK4CudaSolver(AbstractSolver):
                 self._k_neg_hbar2_over_2m, self._k_inv_hbar,
                 self._k_g_C, self._k_g_R,
                 self._k_R, self._k_gamma_C, self._k_gamma_R,
+                self._k_kinetic_relaxation_eta, self._k_diff_R,
             ),
         )
 
@@ -724,6 +906,7 @@ class RK4CudaSolver(AbstractSolver):
                 self._k_neg_hbar2_over_2m, self._k_inv_hbar,
                 self._k_g_C, self._k_g_R,
                 self._k_R, self._k_gamma_C, self._k_gamma_R,
+                self._k_kinetic_relaxation_eta, self._k_diff_R,
             ),
         )
 
@@ -784,6 +967,7 @@ class RK4CudaSolver(AbstractSolver):
                 self._k_R, self._k_gamma_C,
                 self._k_gamma_I, self._k_gamma_A,
                 self._k_R_IA, self._k_R_AI,
+                self._k_kinetic_relaxation_eta, self._k_diff_I, self._k_diff_A,
             ),
         )
 
@@ -805,6 +989,7 @@ class RK4CudaSolver(AbstractSolver):
                 self._k_R, self._k_gamma_C,
                 self._k_gamma_I, self._k_gamma_A,
                 self._k_R_IA, self._k_R_AI,
+                self._k_kinetic_relaxation_eta, self._k_diff_I, self._k_diff_A,
             ),
         )
 
@@ -878,6 +1063,7 @@ class RK4CudaSolver(AbstractSolver):
                 self._k_g_C, self._k_g_R,
                 self._k_R, self._k_gamma_C,
                 self._k_gamma_R, self._k_gamma_I, self._k_kappa,
+                self._k_kinetic_relaxation_eta, self._k_diff_I, self._k_diff_R,
             ),
         )
 
@@ -898,6 +1084,7 @@ class RK4CudaSolver(AbstractSolver):
                 self._k_g_C, self._k_g_R,
                 self._k_R, self._k_gamma_C,
                 self._k_gamma_R, self._k_gamma_I, self._k_kappa,
+                self._k_kinetic_relaxation_eta, self._k_diff_I, self._k_diff_R,
             ),
         )
 
@@ -959,8 +1146,37 @@ class RK4CudaSolver(AbstractSolver):
             psi_buf, nR_buf, nI_buf,
         )
 
+    def _cpu_laplacian_9pt(self, psi, out) -> None:
+        """Apply the 9-point isotropic CPU Laplacian (requires dx == dy)."""
+        xp = self.xp
+        inv_6h2 = self._inv_dx2 / 6.0
+        if self.grid_type == "periodic":
+            up = xp.roll(psi, 1, axis=0)
+            dn = xp.roll(psi, -1, axis=0)
+            lt = xp.roll(psi, 1, axis=1)
+            rt = xp.roll(psi, -1, axis=1)
+            ul = xp.roll(up, 1, axis=1)
+            ur = xp.roll(up, -1, axis=1)
+            dl = xp.roll(dn, 1, axis=1)
+            dr = xp.roll(dn, -1, axis=1)
+            out[:] = (4 * (up + dn + lt + rt) + ul + ur + dl + dr - 20 * psi) * inv_6h2
+            return
+        padded = xp.pad(psi, 1, mode="reflect")
+        N = padded[:-2, 1:-1]
+        S = padded[2:, 1:-1]
+        W = padded[1:-1, :-2]
+        E = padded[1:-1, 2:]
+        NW = padded[:-2, :-2]
+        NE = padded[:-2, 2:]
+        SW = padded[2:, :-2]
+        SE = padded[2:, 2:]
+        out[:] = (4 * (N + S + W + E) + NW + NE + SW + SE - 20 * psi) * inv_6h2
+
     def _cpu_laplacian(self, psi, out):
         """Apply the CPU Laplacian stencil."""
+        if self._laplacian_type == "isotropic-9pt":
+            self._cpu_laplacian_9pt(psi, out)
+            return
         xp = self.xp
         inv_dx2 = self._inv_dx2
         inv_dy2 = self._inv_dy2
@@ -1022,21 +1238,83 @@ class RK4CudaSolver(AbstractSolver):
         eff = V + self._g_C * rho + self._g_R * n_active
         gl = (self._R * n_active - self._gamma_C) * 0.5
         kinetic = self._neg_hbar2_over_2m * lap
-        return (-1j * self._inv_hbar) * (kinetic + eff * psi) + gl * psi
+        hbar_over_2m = -self._neg_hbar2_over_2m * self._inv_hbar
+        relax = self._kinetic_relaxation_eta * n_active * hbar_over_2m
+        return (-1j * self._inv_hbar) * (kinetic + eff * psi) + gl * psi + relax * lap
+
+    def _cpu_laplacian_real(self, n):
+        """Compute Laplacian of a real-valued 2D field on the CPU."""
+        xp = self.xp
+        out = xp.empty_like(n)
+        inv_dx2 = self._inv_dx2
+        inv_dy2 = self._inv_dy2
+        if self.grid_type == "periodic":
+            out[:] = (
+                xp.roll(n, -1, axis=0) - 2 * n + xp.roll(n, 1, axis=0)
+            ) * inv_dy2 + (
+                xp.roll(n, -1, axis=1) - 2 * n + xp.roll(n, 1, axis=1)
+            ) * inv_dx2
+            return out
+        ny, nx = self.ny, self.nx
+        out.fill(0)
+        if ny > 2 and nx > 2:
+            out[1:-1, 1:-1] = (
+                n[2:, 1:-1] - 2 * n[1:-1, 1:-1] + n[:-2, 1:-1]
+            ) * inv_dy2 + (
+                n[1:-1, 2:] - 2 * n[1:-1, 1:-1] + n[1:-1, :-2]
+            ) * inv_dx2
+        if nx > 2:
+            out[0, 1:-1] = (
+                2 * (n[1, 1:-1] - n[0, 1:-1]) * inv_dy2
+                + (n[0, 2:] - 2 * n[0, 1:-1] + n[0, :-2]) * inv_dx2
+            )
+            out[-1, 1:-1] = (
+                2 * (n[-2, 1:-1] - n[-1, 1:-1]) * inv_dy2
+                + (n[-1, 2:] - 2 * n[-1, 1:-1] + n[-1, :-2]) * inv_dx2
+            )
+        if ny > 2:
+            out[1:-1, 0] = (
+                n[2:, 0] - 2 * n[1:-1, 0] + n[:-2, 0]
+            ) * inv_dy2 + 2 * (n[1:-1, 1] - n[1:-1, 0]) * inv_dx2
+            out[1:-1, -1] = (
+                n[2:, -1] - 2 * n[1:-1, -1] + n[:-2, -1]
+            ) * inv_dy2 + 2 * (n[1:-1, -2] - n[1:-1, -1]) * inv_dx2
+        out[0, 0] = (
+            2 * (n[1, 0] - n[0, 0]) * inv_dy2 + 2 * (n[0, 1] - n[0, 0]) * inv_dx2
+        )
+        out[0, -1] = (
+            2 * (n[1, -1] - n[0, -1]) * inv_dy2 + 2 * (n[0, -2] - n[0, -1]) * inv_dx2
+        )
+        out[-1, 0] = (
+            2 * (n[-2, 0] - n[-1, 0]) * inv_dy2 + 2 * (n[-1, 1] - n[-1, 0]) * inv_dx2
+        )
+        out[-1, -1] = (
+            2 * (n[-2, -1] - n[-1, -1]) * inv_dy2 + 2 * (n[-1, -2] - n[-1, -1]) * inv_dx2
+        )
+        return out
 
     def _cpu_rhs(self, psi, nR, V, pump):
         """Compute the right-hand side."""
         dpsi = self._cpu_psi_rhs(psi, nR, V)
         rho = self.xp.abs(psi) ** 2
-        dnR = pump - (self._gamma_R + self._R * rho) * nR
+        dnR = (
+            pump - (self._gamma_R + self._R * rho) * nR
+            + self._reservoir_diffusion_R * self._cpu_laplacian_real(nR)
+        )
         return dpsi, dnR
 
     def _cpu_rhs_double(self, psi, nA, nI, V, pump):
         """Compute the right-hand side."""
         dpsi = self._cpu_psi_rhs(psi, nA, V)
         rho = self.xp.abs(psi) ** 2
-        dnI = pump - (self._gamma_I + self._R_IA) * nI + self._R_AI * nA
-        dnA = self._R_IA * nI - (self._gamma_A + self._R_AI + self._R * rho) * nA
+        dnI = (
+            pump - (self._gamma_I + self._R_IA) * nI + self._R_AI * nA
+            + self._reservoir_diffusion_I * self._cpu_laplacian_real(nI)
+        )
+        dnA = (
+            self._R_IA * nI - (self._gamma_A + self._R_AI + self._R * rho) * nA
+            + self._reservoir_diffusion_A * self._cpu_laplacian_real(nA)
+        )
         return dpsi, dnA, dnI
 
     def _cpu_rhs_quadratic_double(self, psi, nR, nI, V, pump):
@@ -1044,8 +1322,14 @@ class RK4CudaSolver(AbstractSolver):
         dpsi = self._cpu_psi_rhs(psi, nR, V)
         rho = self.xp.abs(psi) ** 2
         transfer = self._kappa * nI ** 2
-        dnR = transfer - (self._gamma_R + self._R * rho) * nR
-        dnI = pump - transfer - self._gamma_I * nI
+        dnR = (
+            transfer - (self._gamma_R + self._R * rho) * nR
+            + self._reservoir_diffusion_R * self._cpu_laplacian_real(nR)
+        )
+        dnI = (
+            pump - transfer - self._gamma_I * nI
+            + self._reservoir_diffusion_I * self._cpu_laplacian_real(nI)
+        )
         return dpsi, dnR, dnI
 
     def _step_cpu_quadratic_double(self, V, pump, reservoir, boundary_condition, state):

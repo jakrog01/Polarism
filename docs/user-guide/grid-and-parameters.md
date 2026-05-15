@@ -11,7 +11,7 @@ The full runtime configuration is held in `polarism.config.simulation_parameters
 | `boundary_condition` | Absorption type, profile, and mask width |
 | `potential` | External potential family and parameters |
 | `laser` | Pump definition for single or multiple sources |
-| `reservoir` | Single or double reservoir model |
+| `reservoir` | Single, double, or quadratic-double reservoir model |
 | `solver` | Time step, total time, precision, and solver method |
 | `result` | Visualization and storage controls |
 | `compute_engine` | CPU versus GPU backend selection |
@@ -45,8 +45,15 @@ The `physics` block controls decay, interaction, and reservoir coupling paramete
 - `m_eff`
 - `hbar`
 - `init_eps`
+- `init_mode`, `init_k_cutoff_um`, `init_seed`
 
 These values directly enter the nonlinear GPE-reservoir dynamics. Keep units consistent across the full configuration; the package does not perform unit conversion for you.
+
+`init_mode` controls the initial condensate seed.  The default
+`legacy_positive_uniform` reproduces historical runs.  For geometry-sensitive
+studies, `complex_gaussian_zero_mean` or `filtered_complex_gaussian` avoids the
+biased positive-uniform seed; filtered mode requires `init_k_cutoff_um` and
+records that cutoff in metadata.
 
 ## Solver controls
 
@@ -64,6 +71,8 @@ Practical guidance:
 - Start from `rk4-fdm` to establish a reference solution.
 - Reduce `dt` until observables such as `|psi|^2`, norm growth, or threshold times stop moving materially.
 - Increase `nx` and `ny` only after the time-step sensitivity is under control.
+- For `rk4-cuda`, `cfg.solver.laplacian` can be `five-point` or
+  `isotropic-9pt`; the latter reduces grid-direction anisotropy on square cells.
 
 ## Backend selection
 

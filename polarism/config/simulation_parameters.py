@@ -28,7 +28,14 @@ class PhysicsConstants:
     R_IA: float = 5e-2
     R_AI: float = 2.5e-3
     kappa: float = 0.05
+    kinetic_relaxation_eta: float = 0.0
+    reservoir_diffusion_I: float = 0.0
+    reservoir_diffusion_A: float = 0.0
+    reservoir_diffusion_R: float = 0.0
     init_eps: float = 1e-3
+    init_mode: str = "legacy_positive_uniform"
+    init_k_cutoff_um: float | None = None
+    init_seed: int | None = None
 
 
 @dataclass
@@ -89,6 +96,7 @@ class SolverParameters:
     dt: float = 1e-3
     method: str = "rk4-fdm"
     precision: str = "double"
+    laplacian: str = "five-point"
 
 
 @dataclass
