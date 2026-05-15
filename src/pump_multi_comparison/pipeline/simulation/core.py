@@ -12,6 +12,11 @@ import traceback
 import numpy as np
 
 from pipeline.config.output_policy import OutputPolicy
+from pipeline.simulation.roi import (
+    compile_circle_rois,
+    compute_roi_scalars,
+    scalar_names_for_rois,
+)
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import Config
@@ -106,6 +111,7 @@ def run_simulation_from_config(
     cfg: Config,
     output_dir: str,
     output_policy: OutputPolicy | None = None,
+    roi_specs: list[dict] | None = None,
 ) -> tuple[float | None, str]:
     """Run a simulation with an explicit ``Config`` object.
 
@@ -123,6 +129,8 @@ def run_simulation_from_config(
         Directory for outputs.  Created if it does not already exist.
     output_policy : OutputPolicy or None
         Recording cadence and archival flags.  Defaults are used when ``None``.
+    roi_specs : list of dict or None
+        Optional circular ROI definitions resolved by the pipeline config layer.
 
     Returns
     -------
@@ -172,7 +180,17 @@ def run_simulation_from_config(
     out_path = os.path.join(output_dir, f"{routine_name}.h5")
     writer = create_hdf5_writer(out_path, batch_size, _FIELD_SPECS, (grid.ny, grid.nx))
 
+    rois = compile_circle_rois(roi_specs or [], grid, xp)
+    if rois:
+        print(
+            "    ROI metrics: "
+            + ", ".join(
+                f"{roi.id}(r={roi.radius:g}, cells={roi.count})" for roi in rois
+            )
+        )
+
     scalar_names = ["psi_sq_max", "nI_max", "nA_max", "k0_frac", "P_max"]
+    scalar_names.extend(scalar_names_for_rois(rois))
     for li in range(len(lasers)):
         scalar_names.append(f"P_max_{li}")
     for name in scalar_names:
@@ -231,6 +249,12 @@ def run_simulation_from_config(
                     "k0_frac": k0_f,
                     "P_max": float(xp.max(P_total)),
                 }
+                if rois:
+                    scalars.update(
+                        compute_roi_scalars(
+                            rois, psi_sq, nA, nI, cfg.physics.gamma_C, xp
+                        )
+                    )
                 for li, lp in enumerate(per_laser_max):
                     scalars[f"P_max_{li}"] = lp
 

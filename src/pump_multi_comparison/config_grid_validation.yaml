@@ -52,31 +52,7 @@ global:
     sigma_time_values:
       - 0.85
     pulse_separation_values:
-      - 30.0
-      - 35.0
-      - 40.0
-      - 45.0
-      - 50.0
-      - 55.0
-      - 60.0
-      - 65.0
-      - 70.0
-      - 75.0
-      - 80.0
-      - 85.0
-      - 90.0
-      - 95.0
       - 100.0
-      - 105.0
-      - 110.0
-      - 115.0
-      - 120.0
-      - 125.0
-      - 130.0
-      - 135.0
-      - 140.0
-      - 145.0
-      - 150.0
     sigma_space_values:
       - 0.75
 
@@ -109,7 +85,41 @@ _single_center_laser: &single_center_laser
     n_pulses: 0
 
 scenarios:
-  - name: single_spot_center
+  - name: grid_A_512_periodic
+    grid:
+      nx: 512
+      ny: 512
+      grid_type: periodic
+    potential:
+      potential_type: zero
+    timing_vars: *timing_vars_single
+    lasers: *single_center_laser
+
+  - name: grid_B_512_closed
+    grid:
+      nx: 512
+      ny: 512
+      grid_type: closed-interval
+    potential:
+      potential_type: zero
+    timing_vars: *timing_vars_single
+    lasers: *single_center_laser
+
+  - name: grid_C_768_closed
+    grid:
+      nx: 768
+      ny: 768
+      grid_type: closed-interval
+    potential:
+      potential_type: zero
+    timing_vars: *timing_vars_single
+    lasers: *single_center_laser
+
+  - name: grid_D_1024_closed
+    grid:
+      nx: 1024
+      ny: 1024
+      grid_type: closed-interval
     potential:
       potential_type: zero
     timing_vars: *timing_vars_single

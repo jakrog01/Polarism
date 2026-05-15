@@ -21,7 +21,11 @@ import traceback
 
 import numpy as np
 
-from pipeline.config.builder import build_scenario_config, build_scenario_lasers
+from pipeline.config.builder import (
+    build_scenario_config,
+    build_scenario_lasers,
+    build_scenario_rois,
+)
 from pipeline.config.loader import get_scenario, load_config
 from pipeline.config.output_policy import output_policy_from_config
 from pipeline.manifest.io import (
@@ -198,10 +202,6 @@ def main() -> None:
         sys.exit(1)
 
     output_policy = output_policy_from_config(cfg)
-    lx: float = threshold["lx"]
-    ly: float = threshold["ly"]
-    extent = [-lx / 2, lx / 2, -ly / 2, ly / 2]
-
     global_cfg = cfg["global"]
     scenario = get_scenario(cfg, scenario_name)
 
@@ -221,9 +221,22 @@ def main() -> None:
 
     sim_cfg = build_scenario_config(global_cfg, threshold, scenario)
     grid = create_grid(sim_cfg.grid)
+    extent = [
+        -sim_cfg.grid.lx / 2,
+        sim_cfg.grid.lx / 2,
+        -sim_cfg.grid.ly / 2,
+        sim_cfg.grid.ly / 2,
+    ]
 
     rng = np.random.default_rng(RNG_SEED)
     lasers, phases = build_scenario_lasers(scenario, global_cfg, threshold, grid, rng)
+    roi_specs = build_scenario_rois(
+        scenario,
+        global_cfg,
+        threshold,
+        lasers,
+        output_cfg=cfg.get("output", {}),
+    )
 
     print(f"  Lasers: {len(lasers)}")
     for i, laser in enumerate(lasers):
@@ -232,6 +245,13 @@ def main() -> None:
             f"pos=({laser.x0:.1f}, {laser.y0:.1f})  "
             f"delay={laser.delay:.3f} ps"
         )
+    if roi_specs:
+        print("  ROIs:")
+        for roi in roi_specs:
+            print(
+                f"    {roi['id']}: circle center=({roi['x0']:.3g}, {roi['y0']:.3g}) "
+                f"r={roi['radius']:.3g}"
+            )
 
     required_time = max(
         (
@@ -268,7 +288,7 @@ def main() -> None:
         print("\n  Running simulation ...")
         t_sim_start = time.monotonic()
         t_cond, sidecar_path = run_simulation_from_config(
-            scenario_name, lasers, sim_cfg, scratch_dir, output_policy,
+            scenario_name, lasers, sim_cfg, scratch_dir, output_policy, roi_specs=roi_specs,
         )
         elapsed_sim = time.monotonic() - t_sim_start
     except Exception:
@@ -322,6 +342,14 @@ def main() -> None:
         "n_lasers": len(lasers),
         "phase_offsets": phases,
         "sweep": scenario.get("sweep"),
+        "grid": {
+            "nx": int(sim_cfg.grid.nx),
+            "ny": int(sim_cfg.grid.ny),
+            "lx": float(sim_cfg.grid.lx),
+            "ly": float(sim_cfg.grid.ly),
+            "grid_type": str(sim_cfg.grid.grid_type),
+        },
+        "rois": roi_specs,
         "lasers": [
             {
                 "x0": float(laser.x0), "y0": float(laser.y0),

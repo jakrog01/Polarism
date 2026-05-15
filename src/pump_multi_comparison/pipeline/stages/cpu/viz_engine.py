@@ -42,6 +42,14 @@ PLOT_DPI = 200
 PUMP_NORM_GAMMA = 0.3
 PSI_DIAGNOSTIC_IGNORE_PS = 5.0
 
+ROI_LABEL_SUFFIXES = {
+    "mean_psi_sq": r"ROI mean $|\psi|^2$",
+    "integral_psi_sq": r"ROI $\int |\psi|^2 dA$",
+    "mean_nR": r"ROI mean $n_R$",
+    "mean_nI": r"ROI mean $n_I$",
+    "integral_emission": r"ROI emission proxy",
+}
+
 
 def routine_dir(routine: str, results_dir: str) -> str:
     """Return the output directory for *routine* within *results_dir*."""
@@ -222,6 +230,59 @@ def generate_scalar_traces(
     plt.close(fig)
     print(f"    {out_path}")
 
+    _generate_roi_scalar_traces(routine, npz, time, results_dir)
+
+
+def _roi_label(key: str) -> str:
+    """Return a readable label for one ROI scalar key."""
+    for suffix, label in ROI_LABEL_SUFFIXES.items():
+        marker = f"_circle_{suffix}"
+        if key.endswith(marker):
+            roi_id = key[: -len(marker)].replace("roi_", "", 1)
+            return f"{roi_id}: {label}"
+    return key
+
+
+def _generate_roi_scalar_traces(
+    routine: str,
+    npz: np.lib.npyio.NpzFile,
+    time: np.ndarray,
+    results_dir: str,
+) -> None:
+    """Generate ROI-specific trace panels when ROI metrics are present."""
+    roi_keys = sorted(k for k in npz.files if k.startswith("roi_"))
+    if not roi_keys:
+        return
+
+    suffix_order = list(ROI_LABEL_SUFFIXES.keys())
+    grouped: dict[str, list[str]] = {suffix: [] for suffix in suffix_order}
+    for key in roi_keys:
+        for suffix in suffix_order:
+            if key.endswith(f"_circle_{suffix}"):
+                grouped[suffix].append(key)
+                break
+
+    panels = [(suffix, keys) for suffix, keys in grouped.items() if keys]
+    fig = plt.figure(figsize=(11.0, max(3.0 * len(panels), 4.0)), constrained_layout=True)
+    gs = GridSpec(len(panels), 1, figure=fig)
+    for row, (suffix, keys) in enumerate(panels):
+        ax = fig.add_subplot(gs[row, 0])
+        for key in keys:
+            y = npz[key]
+            ax.plot(time[: len(y)], y, linewidth=1.0, label=_roi_label(key))
+        ax.set_ylabel(ROI_LABEL_SUFFIXES.get(suffix, suffix))
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8, loc="best")
+    ax.set_xlabel("t (ps)")
+    fig.suptitle(f"{routine.upper()} ROI traces", fontsize=14, fontweight="bold")
+
+    out_dir = routine_dir(routine, results_dir)
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, "roi_traces.png")
+    fig.savefig(out_path, dpi=PLOT_DPI)
+    plt.close(fig)
+    print(f"    {out_path}")
+
 
 def generate_summary(
     routines: list[str],
@@ -303,12 +364,22 @@ def generate_sweep_heatmaps(
         for key, _ in COMPARISON_SCALARS:
             if key in npz:
                 metrics[key] = float(np.nanmax(npz[key]))
+        for key in npz.files:
+            if key.startswith("roi_"):
+                metrics[key] = float(np.nanmax(npz[key]))
         rows.append({"sigma_space": 0.0, **sweep, "routine": routine, "metrics": metrics})
 
     if not rows:
         return
 
     metric_keys = [key for key, _ in COMPARISON_SCALARS if any(key in row["metrics"] for row in rows)]
+    metric_keys.extend(
+        sorted(
+            key
+            for key in {k for row in rows for k in row["metrics"]}
+            if key.startswith("roi_")
+        )
+    )
     metric_labels = dict(COMPARISON_SCALARS)
     bases = sorted({str(row["base_scenario"]) for row in rows})
 
@@ -345,7 +416,7 @@ def generate_sweep_heatmaps(
                         arr[pi, si] = row["metrics"][key]
                     ax = fig.add_subplot(gs[0, col])
                     im = ax.imshow(arr, origin="lower", aspect="auto", cmap="viridis")
-                    ax.set_title(metric_labels.get(key, key))
+                    ax.set_title(metric_labels.get(key, _roi_label(key)), fontsize=9)
                     ax.set_xlabel("pulse separation (ps)")
                     ax.set_ylabel("power" if col == 0 else "")
                     ax.set_xticks(range(len(separations)), [f"{v:g}" for v in separations], rotation=45)

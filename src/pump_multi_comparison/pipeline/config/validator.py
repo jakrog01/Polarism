@@ -83,12 +83,6 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
         elif not (isinstance(val, (int, float)) and float(val) > 0):
             errors.append(f"global.grid.{key}={val!r} must be positive")
 
-    nx, ny = int(grid.get("nx", 0)), int(grid.get("ny", 0))
-    if nx > 0 and ny > 0 and (nx & (nx - 1) != 0 or ny & (ny - 1) != 0):
-        errors.append(
-            f"global.grid nx={nx}, ny={ny}: non-power-of-2 degrades FFT performance"
-        )
-
     solver = g.get("solver", {})
     dt = solver.get("dt")
     total_time = solver.get("total_time")
@@ -267,6 +261,9 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
                     errors.append(f"output.{_stride_key}={_val!r} must be >= 1")
             except (TypeError, ValueError):
                 errors.append(f"output.{_stride_key}={_val!r} must be a positive integer")
+    roi_cfg = out.get("roi_metrics", {})
+    if roi_cfg.get("rois") is not None:
+        errors.extend(_validate_rois("output.roi_metrics", roi_cfg.get("rois")))
 
     scenarios: list = cfg.get("scenarios", [])
     if not scenarios:
@@ -279,6 +276,13 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
         names_seen.add(name)
         if not sc.get("lasers"):
             errors.append(f"Scenario '{name}' has no lasers")
+
+        scenario_grid = sc.get("grid")
+        if scenario_grid is not None:
+            errors.extend(_validate_scenario_grid(name, scenario_grid))
+
+        if sc.get("rois") is not None:
+            errors.extend(_validate_rois(name, sc.get("rois")))
 
         laser_defs: list = sc.get("lasers", [])
         laser_ids: list[str] = [
@@ -388,6 +392,85 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
                 )
             )
 
+    return errors
+
+
+def _validate_scenario_grid(scenario_name: str, grid: Any) -> list[str]:
+    """Validate optional per-scenario grid overrides."""
+    if not isinstance(grid, dict):
+        return [
+            f"Scenario '{scenario_name}' grid override must be a mapping, "
+            f"got {type(grid).__name__!r}"
+        ]
+    errors: list[str] = []
+    for key in ("nx", "ny"):
+        if key in grid:
+            try:
+                val = int(grid[key])
+            except (TypeError, ValueError):
+                errors.append(f"Scenario '{scenario_name}' grid.{key}={grid[key]!r} must be an integer")
+                continue
+            if val < 2:
+                errors.append(f"Scenario '{scenario_name}' grid.{key}={grid[key]!r} must be >= 2")
+    for key in ("lx", "ly"):
+        if key in grid:
+            try:
+                val = float(grid[key])
+            except (TypeError, ValueError):
+                errors.append(f"Scenario '{scenario_name}' grid.{key}={grid[key]!r} must be numeric")
+                continue
+            if not (math.isfinite(val) and val > 0):
+                errors.append(f"Scenario '{scenario_name}' grid.{key}={grid[key]!r} must be positive")
+    if "grid_type" in grid and grid["grid_type"] not in {"periodic", "closed-interval"}:
+        errors.append(
+            f"Scenario '{scenario_name}' grid.grid_type={grid['grid_type']!r} "
+            "must be 'periodic' or 'closed-interval'"
+        )
+    return errors
+
+
+def _validate_rois(scenario_name: str, rois: Any) -> list[str]:
+    """Validate scenario-level ROI definitions cheaply."""
+    if isinstance(rois, dict):
+        rois = [rois]
+    if not isinstance(rois, list):
+        return [
+            f"Scenario '{scenario_name}' rois must be a mapping or list of mappings, "
+            f"got {type(rois).__name__!r}"
+        ]
+    errors: list[str] = []
+    dummy_ns = {
+        "sigma_space": 1.0,
+        "sigma_time": 1.0,
+        "pulse_separation": 1.0,
+        "cutoff_sigma": 1.0,
+        "D": 4.0,
+    }
+    for i, roi in enumerate(rois):
+        if not isinstance(roi, dict):
+            errors.append(f"Scenario '{scenario_name}' rois[{i}] must be a mapping")
+            continue
+        shape = roi.get("shape", "circle")
+        if shape != "circle":
+            errors.append(
+                f"Scenario '{scenario_name}' rois[{i}].shape={shape!r}: only 'circle' is supported"
+            )
+        if "radius" not in roi:
+            errors.append(f"Scenario '{scenario_name}' rois[{i}] is missing required radius")
+            continue
+        for key in ("x0", "y0", "radius"):
+            if key == "radius" and key not in roi:
+                continue
+            value = roi.get(key, 0.0)
+            try:
+                resolved = resolve_delay(value, dummy_ns) if isinstance(value, str) else float(value)
+            except (TypeError, ValueError) as exc:
+                errors.append(f"Scenario '{scenario_name}' rois[{i}].{key}={value!r}: {exc}")
+                continue
+            if key == "radius" and resolved <= 0.0:
+                errors.append(
+                    f"Scenario '{scenario_name}' rois[{i}].radius={value!r} must resolve positive"
+                )
     return errors
 
 

@@ -65,8 +65,10 @@ def build_scenario_config(
         "cutoff_sigma", threshold.get("cutoff_sigma", 3.0)
     )
 
+    grid_cfg = {**g.get("grid", {}), **scenario.get("grid", {})}
+
     return Config(
-        grid=make_dataclass(GridParameters, g.get("grid", {})),
+        grid=make_dataclass(GridParameters, grid_cfg),
         boundary_condition=make_dataclass(
             BoundaryConditionParameters, g.get("boundary_condition", {})
         ),
@@ -93,6 +95,70 @@ def build_scenario_config(
         result=ResultParameters(real_time_view=False, save_results=False),
         compute_engine=ComputeEngineParameters(use_gpu=True),
     )
+
+
+def build_scenario_rois(
+    scenario: dict[str, Any],
+    global_cfg: dict[str, Any],
+    threshold: dict[str, Any],
+    lasers: list[Any],
+    output_cfg: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Resolve circular ROI definitions for a scenario.
+
+    ROI definitions can be placed either under ``scenario.rois`` or under
+    ``output.roi_metrics.rois``. Scenario-level definitions take precedence.
+    Numeric values may also be arithmetic expressions using ``sigma_space``,
+    ``sigma_time``, ``pulse_separation``, ``cutoff_sigma`` and ``D`` where
+    ``D = 4 * sigma_space`` for the first laser unless explicitly overridden.
+    """
+    out_roi_cfg = (output_cfg or {}).get("roi_metrics", {})
+    enabled = bool(out_roi_cfg.get("enabled", bool(scenario.get("rois"))))
+    raw_rois = scenario.get("rois")
+    if raw_rois is None:
+        raw_rois = out_roi_cfg.get("rois", [])
+    if not enabled or not raw_rois:
+        return []
+
+    if isinstance(raw_rois, dict):
+        raw_rois = [raw_rois]
+    if not isinstance(raw_rois, list):
+        raise ValueError("ROI definitions must be a mapping or list of mappings")
+
+    first_laser = lasers[0] if lasers else None
+    sigma_space = float(getattr(first_laser, "sigma_space", threshold.get("sigma_space", 1.0)))
+    sigma_time = float(getattr(first_laser, "sigma_time", threshold.get("sigma_time", 1.0)))
+    pulse_separation = float(
+        getattr(first_laser, "pulse_separation", threshold.get("pulse_separation", 1.0))
+    )
+    cutoff_sigma = float(getattr(first_laser, "cutoff_sigma", threshold.get("cutoff_sigma", 3.0)))
+    ns = {
+        "sigma_space": sigma_space,
+        "sigma_time": sigma_time,
+        "pulse_separation": pulse_separation,
+        "cutoff_sigma": cutoff_sigma,
+        "D": 4.0 * sigma_space,
+    }
+
+    def _resolve(value: Any) -> float:
+        if isinstance(value, str):
+            return resolve_delay(value, ns)
+        return float(value)
+
+    rois: list[dict[str, Any]] = []
+    for i, roi in enumerate(raw_rois):
+        if not isinstance(roi, dict):
+            raise ValueError(f"ROI entry {i} must be a mapping")
+        resolved = dict(roi)
+        resolved["shape"] = str(resolved.get("shape", "circle"))
+        resolved["id"] = str(resolved.get("id", f"roi_{i}"))
+        resolved["x0"] = _resolve(resolved.get("x0", 0.0))
+        resolved["y0"] = _resolve(resolved.get("y0", 0.0))
+        if "radius" not in resolved:
+            raise ValueError(f"ROI '{resolved['id']}' is missing required radius")
+        resolved["radius"] = _resolve(resolved["radius"])
+        rois.append(resolved)
+    return rois
 
 
 def _assign_laser_ids(laser_defs: list[dict[str, Any]]) -> list[str]:
