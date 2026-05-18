@@ -8,6 +8,7 @@ from polarism.config.dtype_utils import real_dtype
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
+from polarism.reservoir.laplacian import real_laplacian
 from polarism.results.result_node import ResultNode
 from polarism.results.result_provider import ResultProvider
 
@@ -24,6 +25,11 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
     gamma_A: float
     R_IA: float
     R_AI: float
+    reservoir_diffusion_I: float
+    reservoir_diffusion_A: float
+    dx: float
+    dy: float
+    grid_type: str
     nI: Union[np.ndarray, cp.ndarray]
     nA: Union[np.ndarray, cp.ndarray]
 
@@ -42,6 +48,11 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         self.gamma_A = physics.gamma_A
         self.R_IA = physics.R_IA
         self.R_AI = physics.R_AI
+        self.reservoir_diffusion_I = getattr(physics, "reservoir_diffusion_I", 0.0)
+        self.reservoir_diffusion_A = getattr(physics, "reservoir_diffusion_A", 0.0)
+        self.dx = grid.dx
+        self.dy = grid.dy
+        self.grid_type = getattr(grid, "grid_type", "periodic")
         rdtype = real_dtype(self.xp, precision)
         self.nI = self.xp.zeros((grid.ny, grid.nx), dtype=rdtype)
         self.nA = self.xp.zeros((grid.ny, grid.nx), dtype=rdtype)
@@ -78,6 +89,14 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
 
         dnI = Pxy - (self.gamma_I + self.R_IA) * nI + self.R_AI * nA
         dnA = self.R_IA * nI - (self.gamma_A + self.R_AI + self.R * abs_psi2) * nA
+        if self.reservoir_diffusion_I != 0.0:
+            dnI = dnI + self.reservoir_diffusion_I * real_laplacian(
+                nI, self.xp, self.dx, self.dy, self.grid_type
+            )
+        if self.reservoir_diffusion_A != 0.0:
+            dnA = dnA + self.reservoir_diffusion_A * real_laplacian(
+                nA, self.xp, self.dx, self.dy, self.grid_type
+            )
 
         return (dnA, dnI)
 

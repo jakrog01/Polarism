@@ -26,6 +26,7 @@ from polarism.config.dtype_utils import real_dtype
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
+from polarism.reservoir.laplacian import real_laplacian
 from polarism.results.result_node import ResultNode
 from polarism.results.result_provider import ResultProvider
 
@@ -42,6 +43,11 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
     gamma_R: float
     gamma_I: float
     kappa: float
+    reservoir_diffusion_I: float
+    reservoir_diffusion_R: float
+    dx: float
+    dy: float
+    grid_type: str
     nR: Union["np.ndarray", "cp.ndarray"]
     nI: Union["np.ndarray", "cp.ndarray"]
 
@@ -59,6 +65,11 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
         self.gamma_R = physics.gamma_R
         self.gamma_I = physics.gamma_I
         self.kappa = physics.kappa
+        self.reservoir_diffusion_I = getattr(physics, "reservoir_diffusion_I", 0.0)
+        self.reservoir_diffusion_R = getattr(physics, "reservoir_diffusion_R", 0.0)
+        self.dx = grid.dx
+        self.dy = grid.dy
+        self.grid_type = getattr(grid, "grid_type", "periodic")
         rdtype = real_dtype(self.xp, precision)
         self.nR = self.xp.zeros((grid.ny, grid.nx), dtype=rdtype)
         self.nI = self.xp.zeros((grid.ny, grid.nx), dtype=rdtype)
@@ -105,6 +116,14 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
 
         dnR = transfer - self.gamma_R * nR - self.R * nR * abs_psi2
         dnI = Pxy - transfer - self.gamma_I * nI
+        if self.reservoir_diffusion_R != 0.0:
+            dnR = dnR + self.reservoir_diffusion_R * real_laplacian(
+                nR, self.xp, self.dx, self.dy, self.grid_type
+            )
+        if self.reservoir_diffusion_I != 0.0:
+            dnI = dnI + self.reservoir_diffusion_I * real_laplacian(
+                nI, self.xp, self.dx, self.dy, self.grid_type
+            )
 
         return (dnR, dnI)
 

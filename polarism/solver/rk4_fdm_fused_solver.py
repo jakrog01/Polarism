@@ -42,6 +42,8 @@ class RK4FDMFusedSolver(AbstractSolver):
         self._inv_dy2 = 1.0 / (self.dy**2)
         self._kinetic_coeff = -(self._hbar**2) / (2.0 * self._m_eff)
         self._minus_i_over_hbar = -1j / self._hbar
+        self._kinetic_relaxation_eta = getattr(config.physics, "kinetic_relaxation_eta", 0.0)
+        self._hbar_over_2m = self._hbar / (2.0 * self._m_eff)
 
         self._buf_initialized = False
         _empty = self.xp.empty(0, dtype=complex)
@@ -68,6 +70,8 @@ class RK4FDMFusedSolver(AbstractSolver):
         gamma_C = self._gamma_C
         minus_i_over_hbar = self._minus_i_over_hbar
         kinetic_coeff = self._kinetic_coeff
+        eta = self._kinetic_relaxation_eta
+        hbar_over_2m = self._hbar_over_2m
 
         @xp.fuse()
         def fused_rhs(psi, lap, potential, n_active):
@@ -79,6 +83,7 @@ class RK4FDMFusedSolver(AbstractSolver):
             return (
                 minus_i_over_hbar * (kinetic_energy + eff_energy * psi)
                 + gain_loss * psi
+                + eta * n_active * hbar_over_2m * lap
             )
 
         @xp.fuse()
@@ -184,7 +189,9 @@ class RK4FDMFusedSolver(AbstractSolver):
             gain_loss = (self._R * n_active - self._gamma_C) * 0.5
             kinetic = self._kinetic_coeff * self._lap
             out[:] = (
-                self._minus_i_over_hbar * (kinetic + eff_energy * psi) + gain_loss * psi
+                self._minus_i_over_hbar * (kinetic + eff_energy * psi)
+                + gain_loss * psi
+                + self._kinetic_relaxation_eta * n_active * self._hbar_over_2m * self._lap
             )
 
     def step(

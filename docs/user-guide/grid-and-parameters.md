@@ -46,6 +46,8 @@ The `physics` block controls decay, interaction, and reservoir coupling paramete
 - `hbar`
 - `init_eps`
 - `init_mode`, `init_k_cutoff_um`, `init_seed`
+- `kinetic_relaxation_eta`
+- `reservoir_diffusion_I`, `reservoir_diffusion_A`, `reservoir_diffusion_R`
 
 These values directly enter the nonlinear GPE-reservoir dynamics. Keep units consistent across the full configuration; the package does not perform unit conversion for you.
 
@@ -54,6 +56,17 @@ These values directly enter the nonlinear GPE-reservoir dynamics. Keep units con
 studies, `complex_gaussian_zero_mean` or `filtered_complex_gaussian` avoids the
 biased positive-uniform seed; filtered mode requires `init_k_cutoff_um` and
 records that cutoff in metadata.
+
+`kinetic_relaxation_eta` enables a phenomenological kinetic-energy relaxation
+term for the condensate.  It defaults to `0.0`.  When enabled it damps high-k
+condensate modes proportionally to active reservoir density and `k^2`, so it
+should be chosen from convergence and k-space diagnostics rather than from
+visual appearance alone.
+
+The reservoir diffusion coefficients also default to `0.0`.  They add physical
+transport to reservoir fields (`nI`, `nA`, or `nR`, depending on reservoir
+model), using periodic wrapping on periodic grids and mirrored Neumann behavior
+on `closed-interval` grids.
 
 ## Solver controls
 

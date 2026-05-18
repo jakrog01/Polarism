@@ -192,7 +192,7 @@ Supported `init_mode` values:
 |------|----------|-----|
 | `legacy_positive_uniform` | historical `eps * (Uniform[0,1) + i Uniform[0,1))` | backward compatibility and reproducing old runs |
 | `complex_gaussian_zero_mean` | complex Gaussian, mean-subtracted, RMS-normalized to `init_eps` | unbiased stochastic seed without k filtering |
-| `filtered_complex_gaussian` | zero-mean complex Gaussian, FFT low-pass filtered to `|k| <= init_k_cutoff_um`, mean-subtracted again, RMS-normalized | diagnostic/production seed when high-k grid noise must be controlled |
+| `filtered_complex_gaussian` | zero-mean complex Gaussian, FFT low-pass filtered to radial k below `init_k_cutoff_um`, mean-subtracted again, RMS-normalized | diagnostic/production seed when high-k grid noise must be controlled |
 
 The filtered seed is not a hidden smoothing pass applied during time evolution.
 It only defines the initial stochastic condensate band.  The cutoff is written to
@@ -211,6 +211,57 @@ The scalar sidecar now records k-space diagnostics:
 
 These diagnostics are written at scalar-record cadence.  They are intended to
 separate physical filamentation from numerical UV/Nyquist artifacts.
+
+---
+
+## Energy-relaxation production validation
+
+`config_qdouble_energy_relaxation_production_validation.yaml` is the current
+production-oriented validation campaign for the X/star artifact.  It keeps the
+pulsed `quadratic-double` model, uses `rk4-cuda`, `closed-interval` grids, CAP
+absorption, filtered stochastic seeds, and compares kinetic relaxation strengths
+without switching to the simplified single reservoir.
+
+The main physical control is:
+
+```yaml
+physics:
+  kinetic_relaxation_eta: 1.0e-5
+```
+
+This adds a phenomenological condensate energy-relaxation term.  It is not a
+plot filter and it is not a post-processing cutoff.  The run also contains one
+optional reservoir-diffusion scenario:
+
+```yaml
+physics:
+  reservoir_diffusion_I: 1.0e-5
+  reservoir_diffusion_R: 1.0e-3
+```
+
+Reservoir diffusion is a model variant for carrier/reservoir transport.  It is
+not the primary artifact fix; use it only after the no-diffusion relaxation case
+has been checked.
+
+Run on Rysy:
+
+```bash
+cd ~/polaritonSNN/PolaritonSNN/src/pump_multi_comparison
+bash submit.sh --config config_qdouble_energy_relaxation_production_validation.yaml --dry-run
+bash submit.sh --config config_qdouble_energy_relaxation_production_validation.yaml
+```
+
+Acceptance criteria:
+
+- `high_k_frac_0p8_nyq < 1e-3`
+- `k_peak_um` well below `nyquist_k_um`
+- macroscopic `psi_sq_max`
+- circular central `|psi|^2`, not a diagonal X/star
+
+Prefer the smallest `kinetic_relaxation_eta` that satisfies these criteria.
+For the current 64 um / 512^2 campaign, `sigma_space=2.0` with
+`eta=1e-5` is the first production candidate; `eta=3e-5` is the fallback for
+tighter spots.
 
 ---
 

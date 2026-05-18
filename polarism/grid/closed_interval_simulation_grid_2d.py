@@ -20,6 +20,7 @@ class ClosedIntervalSimulationGrid2D:
     ly: float
     dx: float
     dy: float
+    grid_type: str
     X: Union["np.ndarray", "cp.ndarray"]
     Y: Union["np.ndarray", "cp.ndarray"]
     kx: Union["np.ndarray", "cp.ndarray"]
@@ -41,6 +42,7 @@ class ClosedIntervalSimulationGrid2D:
         self.ny = cfg.ny
         self.lx = cfg.lx
         self.ly = cfg.ly
+        self.grid_type = "closed-interval"
 
         self.dx = self.lx / (self.nx - 1)
         self.dy = self.ly / (self.ny - 1)

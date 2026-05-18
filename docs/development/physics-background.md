@@ -88,6 +88,104 @@ proof of physical filamentation.  It must be checked against:
 - high-k spectral diagnostics
 - optional physical relaxation terms if the high-k population remains dominant
 
+### Kinetic energy relaxation term
+
+When high-k modes near the Nyquist edge dominate and produce an X/star artifact
+in real-space |ψ|², the cause is that the minimal model has no channel for
+energy to flow from high-k polariton fluctuations toward the ground state.  The
+fix is a standard phenomenological kinetic energy relaxation term added at the
+equation level:
+
+$$
+\frac{\partial \psi}{\partial t}
+\;\mathrel{+}=\;
+\eta \, n_{\mathrm{active}} \, \frac{\hbar}{2 m_{\mathrm{eff}}} \, \nabla^2 \psi
+$$
+
+For a plane wave this contributes a damping rate
+$\eta \, n_{\mathrm{active}} \, (\hbar/2m) \, k^2$, which grows with $k^2$ and
+therefore suppresses Nyquist-edge modes preferentially.  This is **not** a
+numerical filter: the term is a well-known phenomenological extension of the
+open-dissipative GPE used in the polariton literature to account for relaxation
+of propagating polaritons through interactions with the reservoir.  See:
+
+- Wouters, Liew, Savona, "Energy Relaxation in a 1-D Polariton Condensate",
+  Phys. Rev. B 82, 245315 (2010), arXiv:1008.5320.
+- Topfer et al., "Engineering spatial coherence in lattices of polariton
+  condensates", Scientific Reports 14, 13104 (2024):
+  https://www.nature.com/articles/s41598-024-63725-1
+
+The active reservoir density driving the term is model-dependent:
+
+| reservoir_type    | active density in relaxation term |
+|-------------------|-----------------------------------|
+| single            | nR                                |
+| double            | nA                                |
+| quadratic-double  | nR                                |
+
+The term defaults to zero (`kinetic_relaxation_eta: 0.0`) and is disabled unless
+explicitly set.  Backward compatibility is preserved.
+
+**Production model for pulsed-memory campaigns:** `quadratic-double` + `rk4-cuda`.
+The `double` reservoir is retained as a sanity-check / reference model only.
+
+**Recommended starting values:**
+
+| sigma_space | recommended eta | notes                                    |
+|-------------|-----------------|------------------------------------------|
+| 2.0         | 1e-5            | removes Nyquist growth cleanly           |
+| 1.25        | 3e-5            | tighter spots need stronger relaxation   |
+| any         | 1e-4            | aggressive upper-bound diagnostic only   |
+
+**Acceptance criteria — check with k-space sidecar metrics:**
+
+| metric                   | GOOD                        | BAD (unphysical UV growth)         |
+|--------------------------|-----------------------------|------------------------------------|
+| high_k_frac_0p8_nyq      | < 1e-3                      | ≈ 1                                |
+| k_peak_um                | ≪ nyquist_k_um              | ≈ nyquist_k_um                     |
+| real-space `psi_sq`      | circular central spot        | X/star pattern                     |
+| psi_sq_max               | grows macroscopically        | stays near zero or diverges        |
+
+**Parameter choice rule:** choose the smallest η that drives high_k_frac_0p8_nyq
+below 1e-3 and k_peak_um well below the Nyquist edge.  Prefer η = 1e-5 when
+σ_space = 2.0 suffices.  Treat η = 1e-4 as an aggressive diagnostic
+upper bound; results at that value should not be used as primary evidence.
+
+### Optional reservoir diffusion
+
+Reservoir diffusion is a separate physical transport term.  It smooths the
+reservoir populations themselves, not the condensate field, and represents
+phenomenological carrier/exciton transport before stimulated scattering into the
+condensate.  It is optional and defaults to zero:
+
+```yaml
+global:
+  physics:
+    reservoir_diffusion_I: 0.0
+    reservoir_diffusion_A: 0.0
+    reservoir_diffusion_R: 0.0
+```
+
+The active fields depend on the selected reservoir model:
+
+| reservoir_type   | diffusion terms when enabled |
+|------------------|------------------------------|
+| single           | `D_R nabla^2 nR`             |
+| double           | `D_I nabla^2 nI`, `D_A nabla^2 nA` |
+| quadratic-double | `D_I nabla^2 nI`, `D_R nabla^2 nR` |
+
+The implementation uses the same boundary semantics as the spatial grid:
+periodic grids wrap the reservoir Laplacian, while `closed-interval` grids use
+the mirrored Neumann convention used by the finite-difference solvers.  This is
+important for solver consistency: `rk4-cuda`, CPU FDM solvers, split-step
+reservoir updates, and standalone reservoir stepping all see the same diffusion
+term when a diffusion coefficient is nonzero.
+
+Reservoir diffusion should not be used as the primary cure for Nyquist growth in
+`psi`.  The production fix for the star/X artifact is kinetic relaxation plus
+k-space acceptance checks.  Use reservoir diffusion only as a controlled model
+variant after the no-diffusion case has been understood.
+
 ## Numerical methods in the repository
 
 - Finite-difference RK4 solvers provide the reference implementation and the most predictable behavior across boundary choices.
