@@ -118,6 +118,8 @@ The `physics` block stores the scalar coefficients entering the condensate and r
 - `R`, `R_IA`, `R_AI`
 - `kappa` for the `quadratic-double` reservoir
 - `init_eps`, `init_mode`, `init_k_cutoff_um`, `init_seed`
+- `kinetic_relaxation_eta`
+- `reservoir_diffusion_I`, `reservoir_diffusion_A`, `reservoir_diffusion_R`
 
 These values are model parameters, not high-level feature flags, so they should be changed with physical units and stability constraints in mind.
 
@@ -129,6 +131,14 @@ Initial-condition options:
 | `init_mode` | initial seed generator | `legacy_positive_uniform`, `complex_gaussian_zero_mean`, `filtered_complex_gaussian` |
 | `init_k_cutoff_um` | radial cutoff in rad/um for `filtered_complex_gaussian` | positive float, required for filtered mode |
 | `init_seed` | optional RNG seed | integer or `null` |
+| `kinetic_relaxation_eta` | condensate kinetic-energy relaxation strength | nonnegative float, default `0.0` |
+| `reservoir_diffusion_I` | inactive-reservoir diffusion coefficient | nonnegative float, default `0.0` |
+| `reservoir_diffusion_A` | active-density diffusion coefficient for `double` | nonnegative float, default `0.0` |
+| `reservoir_diffusion_R` | active-density diffusion coefficient for `single` and `quadratic-double` | nonnegative float, default `0.0` |
 
 The legacy mode is kept for reproducibility.  For geometry-sensitive runs, prefer
 zero-mean or filtered seeds and record the cutoff in run metadata.
+
+Relaxation and diffusion are model terms, not visualization filters.  They are
+disabled by default and should be enabled only with a stated physical rationale
+and checked against the recorded k-space diagnostics.

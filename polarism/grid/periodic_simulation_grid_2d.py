@@ -20,6 +20,7 @@ class PeriodicSimulationGrid2D:
     ly: float
     dx: float
     dy: float
+    grid_type: str
     X: Union["np.ndarray", "cp.ndarray"]
     Y: Union["np.ndarray", "cp.ndarray"]
     kx: Union["np.ndarray", "cp.ndarray"]
@@ -36,6 +37,7 @@ class PeriodicSimulationGrid2D:
         self.ny = cfg.ny
         self.lx = cfg.lx
         self.ly = cfg.ly
+        self.grid_type = "periodic"
 
         self.dx = self.lx / self.nx
         self.dy = self.ly / self.ny

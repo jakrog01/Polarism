@@ -8,6 +8,7 @@ from polarism.config.dtype_utils import real_dtype
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
+from polarism.reservoir.laplacian import real_laplacian
 from polarism.results.result_node import ResultNode
 from polarism.results.result_provider import ResultProvider
 
@@ -21,6 +22,10 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
     config: ReservoirParameters
     R: float
     gamma_r: float
+    reservoir_diffusion_R: float
+    dx: float
+    dy: float
+    grid_type: str
     nR: Union[np.ndarray, cp.ndarray]
 
     def __init__(
@@ -35,6 +40,10 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         self.config = reservoir_config
         self.R = physics.R
         self.gamma_r = physics.gamma_R
+        self.reservoir_diffusion_R = getattr(physics, "reservoir_diffusion_R", 0.0)
+        self.dx = grid.dx
+        self.dy = grid.dy
+        self.grid_type = getattr(grid, "grid_type", "periodic")
         self.nR = self.xp.zeros((grid.ny, grid.nx), dtype=real_dtype(self.xp, precision))
 
     def get_state(self) -> tuple[Union[np.ndarray, cp.ndarray]]:
@@ -61,6 +70,10 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         nR = state[0]
         abs_psi2 = self.xp.abs(psi) ** 2
         dnR = Pxy - (self.gamma_r + self.R * abs_psi2) * nR
+        if self.reservoir_diffusion_R != 0.0:
+            dnR = dnR + self.reservoir_diffusion_R * real_laplacian(
+                nR, self.xp, self.dx, self.dy, self.grid_type
+            )
         return (dnR,)
 
     def step(

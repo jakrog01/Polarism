@@ -16,6 +16,7 @@ class SimulationGrid2D(Protocol):
     ly: float
     dx: float
     dy: float
+    grid_type: str
     X: Union["np.ndarray", "cp.ndarray"]
     Y: Union["np.ndarray", "cp.ndarray"]
     kx: Union["np.ndarray", "cp.ndarray"]

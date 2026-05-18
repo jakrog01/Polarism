@@ -174,8 +174,10 @@ class RK4FDMSolver(AbstractSolver):
             self.config.physics.R * n_active - self.config.physics.gamma_C
         ) / 2.0
 
+        eta = getattr(self.config.physics, "kinetic_relaxation_eta", 0.0)
+        hbar_over_2m = self.config.physics.hbar / (2.0 * self.config.physics.m_eff)
         dpsi_dt = (-1j / self.config.physics.hbar) * (
             kinetic + eff_energy * psi
-        ) + gain_loss * psi
+        ) + gain_loss * psi + eta * n_active * hbar_over_2m * lap
 
         return dpsi_dt, res_derivs
