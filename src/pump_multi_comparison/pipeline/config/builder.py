@@ -304,6 +304,7 @@ def build_scenario_lasers(
             cutoff_sigma=float(merged.get("cutoff_sigma", 3.0)),
             delay=delay,
             n_pulses=int(merged.get("n_pulses", 0)),
+            power_definition=str(merged.get("power_definition", "peak_amplitude")),
         )
         lasers.append(PulseGaussian(laser_cfg, grid.X, grid.Y))
 

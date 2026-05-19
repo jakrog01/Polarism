@@ -152,6 +152,7 @@ def expand_parameter_sweep(
                             "sigma_time": float(sigma_time),
                             "sigma_space": float(sigma_space),
                             "n_pulses": first_laser_n_pulses,
+                            "power_definition": str(defaults.get("power_definition", "peak_amplitude")),
                         }
                         expanded_scenarios.append(sc)
 

@@ -80,6 +80,7 @@ class LaserParameters:
     cutoff_sigma: float = 3.0
     delay: float = 0.0
     n_pulses: int = 0
+    power_definition: str = "peak_amplitude"
 
 
 @dataclass

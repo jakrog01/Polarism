@@ -66,4 +66,17 @@ The Slurm pipeline in `src/pump_multi_comparison/` writes a richer run directory
 - per-scenario plots
 - cross-scenario summary artifacts
 
+For pulsed Gaussian runs, scalar sidecars include both local pump strength and
+integrated pump-dose diagnostics:
+
+| Scalar | Meaning |
+| --- | --- |
+| `P_max` | maximum local pump value on the grid at the recorded time |
+| `P_area_integral` | instantaneous spatial integral of the pump field, \(\sum P\,dx\,dy\) |
+| `P_cumulative_area_time_integral` | cumulative delivered dose, accumulated every time step as \(P_{\mathrm{area}}\,dt\) |
+
+When `power_definition: pulse_energy` is used, `P_max` changes with
+`sigma_space`, while `P_area_integral` and its cumulative integral are the
+quantities that verify fixed total pulse dose.
+
 Use the library storage path for single runs and the pipeline run directory for campaign-style sweeps.

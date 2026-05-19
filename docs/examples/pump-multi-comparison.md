@@ -94,10 +94,27 @@ multi-laser scenario schema built around reusable YAML anchors:
   expression
 - `power_modifiers` scales selected laser IDs using threshold-relative power
   expressions such as `0.9P`
+- `laser_defaults.power_definition` controls whether pulsed Gaussian `power`
+  values are local peak amplitudes or integrated per-pulse doses
 
 This keeps the scenario description readable while remaining flexible for
 regular or irregular spatial layouts. The older relational `timing:` syntax is
 not part of the current schema.
+
+For geometry-sensitive pulsed campaigns, use:
+
+```yaml
+global:
+  laser_defaults:
+    laser_type: pulse-gaussian
+    power_definition: pulse_energy
+```
+
+In this mode, `parameter_sweep.power_values`, per-laser `power`, and
+`power_modifiers` all scale the integrated dose of each pulse.  The local
+centre amplitude is derived from the spot size and pulse duration.  This avoids
+the common error where increasing `sigma_space` at fixed peak amplitude also
+increases the total injected reservoir population.
 
 For pulsed Gaussian lasers, `n_pulses` has two distinct meanings:
 
@@ -135,8 +152,8 @@ Primary artifacts:
 | `psi_sq.png` | real-space condensate-density snapshots, including peak frame |
 | `psi_k.png` | log k-space power snapshots |
 | `nA.png`, `nI.png` | active/inactive reservoir fields for `quadratic-double` |
-| `<scenario>_scalars.npz` | scalar traces, including high-k metrics |
-| `<scenario>_meta.json` | grid, laser, solver, and initial-condition metadata |
+| `<scenario>_scalars.npz` | scalar traces, including high-k metrics and pump-dose integrals |
+| `<scenario>_meta.json` | grid, laser, solver, initial-condition, and effective pump-definition metadata |
 
 Interpretation:
 

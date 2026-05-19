@@ -164,17 +164,6 @@ class _SearchInfra:
         return state
 
 
-def _p_time_pure(t: float, pulse_separation: float,
-                 cutoff_sigma: float, sigma_time: float) -> float:
-    """Return the pulse envelope at time t."""
-    phase = cutoff_sigma * sigma_time
-    n = max(0, round((t - phase) / pulse_separation))
-    dt_val = t - n * pulse_separation - phase
-    if abs(dt_val) > cutoff_sigma * sigma_time:
-        return 0.0
-    return math.exp(-0.5 * (dt_val / sigma_time) ** 2)
-
-
 def _run_simulation_kernel(
     infra: _SearchInfra,
     lasers: list,
@@ -210,7 +199,7 @@ def _run_simulation_kernel(
             if t_eff < 0:
                 continue
             amp = laser._amplitude(t_eff)
-            pt = _p_time_pure(t_eff, laser.pulse_separation, laser.cutoff_sigma, laser.sigma_time)
+            pt = laser._P_time(t_eff)
             temporal = float(amp) * pt
             if temporal != 0.0:
                 contrib = temporal * spatial_profiles[i]
@@ -239,6 +228,7 @@ def evaluate_threshold(
     sigma_space: float,
     cutoff_sigma: float,
     n_pulses: int = 0,
+    power_definition: str = "peak_amplitude",
 ) -> dict[str, Any]:
     """Evaluate one parameter combination for condensation (single-laser proxy).
 
@@ -257,10 +247,10 @@ def evaluate_threshold(
         sigma_space=sigma_space, sigma_time=sigma_time,
         pulse_separation=pulse_sep, cutoff_sigma=cutoff_sigma,
         n_pulses=n_pulses,
+        power_definition=power_definition,
     )
     laser = PulseGaussian(laser_cfg, infra.grid.X, infra.grid.Y)
-    spatial_profile = laser._P_space(infra.grid.X, infra.grid.Y)
-    return _run_simulation_kernel(infra, [laser], [spatial_profile])
+    return _run_simulation_kernel(infra, [laser], [laser._spatial_envelope])
 
 
 def evaluate_threshold_scenario(
@@ -300,7 +290,7 @@ def evaluate_threshold_scenario(
         "pulse_separation": pulse_sep,
     }
     lasers, _ = build_scenario_lasers(scenario, global_cfg, fake_threshold, infra.grid, rng)
-    spatial_profiles = [laser._P_space(infra.grid.X, infra.grid.Y) for laser in lasers]
+    spatial_profiles = [laser._spatial_envelope for laser in lasers]
     return _run_simulation_kernel(infra, lasers, spatial_profiles)
 
 
@@ -316,6 +306,7 @@ def _run_search_loop(
     n_pulses: int = 0,
     scenario: dict[str, Any] | None = None,
     global_cfg: dict[str, Any] | None = None,
+    power_definition: str = "peak_amplitude",
 ) -> tuple[dict[str, Any] | None, int, float]:
     """Search for the minimum pump power that achieves condensation.
 
@@ -381,7 +372,8 @@ def _run_search_loop(
                     )
                 else:
                     result = evaluate_threshold(
-                        infra, power, sigma_time, pulse_sep, sigma_space, cutoff_sigma, n_pulses,
+                        infra, power, sigma_time, pulse_sep, sigma_space, cutoff_sigma,
+                        n_pulses, power_definition,
                     )
 
                 if result["condensed"]:
@@ -438,6 +430,7 @@ def main() -> None:
 
     sigma_space: float = defaults.get("sigma_space", 5.0)
     cutoff_sigma: float = defaults.get("cutoff_sigma", 3.0)
+    power_definition: str = defaults.get("power_definition", "peak_amplitude")
     power_values = sorted(ts["power_values"])
     sigma_time_values = sorted(ts["sigma_time_values"])
     pulse_sep_formula: str | None = ts.get("pulse_separation_formula")
@@ -485,6 +478,7 @@ def main() -> None:
         n_pulses=n_pulses,
         scenario=first_scenario,
         global_cfg=g,
+        power_definition=power_definition,
     )
 
     output: dict[str, Any] = {
@@ -500,6 +494,7 @@ def main() -> None:
         output["ly"] = g["grid"]["ly"]
         output["sigma_space"] = sigma_space
         output["cutoff_sigma"] = cutoff_sigma
+        output["power_definition"] = power_definition
     else:
         print("\n  ERROR: no parameter combination achieved condensation!")
         print("  Consider increasing power range or condensation_fraction.")

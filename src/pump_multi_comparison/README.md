@@ -120,13 +120,39 @@ Scenario timing is deterministic:
   used in memory/pulse-train campaigns and must not be read as "one pulse"
 - the legacy relational `timing:` block is no longer supported
 
-Scenario power remains threshold-relative:
+Scenario power expressions can remain threshold-relative:
 
 - per-laser `power` accepts numeric literals and `P`-relative forms such as `1.0P` and `0.6P`
 - scenario-level `power_modifiers` can target explicit laser IDs
 - tags remain optional metadata and can also be matched, but IDs are the primary targeting path
 - the finalize-stage `summary.png` contains comparison traces only; field snapshots
   are written as per-scenario plots instead of being embedded in the summary sheet
+
+For `pulse-gaussian` lasers, the physical meaning of `power` is controlled by
+`laser_defaults.power_definition` or a per-laser override:
+
+| `power_definition` | Meaning of `power` / `P` |
+| --- | --- |
+| `peak_amplitude` | local peak source density at the Gaussian centre; legacy default |
+| `pulse_energy` | integrated dose delivered by one pulse over space and time |
+
+Production spot-size and geometry campaigns should use `pulse_energy`.  At
+fixed `peak_amplitude`, increasing `sigma_space` increases the total injected
+reservoir population roughly as the spot area; this is not a fair comparison
+between different pump sizes.  In `pulse_energy` mode the Gaussian is normalized
+by its discrete spatial integral and truncated temporal integral, so widening
+the spot lowers the local `P_max` while preserving the total pulse dose.
+
+The scenario scalar sidecar records both views:
+
+- `P_max`: local maximum pump value on the grid
+- `P_area_integral`: instantaneous spatial integral of the pump field
+- `P_cumulative_area_time_integral`: cumulative delivered dose, integrated every
+  simulation time step
+
+`scenario_meta.json` writes `effective_power_definition` and per-laser
+normalization details, including the input power, effective centre amplitude,
+spatial integral, and temporal integral when `pulse_energy` is active.
 
 ## Threshold Search
 
@@ -333,7 +359,7 @@ Interpretation:
 
 | Key | Required | Description |
 |-----|----------|-------------|
-| `power_values` | ✓ | Candidate threshold powers scanned in ascending order |
+| `power_values` | ✓ | Candidate threshold powers scanned in ascending order; for `pulse-gaussian`, units follow `laser_defaults.power_definition` |
 | `sigma_time_values` | ✓ | Candidate pulse durations scanned in ascending order |
 | `pulse_separation_values` | conditional | Explicit candidate separations; use this or `pulse_separation_formula` |
 | `pulse_separation_formula` | conditional | Arithmetic expression deriving separation from `sigma_time` / `cutoff_sigma` |

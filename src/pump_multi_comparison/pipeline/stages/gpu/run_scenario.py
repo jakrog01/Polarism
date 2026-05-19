@@ -425,12 +425,16 @@ def main() -> None:
     ]
     centering = _compute_laser_centering(sim_cfg, lasers, laser_ids)
 
+    first_laser_power_def = (
+        getattr(lasers[0], "power_definition", "peak_amplitude") if lasers else "peak_amplitude"
+    )
     meta: dict = {
         "scenario": scenario_name,
         "scenario_index": scenario_index,
         "initial_condition": ic_meta,
         "P_threshold": threshold["P_threshold"],
         "effective_power": float(lasers[0].P0) if lasers else None,
+        "effective_power_definition": first_laser_power_def,
         "t_cond": t_cond,
         "h5_file": f"{scenario_name}.h5" if output_policy.archive_raw_hdf5 else None,
         "sidecar_file": f"{scenario_name}_scalars.npz",
@@ -453,7 +457,20 @@ def main() -> None:
             {
                 "id": laser_ids[i] if i < len(laser_ids) else f"laser_{i}",
                 "x0": float(laser.x0), "y0": float(laser.y0),
-                "P0": float(laser.P0), "sigma_time": float(laser.sigma_time),
+                "P0": float(laser.P0),
+                "input_power": float(laser.P0),
+                "power_definition": getattr(laser, "power_definition", "peak_amplitude"),
+                **(
+                    {
+                        "pulse_energy": float(laser.P0),
+                        "peak_amplitude_at_center": float(laser.peak_amplitude_at_center),
+                        "space_integral": float(laser.spatial_integral),
+                        "time_integral": float(laser.temporal_integral),
+                    }
+                    if getattr(laser, "power_definition", "peak_amplitude") == "pulse_energy"
+                    else {}
+                ),
+                "sigma_time": float(laser.sigma_time),
                 "sigma_space": float(laser.sigma_space),
                 "pulse_separation": float(laser.pulse_separation),
                 "n_pulses": int(getattr(laser, "n_pulses", 0)),

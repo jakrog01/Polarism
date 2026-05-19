@@ -112,23 +112,8 @@ def _compute_kspace_metrics(psi, k_r, k_nyquist_min: float, xp) -> dict:
 
 
 def _precompute_spatial_profiles(lasers: list, grid: object) -> list:
-    """Precompute the spatial pump profile for each laser."""
-    return [laser._P_space(grid.X, grid.Y) for laser in lasers]
-
-
-def _p_time_pure(
-    t: float,
-    pulse_separation: float,
-    cutoff_sigma: float,
-    sigma_time: float,
-) -> float:
-    """Return the pulse envelope at time t."""
-    phase = cutoff_sigma * sigma_time
-    n = max(0, round((t - phase) / pulse_separation))
-    dt_val = t - n * pulse_separation - phase
-    if abs(dt_val) > cutoff_sigma * sigma_time:
-        return 0.0
-    return math.exp(-0.5 * (dt_val / sigma_time) ** 2)
+    """Return the cached normalized spatial envelope for each laser."""
+    return [laser._spatial_envelope for laser in lasers]
 
 
 def _precompute_spatial_maxes(profiles: list, xp: object) -> list:
@@ -136,31 +121,41 @@ def _precompute_spatial_maxes(profiles: list, xp: object) -> list:
     return [float(xp.max(p)) for p in profiles]
 
 
+def _precompute_profile_area_integrals(
+    profiles: list, cell_area: float, xp: object
+) -> list:
+    """Precompute sum(profile) * cell_area for each spatial profile."""
+    return [float(xp.sum(p)) * cell_area for p in profiles]
+
+
 def _compute_pump_fast(
     lasers: list,
     profiles: list,
     spatial_maxes: list,
+    profile_area_integrals: list,
     t: float,
     xp: object,
     P_zero: object,
 ) -> tuple:
-    """Build the total pump field and per-laser peaks."""
+    """Build the total pump field, per-laser peaks, and instantaneous area integral."""
     P_total = P_zero.copy()
     per_laser_max = []
+    P_area_integral = 0.0
     for i, laser in enumerate(lasers):
         t_eff = t - laser.delay
         if t_eff < 0:
             per_laser_max.append(0.0)
             continue
         amp = laser._amplitude(t_eff)
-        pt = _p_time_pure(t_eff, laser.pulse_separation, laser.cutoff_sigma, laser.sigma_time)
+        pt = laser._P_time(t_eff)
         temporal = float(amp) * pt
         if temporal == 0.0:
             per_laser_max.append(0.0)
             continue
         P_total += temporal * profiles[i]
         per_laser_max.append(temporal * spatial_maxes[i])
-    return P_total, per_laser_max
+        P_area_integral += temporal * profile_area_integrals[i]
+    return P_total, per_laser_max, P_area_integral
 
 
 def _active_inactive_reservoir_fields(reservoir: object, inactive_zero: object):
@@ -300,6 +295,8 @@ def run_simulation_from_config(
         "high_k_frac_0p5_nyq", "high_k_frac_0p8_nyq",
         "k_peak_um", "k_centroid_um",
         "P_max",
+        "P_area_integral",
+        "P_cumulative_area_time_integral",
         "nyquist_k_um",
         "estimated_nyquist_damping_max",
         "estimated_nyquist_growth_margin_max",
@@ -315,8 +312,11 @@ def run_simulation_from_config(
 
     spatial_profiles = _precompute_spatial_profiles(lasers, grid)
     spatial_maxes = _precompute_spatial_maxes(spatial_profiles, xp)
+    cell_area = float(grid.dx * grid.dy)
+    profile_area_integrals = _precompute_profile_area_integrals(spatial_profiles, cell_area, xp)
     P_zero = xp.zeros((grid.ny, grid.nx), dtype=xp.float64)
     inactive_zero = xp.zeros((grid.ny, grid.nx), dtype=xp.float64)
+    cumulative_pump = 0.0
 
     N_initial = float(xp.sum(xp.abs(state.psi) ** 2))
     t_cond = None
@@ -329,9 +329,10 @@ def run_simulation_from_config(
             t = step * dt
             last_t = t
 
-            P_total, per_laser_max = _compute_pump_fast(
-                lasers, spatial_profiles, spatial_maxes, t, xp, P_zero
+            P_total, per_laser_max, P_area_integral_step = _compute_pump_fast(
+                lasers, spatial_profiles, spatial_maxes, profile_area_integrals, t, xp, P_zero
             )
+            cumulative_pump += P_area_integral_step * dt
             solver.step(potential, P_total, reservoir, bc, state)
 
             if step > 0 and step % CHECK_EVERY == 0:
@@ -366,6 +367,8 @@ def run_simulation_from_config(
                     "k_peak_um": kspace_metrics["k_peak_um"],
                     "k_centroid_um": kspace_metrics["k_centroid_um"],
                     "P_max": float(xp.max(P_total)),
+                    "P_area_integral": P_area_integral_step,
+                    "P_cumulative_area_time_integral": cumulative_pump,
                     "nyquist_k_um": k_nyquist_min,
                     "estimated_nyquist_damping_max": damping_nyq,
                     "estimated_nyquist_growth_margin_max": gain_amp - damping_nyq,

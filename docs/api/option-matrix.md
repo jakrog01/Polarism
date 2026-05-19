@@ -31,7 +31,14 @@ This page collects the main configuration choices in one place. It is meant as a
 | `uniform` | the pump should be spatially homogeneous | simplest driven case |
 | `continuous-gaussian` | you want a localized continuous spot | common default for a single focused pump |
 | `continuous-exp` | you want a localized pump with longer radial tails than a Gaussian | matches the current implementation exactly |
-| `pulse-gaussian` | you want repeated pulsed excitation with Gaussian spot shape | supports amplitude ramping from `P0` up to `Pmax` |
+| `pulse-gaussian` | you want repeated pulsed excitation with Gaussian spot shape | supports per-pulse strength ramping from `P0` up to `Pmax`; choose `power_definition` carefully |
+
+For pulsed Gaussian studies:
+
+| `power_definition` | Use when | Notes |
+| --- | --- | --- |
+| `peak_amplitude` | reproducing legacy fixed-spot runs | fixed `P0` means fixed centre density, not fixed total dose |
+| `pulse_energy` | comparing spot sizes or geometries | fixed `P0` means fixed integrated pulse dose over space and time |
 
 ## Laser mode
 

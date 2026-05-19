@@ -37,6 +37,7 @@ global:
     laser_type: pulse-gaussian
     sigma_space: 1.0
     cutoff_sigma: 3.0
+    power_definition: pulse_energy
 
   threshold_search:
     max_runtime_minutes: 60

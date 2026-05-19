@@ -93,11 +93,20 @@ def main() -> None:
             f"{'%.1f ps' % t_cond if t_cond is not None else 'NO CONDENSATION'}"
         )
 
+    power_definitions: dict = {}
+    for name in scenarios:
+        meta = load_scenario_meta(run_dir, name)
+        pd = meta.get("effective_power_definition")
+        if pd:
+            power_definitions[name] = pd
+
     summary = {
         "run_dir": run_dir,
         "mode": threshold.get("mode", "threshold_search"),
+        "power_definition": threshold.get("power_definition", "peak_amplitude"),
         "P_threshold": threshold["P_threshold"],
         **({"effective_powers": effective_powers} if is_sweep else {}),
+        **({"power_definitions": power_definitions} if power_definitions else {}),
         "routines": routines_summary,
     }
     summary_path = os.path.join(run_dir, "results_summary.json")

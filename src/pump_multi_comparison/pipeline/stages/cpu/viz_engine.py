@@ -32,7 +32,9 @@ FIELD_SPECS = {
 SCALAR_MAP = {"psi_sq": "psi_sq_max", "nI": "nI_max", "nA": "nA_max", "Pump": "P_max"}
 _PEAK_FIELDS: frozenset[str] = frozenset({"psi_sq", "nI", "nA"})
 COMPARISON_SCALARS = [
-    ("P_max", r"$P_{max}$"),
+    ("P_max", r"$P_{max}$ (local peak)"),
+    ("P_area_integral", r"$\int P\,dA$ (pump area integral)"),
+    ("P_cumulative_area_time_integral", r"$\int\!\!\int P\,dA\,dt$ (cumulative dose)"),
     ("psi_sq_max", r"$|\psi|^2_{max}$"),
     ("nI_max", r"$n_I^{max}$"),
     ("nA_max", r"$n_{active}^{max}$"),
@@ -235,7 +237,9 @@ def generate_scalar_traces(
     npz = np.load(sidecar)
     time = npz["time"]
     panels = [
-        ("P_max", r"$P_{max}$"),
+        ("P_max", r"$P_{max}$ (local peak)"),
+        ("P_area_integral", r"$\int P\,dA$"),
+        ("P_cumulative_area_time_integral", r"$\int\!\!\int P\,dA\,dt$ (dose)"),
         ("psi_sq_max", r"$|\psi|^2_{max}$"),
         ("nI_max", r"$n_I^{max}$"),
         ("nA_max", r"$n_{active}^{max}$"),
@@ -406,7 +410,16 @@ def generate_sweep_heatmaps(
         for key in npz.files:
             if key.startswith("roi_"):
                 metrics[key] = float(np.nanmax(npz[key]))
-        rows.append({"sigma_space": 0.0, **sweep, "routine": routine, "metrics": metrics})
+        rows.append({
+            "sigma_space": 0.0,
+            **sweep,
+            "effective_power_definition": meta.get(
+                "effective_power_definition",
+                sweep.get("power_definition", "peak_amplitude"),
+            ),
+            "routine": routine,
+            "metrics": metrics,
+        })
 
     if not rows:
         return
@@ -440,6 +453,16 @@ def generate_sweep_heatmaps(
                 if not powers or not separations:
                     continue
 
+                power_def = next(
+                    (str(row.get("effective_power_definition", "peak_amplitude")) for row in sigma_rows),
+                    "peak_amplitude",
+                )
+                power_axis_label = (
+                    "pulse energy (model units)"
+                    if power_def == "pulse_energy"
+                    else "peak amplitude"
+                )
+
                 fig = plt.figure(
                     figsize=(max(5.0, 3.0 * len(metric_keys)), 4.8),
                     constrained_layout=True,
@@ -457,7 +480,7 @@ def generate_sweep_heatmaps(
                     im = ax.imshow(arr, origin="lower", aspect="auto", cmap="viridis")
                     ax.set_title(metric_labels.get(key, _roi_label(key)), fontsize=9)
                     ax.set_xlabel("pulse separation (ps)")
-                    ax.set_ylabel("power" if col == 0 else "")
+                    ax.set_ylabel(power_axis_label if col == 0 else "")
                     ax.set_xticks(range(len(separations)), [f"{v:g}" for v in separations], rotation=45)
                     ax.set_yticks(range(len(powers)), [f"{v:g}" for v in powers])
                     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
@@ -504,6 +527,10 @@ def _load_sweep_diagnostic_rows(routines: list[str], data_dir: str) -> list[dict
         rows.append({
             "sigma_space": 0.0,
             **sweep,
+            "effective_power_definition": meta.get(
+                "effective_power_definition",
+                sweep.get("power_definition", "peak_amplitude"),
+            ),
             "routine": routine,
             "time": np.array(npz["time"], dtype=float),
             "psi_sq_max": np.array(npz["psi_sq_max"], dtype=float) if "psi_sq_max" in npz else None,
@@ -558,6 +585,16 @@ def generate_sweep_diagnostics(
                 if not powers or not separations:
                     continue
 
+                power_def = next(
+                    (str(row.get("effective_power_definition", "peak_amplitude")) for row in sigma_rows),
+                    "peak_amplitude",
+                )
+                power_axis_label = (
+                    "pulse energy (model units)"
+                    if power_def == "pulse_energy"
+                    else "peak amplitude"
+                )
+
                 maps = {
                     "log10 psi peak / psi0": np.full((len(powers), len(separations)), np.nan),
                     "log10 psi final / psi0": np.full((len(powers), len(separations)), np.nan),
@@ -602,7 +639,7 @@ def generate_sweep_diagnostics(
                     im = ax.imshow(arr, origin="lower", aspect="auto", cmap="viridis")
                     ax.set_title(title, fontsize=10)
                     ax.set_xlabel("pulse separation (ps)")
-                    ax.set_ylabel("power" if idx % 3 == 0 else "")
+                    ax.set_ylabel(power_axis_label if idx % 3 == 0 else "")
                     ax.set_xticks(range(len(separations)), [f"{v:g}" for v in separations])
                     ax.set_yticks(range(len(powers)), [f"{v:g}" for v in powers])
                     for pi, _ in enumerate(powers):

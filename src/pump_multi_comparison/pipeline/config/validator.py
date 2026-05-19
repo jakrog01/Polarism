@@ -122,6 +122,31 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
     if global_laplacian is not None:
         errors.extend(_validate_laplacian("global.solver", global_laplacian))
 
+    laser_defaults = g.get("laser_defaults", {})
+    power_def = laser_defaults.get("power_definition", "peak_amplitude")
+    _valid_power_defs = {"peak_amplitude", "pulse_energy"}
+    if power_def not in _valid_power_defs:
+        errors.append(
+            f"global.laser_defaults.power_definition={power_def!r} must be one of "
+            f"{sorted(_valid_power_defs)}"
+        )
+    if power_def == "pulse_energy":
+        for key in ("sigma_space", "sigma_time", "cutoff_sigma"):
+            val = laser_defaults.get(key)
+            if val is not None:
+                try:
+                    fv = float(val)
+                    if not (math.isfinite(fv) and fv > 0):
+                        errors.append(
+                            f"global.laser_defaults.{key}={val!r} must be positive when "
+                            "power_definition=pulse_energy"
+                        )
+                except (TypeError, ValueError):
+                    errors.append(
+                        f"global.laser_defaults.{key}={val!r} must be a positive number when "
+                        "power_definition=pulse_energy"
+                    )
+
     sweep_enabled = parameter_sweep_enabled(cfg)
     ts = g.get("threshold_search", {})
     sweep_cfg = g.get("parameter_sweep", {})
@@ -340,6 +365,13 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
                 errors.append(
                     f"Scenario '{name}' laser '{lid}'.power={power!r} is not a valid "
                     "power expression (use a number, 'P', '1.0P', etc.)"
+                )
+
+            laser_power_def = ldef.get("power_definition")
+            if laser_power_def is not None and laser_power_def not in _valid_power_defs:
+                errors.append(
+                    f"Scenario '{name}' laser '{lid}'.power_definition={laser_power_def!r} "
+                    f"must be one of {sorted(_valid_power_defs)}"
                 )
 
             if "timing" in ldef:

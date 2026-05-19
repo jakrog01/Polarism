@@ -58,15 +58,69 @@ pulse peak occurs at \(t = t_{\mathrm{delay}} + \phi\) rather than exactly at
 | `uniform` | Spatially constant continuous pump | \(S(x, y) = 1,\; A(t) = P_0,\; T(t) = 1\) |
 | `continuous-gaussian` | Continuous Gaussian spot centered at \((x_0, y_0)\) | \(S(x, y) = \exp[-((x-x_0)^2 + (y-y_0)^2)/(2 \sigma_{\mathrm{space}}^2)]\) |
 | `continuous-exp` | Continuous radially decaying pump with exponential tail | \(S(x, y) = \exp[-r / w^2],\; r = \sqrt{(x-x_0)^2 + (y-y_0)^2},\; w = \texttt{sigma\_space}\) |
-| `pulse-gaussian` | Repeated Gaussian pulses with Gaussian spot and stepwise amplitude ramp up to `Pmax` | \(S(x, y) = \exp[-((x-x_0)^2 + (y-y_0)^2)/(2 \sigma_{\mathrm{space}}^2)]\) and \(T(t) = \exp[-(t-(\phi+n\Delta t))^2/(2 \sigma_{\mathrm{time}}^2)]\) near each pulse center \(\phi+n\Delta t\), where \(\phi = \texttt{cutoff\_sigma} \cdot \sigma_{\mathrm{time}}\) |
+| `pulse-gaussian` | Repeated Gaussian pulses with Gaussian spot and stepwise strength ramp up to `Pmax` | \(S(x, y) = \exp[-((x-x_0)^2 + (y-y_0)^2)/(2 \sigma_{\mathrm{space}}^2)]\) and \(T(t) = \exp[-(t-(\phi+n\Delta t))^2/(2 \sigma_{\mathrm{time}}^2)]\) near each pulse center \(\phi+n\Delta t\), where \(\phi = \texttt{cutoff\_sigma} \cdot \sigma_{\mathrm{time}}\) |
 
 `continuous-exp` follows the current implementation exactly, including the `\exp(-r / w^2)` spatial form.
 
-For `pulse-gaussian`, `P0` is the peak amplitude of the first pulse and later
-pulse peaks ramp toward `Pmax`. At `t = delay` the pump is no longer at its
-maximum; with the default parameters it starts at about `exp(-4.5) ≈ 0.011`
-times the first-pulse peak and then rises to the first peak at
-`delay + cutoff_sigma * sigma_time`.
+For `pulse-gaussian`, the base strength of each pulse ramps from `P0` (first pulse)
+toward `Pmax`. The first pulse peaks at `delay + cutoff_sigma * sigma_time`;
+at `t = delay` the envelope is at about `exp(-4.5) ≈ 0.011` of its peak value.
+The physical meaning of `P0` depends on `power_definition`: it is the local peak
+source density at the Gaussian centre when `power_definition: peak_amplitude`,
+and the integrated per-pulse dose when `power_definition: pulse_energy`
+(see the section below).
+
+### `power_definition` — peak amplitude vs pulse energy
+
+`pulse-gaussian` supports two interpretations of `power` controlled by the
+`power_definition` field in `laser_defaults` (or per-laser override):
+
+```yaml
+laser_defaults:
+  power_definition: pulse_energy   # recommended for geometry/sigma_space sweeps
+```
+
+| Value | Meaning of `P0` / `power` | When to use |
+|---|---|---|
+| `peak_amplitude` | Local peak source density at the Gaussian centre (legacy default) | Fixed geometry, single spot size |
+| `pulse_energy` | Integrated pump dose delivered per pulse over the full domain | Any sweep over `sigma_space`, or when comparing scenarios with different spot sizes |
+
+**Why this matters for sweeps.** With `peak_amplitude`, changing `sigma_space` while keeping `power` fixed
+scales the total dose injected per pulse as \(\propto \sigma_{\mathrm{space}}^2\). A run with
+`sigma_space = 3.5 µm` injects ~22× more total dose than one with `sigma_space = 0.75 µm` at the same `P0`,
+which is the root cause of over-expanded condensates observed in spot-size sweeps.
+
+With `pulse_energy`, the normalisation is:
+
+$$
+P(x, y, t) = A(n) \cdot \frac{e^{-r^2/(2\sigma_s^2)}}{\mathcal{I}_s} \cdot \frac{e^{-\delta t^2/(2\sigma_t^2)}}{\mathcal{I}_t}
+$$
+
+where
+
+$$
+\mathcal{I}_s = \sum_{\mathrm{grid}} e^{-r^2/(2\sigma_s^2)}\, \Delta x\,\Delta y, \qquad
+\mathcal{I}_t = \sqrt{2\pi}\,\sigma_t\,\mathrm{erf}\!\left(\frac{c_\sigma}{\sqrt{2}}\right),
+$$
+
+\(c_\sigma = \texttt{cutoff\_sigma}\), and \(A(n) = P_0\) for the first pulse (ramping toward `Pmax`).
+This guarantees:
+
+$$
+\int\!\!\int P(x,y,t)\,dx\,dy\,dt \approx P_0 \quad \text{per pulse.}
+$$
+
+Increasing `sigma_space` lowers the local peak density while conserving the total pulse dose. The
+`P_max` scalar in sidecar files reflects this decrease; the `P_area_integral` time trace is independent
+of spot size for the same `pulse_energy` and temporal pulse shape.
+
+The pipeline also records `P_cumulative_area_time_integral`, a stepwise Riemann
+sum of `P_area_integral * dt`.  It is the scalar to use when checking the total
+delivered dose in long pulse trains or when comparing campaigns with different
+scalar output strides.
+
+**Migration note.** Old configs without `power_definition` default to `peak_amplitude` and are unaffected.
+All production configs in `src/pump_multi_comparison/` are updated to `pulse_energy`.
 
 For a single pump, configure the values directly on `cfg.laser`:
 
