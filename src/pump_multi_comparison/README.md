@@ -17,7 +17,8 @@ directory, and submits the full Rysy workflow as Slurm jobs connected with
 ```
 pump_multi_comparison/
 ├── submit.sh                     ← ENTRY POINT
-├── config.yaml                   ← Experiment configuration
+├── config.yaml                   ← Tracked default example
+├── scenarios/                    ← Local campaign configs; YAML files ignored by Git
 │
 ├── cluster/                      ← Rysy Slurm job wrappers
 │   ├── README.md                 ← Resource model for Rysy
@@ -154,6 +155,11 @@ The scenario scalar sidecar records both views:
 normalization details, including the input power, effective centre amplitude,
 spatial integral, and temporal integral when `pulse_energy` is active.
 
+Expanded parameter-sweep names use the same distinction: `_P...` for legacy
+`peak_amplitude` sweeps and `_E...` for `pulse_energy` sweeps.  For example,
+`single_spot_center_E400_sep20` means an integrated pulse dose of `400`, not a
+centre peak amplitude of `400`.
+
 ## Threshold Search
 
 Threshold search is no longer just a single centered-spot proxy by default.
@@ -242,7 +248,7 @@ separate physical filamentation from numerical UV/Nyquist artifacts.
 
 ## Energy-relaxation production validation
 
-`config_qdouble_energy_relaxation_production_validation.yaml` is the current
+`scenarios/config_qdouble_energy_relaxation_production_validation.yaml` is the current
 production-oriented validation campaign for the X/star artifact.  It keeps the
 pulsed `quadratic-double` model, uses `rk4-cuda`, `closed-interval` grids, CAP
 absorption, filtered stochastic seeds, and compares kinetic relaxation strengths
@@ -273,8 +279,8 @@ Run on Rysy:
 
 ```bash
 cd ~/polaritonSNN/PolaritonSNN/src/pump_multi_comparison
-bash submit.sh --config config_qdouble_energy_relaxation_production_validation.yaml --dry-run
-bash submit.sh --config config_qdouble_energy_relaxation_production_validation.yaml
+bash submit.sh --config scenarios/config_qdouble_energy_relaxation_production_validation.yaml --dry-run
+bash submit.sh --config scenarios/config_qdouble_energy_relaxation_production_validation.yaml
 ```
 
 Acceptance criteria:
@@ -317,7 +323,7 @@ non-square cells.
 
 ## Artifact-mitigation validation campaign
 
-`config_artifact_mitigation_validation.yaml` is a diagnostic campaign for the
+`scenarios/config_artifact_mitigation_validation.yaml` is a diagnostic campaign for the
 diagonal X/star-like pattern seen in `|psi|^2`.  It preserves the intended pulse
 train semantics (`n_pulses: 0`) and compares seed, resolution, domain size, and
 Laplacian effects.
@@ -337,8 +343,8 @@ Run on Rysy:
 
 ```bash
 cd ~/polaritonSNN/PolaritonSNN/src/pump_multi_comparison
-bash submit.sh --config config_artifact_mitigation_validation.yaml --dry-run
-bash submit.sh --config config_artifact_mitigation_validation.yaml
+bash submit.sh --config scenarios/config_artifact_mitigation_validation.yaml --dry-run
+bash submit.sh --config scenarios/config_artifact_mitigation_validation.yaml
 ```
 
 Interpretation:

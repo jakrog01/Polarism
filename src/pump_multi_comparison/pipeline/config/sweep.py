@@ -19,6 +19,11 @@ def _fmt_value(value: float) -> str:
     return re.sub(r"[^A-Za-z0-9_]+", "_", text)
 
 
+def _power_suffix_prefix(power_definition: str) -> str:
+    """Return the scenario-name prefix for the swept pump-strength value."""
+    return "E" if power_definition == "pulse_energy" else "P"
+
+
 def _selected_base_scenarios(
     scenarios: list[dict[str, Any]],
     sweep_cfg: dict[str, Any],
@@ -101,6 +106,8 @@ def expand_parameter_sweep(
     sweep_cfg = global_cfg["parameter_sweep"]
     defaults = global_cfg.get("laser_defaults", {})
     threshold_cfg = global_cfg.get("threshold_search", {})
+    power_definition = str(defaults.get("power_definition", "peak_amplitude"))
+    power_prefix = _power_suffix_prefix(power_definition)
 
     cutoff_sigma: float = float(defaults.get("cutoff_sigma", 3.0))
     powers = [float(v) for v in sweep_cfg["power_values"]]
@@ -135,7 +142,7 @@ def expand_parameter_sweep(
                 for sigma_space in sigma_spaces:
                     for power in powers:
                         sc = copy.deepcopy(base)
-                        suffix = f"P{_fmt_value(power)}_sep{_fmt_value(pulse_sep)}"
+                        suffix = f"{power_prefix}{_fmt_value(power)}_sep{_fmt_value(pulse_sep)}"
                         if multiple_sigma:
                             suffix += f"_sig{_fmt_value(sigma_time)}"
                         if multiple_sigma_space:
@@ -152,7 +159,8 @@ def expand_parameter_sweep(
                             "sigma_time": float(sigma_time),
                             "sigma_space": float(sigma_space),
                             "n_pulses": first_laser_n_pulses,
-                            "power_definition": str(defaults.get("power_definition", "peak_amplitude")),
+                            "power_definition": power_definition,
+                            "power_label": power_prefix,
                         }
                         expanded_scenarios.append(sc)
 
@@ -164,6 +172,7 @@ def expand_parameter_sweep(
         "search_completed": True,
         "mode": "parameter_sweep",
         "P_threshold": 1.0,
+        "power_definition": power_definition,
         "sigma_time": sigma_times[0],
         "pulse_separation": separations[0],
         "cutoff_sigma": cutoff_sigma,
@@ -172,4 +181,3 @@ def expand_parameter_sweep(
         "ly": float(grid.get("ly", 100.0)),
     }
     return expanded_cfg, names, threshold_stub
-

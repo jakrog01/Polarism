@@ -22,7 +22,7 @@ global:
     absorption: cap
 
   solver:
-    total_time: 350.0
+    total_time: 450.0
     dt: 0.001
     method: rk4-cuda
 
@@ -40,13 +40,15 @@ global:
     condensation_fraction: 0.7
     dt_multiplier: 5
     n_pulses: 0
+    # power_definition: pulse_energy means these are integrated per-pulse doses.
+    # For sigma_space=0.75 and sigma_time=0.85, E≈375 gives the same centre
+    # peak density as the old peak_amplitude P0=50 configuration.
     power_values:
-      - 0.1
-      - 0.5
-      - 1.0
-      - 2.0
-      - 5.0
-      - 10.0
+      - 25.0
+      - 50.0
+      - 100.0
+      - 200.0
+      - 400.0
     sigma_time_values:
       - 0.85
       - 1.7
@@ -55,14 +57,10 @@ global:
   parameter_sweep:
     enabled: true
     power_values:
-      - 1.0
-      - 2.0
-      - 5.0
-      - 10.0
-      - 20.0
-      - 50.0
       - 100.0
       - 200.0
+      - 400.0
+      - 800.0
     sigma_time_values:
       - 0.85
     pulse_separation_values:

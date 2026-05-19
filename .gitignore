@@ -17,3 +17,8 @@ slurm.env
 !.github/workflows/*.yml
 site/
 src/dot_response_fit/runs/
+
+# Local pump_multi_comparison campaign/scenario configs.
+# Keep src/pump_multi_comparison/config.yaml as the tracked default example;
+# store ad-hoc validation and production campaigns here.
+src/pump_multi_comparison/scenarios/*.yaml

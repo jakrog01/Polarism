@@ -127,8 +127,10 @@ This is important when interpreting repeated reservoir excitation. A run with
 
 ## Current artifact-diagnostics workflow
 
-The repository includes `config_artifact_mitigation_validation.yaml` to diagnose
-the diagonal X/star-like spatial pattern that can appear in `|psi|^2`.
+Local validation campaigns are kept under `src/pump_multi_comparison/scenarios/`
+and ignored by Git.  One such local campaign,
+`scenarios/config_artifact_mitigation_validation.yaml`, diagnoses the diagonal
+X/star-like spatial pattern that can appear in `|psi|^2`.
 
 The config does not change the physical GPE during time evolution. It compares:
 
@@ -141,8 +143,8 @@ Run it from a Rysy login node:
 
 ```bash
 cd ~/polaritonSNN/PolaritonSNN/src/pump_multi_comparison
-bash submit.sh --config config_artifact_mitigation_validation.yaml --dry-run
-bash submit.sh --config config_artifact_mitigation_validation.yaml
+bash submit.sh --config scenarios/config_artifact_mitigation_validation.yaml --dry-run
+bash submit.sh --config scenarios/config_artifact_mitigation_validation.yaml
 ```
 
 Primary artifacts:
