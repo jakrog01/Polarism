@@ -84,24 +84,26 @@ Per-scenario HDF5 output is now created through `polarism.results.storage.create
 
 This keeps storage mechanics in the library and leaves the pipeline responsible for scheduling, manifests, and scenario-level orchestration.
 
-## Streaming animation path
+## Scenario animation path
 
 Scenario movies are now rendered through the reusable
-`polarism.results` animation stack rather than by a post-hoc HDF5 reader.  When
-`output.render_animation: true`, `run_scenario.py` creates an
-`AnimationVisitor` before the simulation starts and passes it into the
-simulation core.  Frames are streamed at the same cadence as field snapshots.
+`pipeline.render.nvenc_stream` HDF5 renderer while the HDF5 file is still on
+node-local scratch.  When `output.render_animation: true`, `run_scenario.py`
+first completes the numerical simulation and closes the HDF5 writer, then the
+renderer scans all recorded frames to compute global colour limits before
+streaming RGB frames into ffmpeg.
 
-This path is designed to avoid the previous failure mode where long jobs could
-finish the numerical simulation and then hang inside the animation renderer.
+This two-pass post-render path avoids early-frame autoscaling: delayed
+condensation in multi-pulse runs no longer saturates the movie just because the
+first frames were nearly empty.
 
 Important operational details:
 
 - ffmpeg is resolved from `FFMPEG_BIN` first, then `PATH`
 - `RENDER_ENCODER` is respected when set
-- the selected encoder runs a real preflight encode before any simulation work
 - encoder stderr is written to a temporary file instead of a pipe, avoiding pipe-buffer deadlocks
-- animation errors abort only the animation visitor; HDF5 and scalar sidecars are still finalized
+- colour limits are scanned over the full HDF5 trajectory; low-density values use physical zero as black
+- animation errors happen after HDF5, sidecar, and PNG generation; these artifacts are copied back before the scenario exits nonzero
 - scenario metadata records `animation_status` and `animation_error`
 - if animation was required and failed, the scenario exits with code `2` after artifact copy-back
 
@@ -112,13 +114,19 @@ The default panel set is:
 | `psi` | condensate wavefunction | `abs2` |
 | `nA` | active reservoir, stored under this legacy name for all reservoir models | none |
 | `nI` | inactive reservoir | none |
-| `Pump` | total pump field | power-normalized colour map |
 
 For `quadratic-double`, the reusable `polarism` model calls the active reservoir
 `nR`, but the pipeline writes that active field as `nA` in HDF5 and animations
 for backward compatibility.
 
-For delayed-growth or multi-pulse cases, fixed colour limits are recommended:
+`Pump` is intentionally not part of the default movie panel set.  Narrow pulses
+can be much shorter than the field-record cadence, so a movie frame may sample
+an arbitrary phase of the pulse and visually under-report the true pump peak.
+Use `Pump.png`, `P_max`, `P_area_integral`, and
+`P_cumulative_area_time_integral` for pump diagnostics.
+
+Automatic global colour limits are the default.  Fixed limits can still be set
+when comparing multiple movies on exactly the same visual scale:
 
 ```yaml
 output:

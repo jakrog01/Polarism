@@ -24,14 +24,47 @@
 | `nx`, `ny` | number of grid points | positive integers |
 | `lx`, `ly` | physical box lengths | positive floats |
 
+## Validation
+
+`validate_config(cfg)` raises `ConfigValidationError` for physically invalid
+values and issues `UserWarning` for numerically risky but not strictly invalid
+configurations.  Checks include:
+
+- `hbar > 0`, `m_eff > 0`
+- all decay/scattering/transfer rates (`gamma_C`, `gamma_R`, `gamma_I`,
+  `gamma_A`, `R`, `R_IA`, `R_AI`, `kappa`) are `>= 0`
+- all relaxation/diffusion coefficients (`kinetic_relaxation_eta`,
+  `reservoir_diffusion_I/A/R`) are `>= 0`
+- `init_eps >= 0`; `init_mode` is a recognised value; `init_k_cutoff_um > 0`
+  is required when `init_mode='filtered_complex_gaussian'`
+- `boundary_condition.strength >= 0`; `mask_width_percent` in `[0, 0.5]`;
+  `profile_type` in `{'sin2', 'parabolic'}` when absorption is active
+- `laser.sigma_space > 0`; `sigma_time > 0` and `cutoff_sigma > 0` for
+  `pulse-gaussian`; `pulse_separation > 0` when `n_pulses > 1`; `n_pulses >= 0`
+- `power_definition` in `{'peak_amplitude', 'pulse_energy'}`
+
+Stability warnings are emitted for explicit FDM/RK4 solvers when:
+
+- `solver.dt` exceeds the RK4 kinetic-term threshold
+  `~sqrt(2) * m_eff * dx_min^2 / (2 * hbar)`
+- `solver.dt` exceeds the reservoir-diffusion stability limit
+  `~0.348 * dx_min^2 / D_max` for any active `reservoir_diffusion_*` coefficient
+- `solver.dt` exceeds the effective diffusion threshold for
+  `kinetic_relaxation_eta`, computed as
+  `~0.348 * dx_min^2 / (eta * n_active_ref * hbar / 2m)`, with
+  `n_active_ref = max(1, gamma_C/R)` or `1` when `R=0`
+
+Warnings include the concrete values of `dt`, `dx_min`, and the offending
+coefficient so that the corrective action is unambiguous.
+
 ## Boundary-condition options
 
 | Field | Meaning | Main options |
 | --- | --- | --- |
 | `absorption` | absorbing-boundary strategy | `no-absorption`, `mask`, `cap` |
-| `profile_type` | absorption profile shape | profile-dependent string |
-| `strength` | boundary damping strength | positive float |
-| `mask_width_percent` | boundary-layer width as fraction of domain | float in `(0, 1)` |
+| `profile_type` | absorption profile shape | `sin2`, `parabolic` |
+| `strength` | boundary damping strength | nonnegative float |
+| `mask_width_percent` | boundary-layer width as fraction of domain | float in `[0, 0.5]` |
 
 ## Potential options
 
@@ -93,7 +126,7 @@ The condensate equation receives `nR` as the active reservoir density.
 | `dt` | timestep | positive float |
 | `total_time` | total simulation time | positive float |
 | `precision` | arithmetic mode where supported | typically `single`, `double` |
-| `laplacian` | finite-difference Laplacian stencil for `rk4-cuda` | `five-point`, `isotropic-9pt` |
+| `laplacian` | finite-difference Laplacian stencil for `rk4-cuda` and `rk4-cuda-v100` | `five-point`, `isotropic-9pt` |
 
 `solver.laplacian` defaults to `five-point`.  `isotropic-9pt` is available for
 square cells (`dx == dy`) and discretizes the same physical operator, `nabla^2`,

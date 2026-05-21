@@ -34,13 +34,17 @@ The package includes explicit compatibility checks and warnings. In practice:
 
 ## RK4 CUDA Laplacian Options
 
-The `rk4-cuda` solver supports a selectable finite-difference Laplacian through
-`solver.laplacian`.
+Both `rk4-cuda` and `rk4-cuda-v100` support a selectable finite-difference
+Laplacian through `solver.laplacian`.
 
 | `solver.laplacian` | Description | Notes |
 | --- | --- | --- |
 | `five-point` | nearest-neighbor 2D Laplacian | default, historical behavior |
 | `isotropic-9pt` | 9-point isotropic stencil | requires square cells (`dx == dy`) |
+
+Both CUDA solvers compile the same kernel stencil for the selected Laplacian;
+`rk4-cuda-v100` is numerically identical to `rk4-cuda` and only differs in
+block geometry and `__launch_bounds__` tuning for V100 occupancy.
 
 The 9-point stencil is a numerical discretization of the same kinetic operator,
 not a new physical term.  It is useful when high-k modes expose the angular

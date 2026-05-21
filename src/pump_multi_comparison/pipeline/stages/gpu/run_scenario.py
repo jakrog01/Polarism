@@ -1,10 +1,10 @@
-"""GPU stage: scenario simulation + inline rendering.
+"""GPU stage: scenario simulation + scratch-local rendering.
 
 Runs one scenario (identified by ``$SLURM_ARRAY_TASK_ID`` or
-``--scenario-index``), renders PNGs and an MP4 animation while the HDF5 is
-still on local scratch, then persists only lightweight artifacts to the run
-directory on ``/lu/tetyda``.  Raw HDF5 is copied to the run directory only
-when ``archive_raw_hdf5: true`` is set in the config ``output`` section.
+``--scenario-index``), renders PNGs and an animation from the HDF5 while it
+is still on local scratch, then persists only lightweight artifacts to the
+run directory on ``/lu/tetyda``.  Raw HDF5 is copied to the run directory
+only when ``archive_raw_hdf5: true`` is set in the config ``output`` section.
 
 Invoked by Slurm as:
     python -m pipeline.stages.gpu.run_scenario --run-dir <run_dir>
@@ -35,14 +35,8 @@ from pipeline.manifest.io import (
     scenario_meta_path,
     set_manifest_field,
 )
+from pipeline.render.nvenc_stream import generate_animation
 from pipeline.simulation.core import RNG_SEED, run_simulation_from_config
-from polarism.results.visitors.animation_visitor import AnimationFieldSpec, AnimationVisitor
-from polarism.results.rendering.video_encoder import (
-    _available_encoders,
-    _CPU_FALLBACK_ORDER,
-    _resolve_ffmpeg,
-    preflight_encode,
-)
 from polarism.solver.solver_compatibility import (
     SolverCompatibilityError,
     check_solver_compatibility,
@@ -167,62 +161,50 @@ _BASE_ANIMATION_PANELS = [
 ]
 
 
-def _build_animation_visitor(
-    scenario_name: str,
-    scratch_results_dir: str,
+def _build_animation_field_specs(
     clim_overrides: dict[str, tuple[float, float]] | None = None,
-) -> AnimationVisitor:
-    """Create the AnimationVisitor that streams frames during simulation.
-
-    Raises
-    ------
-    RuntimeError
-        When ffmpeg is not available or the selected encoder fails the
-        preflight encode.  Propagates before the simulation starts so
-        no results are lost.
-    """
-    ffmpeg = _resolve_ffmpeg()
-    available = _available_encoders(ffmpeg)
-    env_encoder = os.environ.get("RENDER_ENCODER")
-    if env_encoder:
-        chosen_encoder = env_encoder if env_encoder in available else None
-        if chosen_encoder is None:
-            raise RuntimeError(
-                f"RENDER_ENCODER={env_encoder!r} is not available in ffmpeg. "
-                f"Available: {', '.join(sorted(available)) or '<none>'}"
-            )
-    else:
-        chosen_encoder = next(
-            (e for e in ["h264_nvenc", *_CPU_FALLBACK_ORDER] if e in available), None
-        )
-    if chosen_encoder is None:
-        raise RuntimeError(
-            f"No video encoders available in ffmpeg binary '{ffmpeg}'. "
-            "Set FFMPEG_BIN or install a compatible ffmpeg build."
-        )
-    print(f"  [animation] preflight encode ({chosen_encoder}) ...", end="", flush=True)
-    preflight_encode(chosen_encoder, ffmpeg)
-    print(" OK", flush=True)
-
+) -> dict[str, dict]:
+    """Return movie panel specs for post-simulation HDF5 rendering."""
     overrides = clim_overrides or {}
-    panel_specs = [
-        AnimationFieldSpec(
-            source=src, cmap=cmap, transform=transform,
-            norm=norm, norm_gamma=gamma,
-            clim=overrides.get(src),
-        )
-        for src, cmap, transform, norm, gamma in _BASE_ANIMATION_PANELS
-    ]
+    specs: dict[str, dict] = {}
+    for src, cmap, transform, norm, gamma in _BASE_ANIMATION_PANELS:
+        spec: dict = {
+            "source": src,
+            "cmap": cmap,
+            "transform": transform,
+            "norm": norm,
+            "norm_gamma": gamma,
+            "zero_vmin": True,
+        }
+        clim = overrides.get(src)
+        if clim is None and src == "psi":
+            clim = overrides.get("psi_sq")
+        if clim is not None:
+            spec["clim"] = clim
+        specs[src] = spec
+    return specs
 
-    out_dir = os.path.join(scratch_results_dir, scenario_name)
-    os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, "dynamics.mp4")
-    return AnimationVisitor(
-        output_path=out_path,
-        panel_specs=panel_specs,
-        fps=8,
-        target_seconds=60,
-        encoder_name=chosen_encoder,
+
+def _render_animation_artifact(
+    scenario_name: str,
+    data_dir: str,
+    scratch_results_dir: str,
+    extent: list[float],
+    clim_overrides: dict[str, tuple[float, float]] | None = None,
+) -> None:
+    """Generate the movie from scratch-local HDF5 after the run completes.
+
+    The renderer first scans all recorded HDF5 frames to obtain global colour
+    limits.  This keeps low-density regions black and prevents late condensate
+    frames from saturating because of early-frame autoscaling.
+    """
+    field_specs = _build_animation_field_specs(clim_overrides)
+    generate_animation(
+        scenario_name,
+        field_specs,
+        extent,
+        data_dir=data_dir,
+        results_dir=scratch_results_dir,
     )
 
 
@@ -436,19 +418,12 @@ def main() -> None:
 
     scratch_results_dir = os.path.join(scratch_dir, "results")
 
-    animation_visitor = None
-    if output_policy.render_animation:
-        animation_visitor = _build_animation_visitor(
-            scenario_name, scratch_results_dir,
-            clim_overrides=output_policy.animation_clim or None,
-        )
-
     try:
         print("\n  Running simulation ...")
         t_sim_start = time.monotonic()
         t_cond, sidecar_path, ic_meta = run_simulation_from_config(
             scenario_name, lasers, sim_cfg, scratch_dir, output_policy,
-            roi_specs=roi_specs, animation_visitor=animation_visitor,
+            roi_specs=roi_specs, animation_visitor=None,
         )
         elapsed_sim = time.monotonic() - t_sim_start
     except Exception:
@@ -459,11 +434,6 @@ def main() -> None:
 
     animation_status = "disabled"
     animation_error: str | None = None
-    if animation_visitor is not None:
-        animation_status = animation_visitor.status
-        animation_error = animation_visitor.error_message
-    elif output_policy.render_animation:
-        animation_status = "failed"
 
     print("\n  Rendering PNG artifacts from scratch ...")
     try:
@@ -474,6 +444,22 @@ def main() -> None:
         print(f" WARNING: {e}", file=sys.stderr)
     if output_policy.render_snapshots:
         _render_png_artifacts(scenario_name, scratch_dir, scratch_results_dir, extent)
+    if output_policy.render_animation:
+        print("  animation ...", flush=True)
+        try:
+            _render_animation_artifact(
+                scenario_name,
+                scratch_dir,
+                scratch_results_dir,
+                extent,
+                clim_overrides=output_policy.animation_clim or None,
+            )
+            animation_status = "ok"
+        except Exception as e:
+            animation_status = "failed"
+            animation_error = str(e)
+            traceback.print_exc()
+            print(f" WARNING: animation render failed: {e}", file=sys.stderr)
 
     copyback_seconds: float = 0.0
     if using_scratch:

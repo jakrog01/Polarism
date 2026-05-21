@@ -1,7 +1,12 @@
-"""Streaming animation renderer.
+"""Post-simulation streaming animation renderer.
 
 Renders scenario fields from an HDF5 file to a video file via ffmpeg.
 Reads one frame at a time — no whole-animation preload into RAM.
+
+Colour limits are computed from the full recorded HDF5 trajectory before
+encoding.  This avoids the common online-rendering failure mode where early
+low-amplitude frames set the scale and the later condensate saturates the
+movie.
 
 Frame layout: field panels tiled horizontally into a single uint8 RGB
 buffer, streamed frame-by-frame into ffmpeg stdin.
@@ -37,7 +42,6 @@ except ImportError:
 ANIM_FPS = 8
 ANIM_TARGET_SECONDS = 60
 PUMP_NORM_GAMMA = 0.3
-N_SAMPLE_FRAMES = 20
 
 
 def _resolve_ffmpeg() -> str:
@@ -139,11 +143,12 @@ def _to_uint8_rgb(
     vmin: float,
     vmax: float,
     norm_type: str | None,
+    norm_gamma: float,
 ) -> np.ndarray:
     span = max(vmax - vmin, 1e-30)
     if norm_type == "power":
         indices = np.clip(
-            ((np.clip(arr, vmin, vmax) - vmin) / span) ** PUMP_NORM_GAMMA * 255,
+            ((np.clip(arr, vmin, vmax) - vmin) / span) ** norm_gamma * 255,
             0, 255,
         ).astype(np.uint8)
     else:
@@ -160,6 +165,62 @@ def _pad_even(frame: np.ndarray) -> np.ndarray:
     padded = np.zeros((ph, pw, 3), dtype=np.uint8)
     padded[:h, :w] = frame
     return padded
+
+
+def _coerce_clim(raw_clim: object) -> tuple[float, float] | None:
+    """Return a validated ``(vmin, vmax)`` tuple or ``None``."""
+    if raw_clim is None:
+        return None
+    if not isinstance(raw_clim, (tuple, list)) or len(raw_clim) != 2:
+        raise ValueError(f"field spec clim must be a 2-element tuple/list, got {raw_clim!r}")
+    vmin, vmax = float(raw_clim[0]), float(raw_clim[1])
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
+        raise ValueError(f"field spec clim must be finite with vmax > vmin, got {raw_clim!r}")
+    return vmin, vmax
+
+
+def _default_zero_vmin(spec: dict[str, Any]) -> bool:
+    """Return whether a field should use physical zero as black by default."""
+    if "zero_vmin" in spec:
+        return bool(spec["zero_vmin"])
+    if spec.get("transform") == "abs2":
+        return True
+    return str(spec.get("source", "")) in {"Pump", "nA", "nI", "nR"}
+
+
+def _scan_global_color_limits(
+    h5: h5py.File,
+    field_specs: dict[str, dict],
+    physical_indices: list[int],
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Scan all rendered frames and return global colour limits per field."""
+    vmins: dict[str, float] = {}
+    vmaxs: dict[str, float] = {}
+
+    for key, spec in field_specs.items():
+        fixed_clim = _coerce_clim(spec.get("clim"))
+        if fixed_clim is not None:
+            vmins[key], vmaxs[key] = fixed_clim
+            continue
+
+        local_min = 0.0 if _default_zero_vmin(spec) else float("inf")
+        local_max = float("-inf")
+        for physical_idx in physical_indices:
+            arr = _read_field(h5, spec, physical_idx)
+            if not _default_zero_vmin(spec):
+                local_min = min(local_min, float(np.nanmin(arr)))
+            local_max = max(local_max, float(np.nanmax(arr)))
+
+        if not np.isfinite(local_min):
+            local_min = 0.0
+        if not np.isfinite(local_max):
+            local_max = local_min + 1e-12
+        if local_max <= local_min:
+            local_max = local_min + 1e-12
+        vmins[key] = local_min
+        vmaxs[key] = local_max
+
+    return vmins, vmaxs
 
 
 def generate_animation(
@@ -179,7 +240,8 @@ def generate_animation(
         Scenario name; HDF5 read from ``{data_dir}/{routine}.h5``.
     field_specs : dict
         Mapping from display key to spec dict with keys: ``source``,
-        ``cmap``, optionally ``transform`` and ``norm``.
+        ``cmap``, optionally ``transform``, ``norm``, ``norm_gamma``,
+        ``zero_vmin`` and fixed ``clim``.
     extent : list[float]
         ``[xmin, xmax, ymin, ymax]`` µm — kept for API symmetry, unused here.
     data_dir : str
@@ -219,25 +281,20 @@ def generate_animation(
         anim_logical = list(range(0, n_total, stride))
         anim_physical = [int(sort_order[i]) for i in anim_logical]
 
-        sample_stride = max(1, (n_total - 1) // max(1, N_SAMPLE_FRAMES - 1))
-        sample_physical = [
-            int(sort_order[i]) for i in range(0, n_total, sample_stride)
-        ][:N_SAMPLE_FRAMES]
-
-        vmins: dict[str, float] = {}
-        vmaxs: dict[str, float] = {}
+        full_physical = [int(i) for i in sort_order]
+        print(
+            f"    Scanning global colour limits from {len(full_physical)} "
+            "recorded frames ..."
+        )
+        vmins, vmaxs = _scan_global_color_limits(h5, field_specs, full_physical)
         for k in field_keys:
-            sp = field_specs[k]
-            samples = [_read_field(h5, sp, pi) for pi in sample_physical]
-            vmins[k] = float(min(s.min() for s in samples))
-            vmaxs[k] = float(max(s.max() for s in samples))
-            if vmaxs[k] <= vmins[k]:
-                vmaxs[k] = vmins[k] + 1e-12
+            print(f"      {k}: vmin={vmins[k]:.6g}, vmax={vmaxs[k]:.6g}")
 
         probe_panels = [
             _to_uint8_rgb(
                 _read_field(h5, field_specs[k], anim_physical[0]),
                 luts[k], vmins[k], vmaxs[k], field_specs[k].get("norm"),
+                float(field_specs[k].get("norm_gamma", PUMP_NORM_GAMMA)),
             )
             for k in field_keys
         ]
@@ -275,6 +332,7 @@ def generate_animation(
                         _to_uint8_rgb(
                             _read_field(h5, field_specs[k], physical_idx),
                             luts[k], vmins[k], vmaxs[k], field_specs[k].get("norm"),
+                            float(field_specs[k].get("norm_gamma", PUMP_NORM_GAMMA)),
                         )
                         for k in field_keys
                     ]
