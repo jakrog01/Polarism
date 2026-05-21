@@ -28,13 +28,14 @@ _BLOCK_2D = (32, 8)
 
 
 def _build_kernel_source_v100(
-    bc_type: str, real_type: str, reservoir_type: str
+    bc_type: str, real_type: str, reservoir_type: str, laplacian_type: str = "five-point"
 ) -> tuple[str, str, str]:
     """Build the V100 CUDA kernel source."""
     return build_kernel_source_1d(
         bc_type,
         real_type,
         reservoir_type,
+        laplacian_type=laplacian_type,
         preamble=_PREAMBLE_2D,
         combine_preamble=_COMBINE_PREAMBLE_2D,
         launch_bounds=_LAUNCH_BOUNDS_V100,
@@ -48,7 +49,7 @@ class RK4CudaV100Solver(RK4CudaSolver):
         self, bc_type: str, real_type: str, reservoir_type: str
     ) -> tuple[str, str, str]:
         """Build the CUDA kernel source."""
-        return _build_kernel_source_v100(bc_type, real_type, reservoir_type)
+        return _build_kernel_source_v100(bc_type, real_type, reservoir_type, self._laplacian_type)
 
     def _select_block_size(self) -> tuple[int, int]:
         """Pick the CUDA block size."""
