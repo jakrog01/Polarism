@@ -183,6 +183,7 @@ def run_simulation_from_config(
     output_dir: str,
     output_policy: OutputPolicy | None = None,
     roi_specs: list[dict] | None = None,
+    animation_visitor=None,
 ) -> tuple[float | None, str, dict]:
     """Run a simulation with an explicit ``Config`` object.
 
@@ -202,6 +203,11 @@ def run_simulation_from_config(
         Recording cadence and archival flags.  Defaults are used when ``None``.
     roi_specs : list of dict or None
         Optional circular ROI definitions resolved by the pipeline config layer.
+    animation_visitor : AnimationVisitor or None
+        When provided, :meth:`~polarism.results.visitors.animation_visitor.\
+AnimationVisitor.record_frame` is called at each field-record step and
+        :meth:`~polarism.results.visitors.animation_visitor.AnimationVisitor.finalize`
+        is called after the loop completes.
 
     Returns
     -------
@@ -389,11 +395,27 @@ def run_simulation_from_config(
 
             if record_fields:
                 nA, nI = _active_inactive_reservoir_fields(reservoir, inactive_zero)
+                raw_frame = {"psi": state.psi, "nI": nI, "nA": nA, "Pump": P_total}
                 writer.record(
                     (step + 1) * dt,
-                    {"psi": state.psi, "nI": nI, "nA": nA, "Pump": P_total},
+                    raw_frame,
                     scalars,
                 )
+                if animation_visitor is not None:
+                    try:
+                        animation_visitor.record_frame(raw_frame, t=(step + 1) * dt)
+                    except Exception as _anim_exc:
+                        import sys as _sys, traceback as _tb
+                        print(
+                            f"\n    WARNING: animation encoder failed at step {step} "
+                            f"(t={((step + 1) * dt):.1f} ps); disabling animation. "
+                            f"HDF5 and sidecar are intact.\n"
+                            f"    Error: {_anim_exc}",
+                            file=_sys.stderr,
+                        )
+                        _tb.print_exc()
+                        animation_visitor.abort(_anim_exc)
+                        animation_visitor = None
 
     except Exception as e:
         print(f"\n    ERROR at step {step}, t={last_t:.2f} ps: {e}")
@@ -403,6 +425,18 @@ def run_simulation_from_config(
         print("    Closing HDF5 writer ...")
         writer.close()
         print("    HDF5 finalized.")
+        if animation_visitor is not None:
+            try:
+                animation_visitor.finalize()
+            except Exception as exc:
+                import traceback as _tb
+                print(f"    WARNING: animation finalize failed (HDF5/sidecar are intact): {exc}",
+                      file=__import__("sys").stderr)
+                _tb.print_exc()
+                try:
+                    animation_visitor.abort(exc)
+                except Exception:
+                    pass
 
     sidecar_path = os.path.join(output_dir, f"{routine_name}_scalars.npz")
     if not os.path.isdir(output_dir):

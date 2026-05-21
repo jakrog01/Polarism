@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import warnings
 
 
 @dataclasses.dataclass
@@ -10,6 +11,7 @@ class OutputPolicy:
     render_snapshots: bool = True
     render_animation: bool = True
     archive_raw_hdf5: bool = False
+    animation_clim: dict[str, tuple[float, float]] = dataclasses.field(default_factory=dict)
 
 
 def output_policy_from_config(cfg: dict) -> OutputPolicy:
@@ -25,10 +27,25 @@ def output_policy_from_config(cfg: dict) -> OutputPolicy:
         raise ValueError(
             f"output.scalar_record_stride must be >= 1, got {scalar_stride}"
         )
+
+    raw_clim = out.get("animation_clim", {})
+    animation_clim: dict[str, tuple[float, float]] = {}
+    for field_key, bounds in raw_clim.items():
+        if isinstance(bounds, (list, tuple)) and len(bounds) == 2:
+            animation_clim[str(field_key)] = (float(bounds[0]), float(bounds[1]))
+        else:
+            warnings.warn(
+                f"output.animation_clim[{field_key!r}] must be a 2-element list [vmin, vmax]; "
+                f"got {bounds!r} — entry ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
+
     return OutputPolicy(
         field_record_stride=field_stride,
         scalar_record_stride=scalar_stride,
         render_snapshots=bool(out.get("render_snapshots", True)),
         render_animation=bool(out.get("render_animation", True)),
         archive_raw_hdf5=bool(out.get("archive_raw_hdf5", False)),
+        animation_clim=animation_clim,
     )

@@ -48,10 +48,19 @@ class ResultNode:
         self.cut = cut
         self.is_field = is_field if is_field is not None else (cmap is not None)
 
+    def compute_field_device(self, **context) -> Any:
+        """Compute the field on the active backend without evaluating the scalar reduction."""
+        return self.compute_fn(**context)
+
+    def compute_device(self, **context) -> tuple[Any, Any]:
+        """Compute the field and reduced value on the active backend."""
+        field_raw = self.compute_field_device(**context)
+        reduced_raw = self.reduce_dim_fn(field_raw)
+        return field_raw, reduced_raw
+
     def compute_cpu(self, **context) -> tuple[np.ndarray, Any]:
         """Compute the field and reduced value on the CPU."""
-        field_raw = self.compute_fn(**context)
-        reduced_raw = self.reduce_dim_fn(field_raw)
+        field_raw, reduced_raw = self.compute_device(**context)
         return compute_engine.to_cpu(field_raw), compute_engine.to_cpu(reduced_raw)
 
     def compute_field_cpu(self, **context) -> np.ndarray:

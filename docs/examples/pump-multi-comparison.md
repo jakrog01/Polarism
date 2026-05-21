@@ -11,7 +11,7 @@ At a high level, the workflow is:
 1. validate the configuration and scheduler environment
 2. run a threshold-search stage
 3. launch one simulation job per scenario
-4. render per-scenario plots and animations inline in each scenario job
+4. stream the per-scenario animation during simulation and render PNG artifacts afterward
 5. aggregate results into a final summary
 
 ## Entry point
@@ -66,6 +66,7 @@ Each run produces a timestamped directory containing:
 - one scalar sidecar per scenario
 - per-scenario metadata
 - plots and aggregated summaries
+- optional per-scenario `dynamics.mp4` or `dynamics.mkv` files
 - optional raw HDF5 files only if archival is enabled
 - Slurm logs
 
@@ -82,6 +83,53 @@ Per-scenario HDF5 output is now created through `polarism.results.storage.create
 - Batch depth is computed inside the simulation core from the declared output fields and the current grid shape, so `run_scenario.py` no longer computes or passes a batch size itself.
 
 This keeps storage mechanics in the library and leaves the pipeline responsible for scheduling, manifests, and scenario-level orchestration.
+
+## Streaming animation path
+
+Scenario movies are now rendered through the reusable
+`polarism.results` animation stack rather than by a post-hoc HDF5 reader.  When
+`output.render_animation: true`, `run_scenario.py` creates an
+`AnimationVisitor` before the simulation starts and passes it into the
+simulation core.  Frames are streamed at the same cadence as field snapshots.
+
+This path is designed to avoid the previous failure mode where long jobs could
+finish the numerical simulation and then hang inside the animation renderer.
+
+Important operational details:
+
+- ffmpeg is resolved from `FFMPEG_BIN` first, then `PATH`
+- `RENDER_ENCODER` is respected when set
+- the selected encoder runs a real preflight encode before any simulation work
+- encoder stderr is written to a temporary file instead of a pipe, avoiding pipe-buffer deadlocks
+- animation errors abort only the animation visitor; HDF5 and scalar sidecars are still finalized
+- scenario metadata records `animation_status` and `animation_error`
+- if animation was required and failed, the scenario exits with code `2` after artifact copy-back
+
+The default panel set is:
+
+| Panel | Source | Transform |
+| --- | --- | --- |
+| `psi` | condensate wavefunction | `abs2` |
+| `nA` | active reservoir, stored under this legacy name for all reservoir models | none |
+| `nI` | inactive reservoir | none |
+| `Pump` | total pump field | power-normalized colour map |
+
+For `quadratic-double`, the reusable `polarism` model calls the active reservoir
+`nR`, but the pipeline writes that active field as `nA` in HDF5 and animations
+for backward compatibility.
+
+For delayed-growth or multi-pulse cases, fixed colour limits are recommended:
+
+```yaml
+output:
+  render_animation: true
+  animation_clim:
+    psi: [0.0, 1.0]
+    nA: [0.0, 10.0]
+    nI: [0.0, 100.0]
+```
+
+Bad `animation_clim` entries produce a warning and are ignored.
 
 ## Scenario configuration
 

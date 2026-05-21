@@ -34,6 +34,34 @@ Format guidance:
 - `save_json`: useful for debugging small outputs, but not efficient for large fields.
 - `batch_size`: controls how many result frames the library visitors buffer before flushing to disk.
 
+## Online animation
+
+The core library can stream a movie while the simulation is running:
+
+```python
+cfg.result.animate = True
+cfg.result.animation_fps = 8
+cfg.result.animation_target_seconds = 60
+cfg.result.animation_fields = ("|ψ|²", "nA", "nI", "Pump")
+cfg.result.animation_backend = "auto"
+cfg.result.animation_encoder = "h264_nvenc"
+cfg.result.animation_output = "simulation_results/animation.mp4"
+```
+
+The animation visitor receives backend-native arrays from `ResultsManager`, so a
+CuPy run can render false-colour panels without first converting every field to
+CPU arrays for the visitor.  The final encoded frame still passes through
+ffmpeg as raw RGB video.
+
+Animation failures are treated differently from storage failures.  A broken
+encoder is aborted and the animation visitor is disabled, while HDF5/JSON/NPY
+storage failures remain fatal.  This keeps simulation data trustworthy while
+preventing a movie encoder crash from destroying a long run.
+
+Colour limits are inferred from the first sample frames unless fixed limits are
+provided by the caller.  For pulsed or delayed-growth runs, fixed limits are
+recommended so that early low-density frames do not make later frames saturate.
+
 ## What gets recorded
 
 The controller builds result nodes for quantities such as:
@@ -56,6 +84,36 @@ That path now behaves as follows:
 
 This separation keeps the reusable storage implementation in `polarism.results.storage` while the pipeline remains responsible only for scenario orchestration and field/scalar selection.
 
+## Pipeline animations
+
+`src/pump_multi_comparison/` uses the same rendering primitives but constructs
+the animation visitor directly inside `run_scenario.py`.  When
+`output.render_animation: true`, each scenario job:
+
+- resolves the ffmpeg binary from `FFMPEG_BIN` or `PATH`
+- respects `RENDER_ENCODER` when it is set
+- preflights the chosen encoder before the simulation starts
+- streams frames during the field-record cadence
+- writes `animation_status` and `animation_error` into scenario metadata
+
+If animation is required and fails after simulation data has been written, the
+scenario copies back HDF5, sidecar, PNG, and metadata artifacts first, then exits
+nonzero.  This makes a failed movie visible to Slurm without discarding the
+scientific outputs.
+
+For multi-pulse campaigns, set per-field movie limits in the pipeline config:
+
+```yaml
+output:
+  render_animation: true
+  animation_clim:
+    psi: [0.0, 1.0]
+    nA: [0.0, 10.0]
+    nI: [0.0, 100.0]
+```
+
+Malformed `animation_clim` entries are ignored with a warning.
+
 ## Pipeline outputs
 
 The Slurm pipeline in `src/pump_multi_comparison/` writes a richer run directory that includes:
@@ -64,6 +122,7 @@ The Slurm pipeline in `src/pump_multi_comparison/` writes a richer run directory
 - scenario metadata JSON files
 - HDF5 simulation outputs
 - per-scenario plots
+- optional `dynamics.mp4` or `dynamics.mkv` movies
 - cross-scenario summary artifacts
 
 For pulsed Gaussian runs, scalar sidecars include both local pump strength and

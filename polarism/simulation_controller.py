@@ -19,6 +19,7 @@ from polarism.results.real_time_visualization import RealTimeVisualization
 from polarism.results.result_groups import Results2D, ResultScalar, ResultScalarGroup
 from polarism.results.result_node import ResultNode
 from polarism.results.results_manager import ResultsManager
+from polarism.results.visitors.animation_visitor import AnimationFieldSpec, AnimationVisitor
 from polarism.results.visitors.storage_visitor import StorageVisitor
 from polarism.results.visitors.visualization_visitor import VisualizationVisitor
 from polarism.simulation_state import SimulationState
@@ -65,6 +66,7 @@ class SimulationController:
     next_viz_time: float
     results_manager: ResultsManager
     storage_visitor: StorageVisitor | None
+    animation_visitor: AnimationVisitor | None
 
     def __init__(self, cfg: Config):
         """Set up the simulation from the config."""
@@ -110,12 +112,16 @@ class SimulationController:
         self.next_viz_time = 0.0
         self.results_manager = ResultsManager()
         self.storage_visitor = None
+        self.animation_visitor = None
 
         if cfg.result.real_time_view:
             self._init_visualizer()
 
         if cfg.result.save_results:
             self._init_storage()
+
+        if cfg.result.animate:
+            self._init_animation()
 
     def _compute_max_laser_power(self) -> float:
         """Return the largest configured laser power."""
@@ -181,6 +187,42 @@ class SimulationController:
 
         self.storage_visitor = StorageVisitor(self.cfg)
         self.results_manager.add_visitor(self.storage_visitor)
+
+    def _init_animation(self) -> None:
+        """Set up the online animation visitor from ResultParameters config."""
+        if not self.results_manager.nodes:
+            self.results_manager.nodes = self._build_result_nodes()
+
+        rcfg = self.cfg.result
+        wanted = set(rcfg.animation_fields) if rcfg.animation_fields else None
+
+        panel_specs = [
+            AnimationFieldSpec(
+                source=node.name,
+                cmap=node.cmap,
+                transform=None,
+                clim=node.clim,
+            )
+            for node in self.results_manager.nodes
+            if node.cmap is not None and (wanted is None or node.name in wanted)
+        ]
+        if not panel_specs:
+            return
+
+        import os
+        out_path = rcfg.animation_output or os.path.join(
+            rcfg.output_directory, "animation.mp4"
+        )
+
+        self.animation_visitor = AnimationVisitor(
+            output_path=out_path,
+            panel_specs=panel_specs,
+            fps=rcfg.animation_fps,
+            target_seconds=rcfg.animation_target_seconds,
+            backend=rcfg.animation_backend,
+            encoder_name=rcfg.animation_encoder,
+        )
+        self.results_manager.add_visitor(self.animation_visitor)
 
     def _build_result_nodes(self) -> list[ResultNode]:
         """Build the result nodes for this run."""
@@ -271,7 +313,12 @@ class SimulationController:
                     )
                     break
 
-                if should_save or should_viz:
+                should_animate = (
+                    self.animation_visitor is not None
+                    and step % save_interval == 0
+                )
+
+                if should_save or should_viz or should_animate:
                     P_total = self._compute_total_pump(t_after)
                     self.results_manager.step(
                         t_after,
@@ -285,6 +332,12 @@ class SimulationController:
         finally:
             if self.storage_visitor is not None:
                 self.storage_visitor.finalize()
+            if self.animation_visitor is not None:
+                try:
+                    self.animation_visitor.finalize()
+                except Exception as exc:
+                    import sys
+                    print(f"WARNING: animation finalize failed: {exc}", file=sys.stderr)
 
     def _compute_total_pump(self, t: float) -> Union[np.ndarray, cp.ndarray]:
         """Sum the pump from all lasers at time t."""

@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 from typing import Any
 
 import h5py
@@ -251,6 +252,8 @@ def generate_animation(
 
         cmd = [
             ffmpeg, "-y",
+            "-hide_banner",
+            "-loglevel", "error",
             "-f", "rawvideo",
             "-pix_fmt", "rgb24",
             "-s", f"{width}x{height}",
@@ -260,30 +263,41 @@ def generate_animation(
             out_path,
         ]
 
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-        try:
-            for physical_idx in anim_physical:
-                panels = [
-                    _to_uint8_rgb(
-                        _read_field(h5, field_specs[k], physical_idx),
-                        luts[k], vmins[k], vmaxs[k], field_specs[k].get("norm"),
-                    )
-                    for k in field_keys
-                ]
-                proc.stdin.write(_pad_even(np.concatenate(panels, axis=1)).tobytes())
-        except BrokenPipeError:
+        # Never use subprocess.PIPE for stderr here. ffmpeg can write enough
+        # diagnostics/progress output to fill the pipe while we are writing raw
+        # frames to stdin, which deadlocks long movie renders. A temporary file
+        # keeps error diagnostics without blocking the streaming loop.
+        with tempfile.TemporaryFile() as stderr_file:
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=stderr_file)
+            try:
+                for physical_idx in anim_physical:
+                    panels = [
+                        _to_uint8_rgb(
+                            _read_field(h5, field_specs[k], physical_idx),
+                            luts[k], vmins[k], vmaxs[k], field_specs[k].get("norm"),
+                        )
+                        for k in field_keys
+                    ]
+                    proc.stdin.write(_pad_even(np.concatenate(panels, axis=1)).tobytes())
+            except BrokenPipeError:
+                proc.stdin.close()
+                proc.wait()
+                stderr_file.seek(0, os.SEEK_END)
+                size = stderr_file.tell()
+                stderr_file.seek(max(0, size - 4096))
+                stderr_bytes = stderr_file.read()
+                raise RuntimeError(
+                    f"ffmpeg terminated unexpectedly during streaming to {out_path}.\n"
+                    f"ffmpeg stderr: {stderr_bytes.decode(errors='replace')[-1000:]}"
+                )
+
             proc.stdin.close()
             proc.wait()
-            stderr_bytes = proc.stderr.read() if proc.stderr is not None else b""
-            raise RuntimeError(
-                f"ffmpeg terminated unexpectedly during streaming to {out_path}.\n"
-                f"ffmpeg stderr: {stderr_bytes.decode(errors='replace')[-1000:]}"
-            )
-
-        proc.stdin.close()
-        proc.wait()
-        stderr_bytes = proc.stderr.read() if proc.stderr is not None else b""
-        ret = proc.returncode
+            stderr_file.seek(0, os.SEEK_END)
+            size = stderr_file.tell()
+            stderr_file.seek(max(0, size - 4096))
+            stderr_bytes = stderr_file.read()
+            ret = proc.returncode
         if ret != 0:
             raise RuntimeError(
                 f"ffmpeg exited with code {ret}.  Output: {out_path}\n"
