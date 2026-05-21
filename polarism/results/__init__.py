@@ -11,12 +11,16 @@ from polarism.results.storage import (
     npy_storage,
 )
 from polarism.results.visitors import (
+    AnimationFieldSpec,
+    AnimationVisitor,
     ResultVisitor,
     StorageVisitor,
     VisualizationVisitor,
 )
 
 __all__ = [
+    "AnimationFieldSpec",
+    "AnimationVisitor",
     "Results2D",
     "ResultScalar",
     "ResultScalarGroup",

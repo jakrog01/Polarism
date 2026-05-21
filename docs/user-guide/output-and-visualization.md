@@ -34,6 +34,34 @@ Format guidance:
 - `save_json`: useful for debugging small outputs, but not efficient for large fields.
 - `batch_size`: controls how many result frames the library visitors buffer before flushing to disk.
 
+## Online animation
+
+The core library can stream a movie while the simulation is running:
+
+```python
+cfg.result.animate = True
+cfg.result.animation_fps = 8
+cfg.result.animation_target_seconds = 60
+cfg.result.animation_fields = ("|ψ|²", "nA", "nI", "Pump")
+cfg.result.animation_backend = "auto"
+cfg.result.animation_encoder = "h264_nvenc"
+cfg.result.animation_output = "simulation_results/animation.mp4"
+```
+
+The animation visitor receives backend-native arrays from `ResultsManager`, so a
+CuPy run can render false-colour panels without first converting every field to
+CPU arrays for the visitor.  The final encoded frame still passes through
+ffmpeg as raw RGB video.
+
+Animation failures are treated differently from storage failures.  A broken
+encoder is aborted and the animation visitor is disabled, while HDF5/JSON/NPY
+storage failures remain fatal.  This keeps simulation data trustworthy while
+preventing a movie encoder crash from destroying a long run.
+
+Colour limits are inferred from the first sample frames unless fixed limits are
+provided by the caller.  For pulsed or delayed-growth runs, fixed limits are
+recommended so that early low-density frames do not make later frames saturate.
+
 ## What gets recorded
 
 The controller builds result nodes for quantities such as:

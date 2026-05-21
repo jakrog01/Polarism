@@ -112,6 +112,13 @@ class ResultParameters:
     save_interval: int = 1
     batch_size: int = 1000
     output_directory: str = "simulation_results"
+    animate: bool = False
+    animation_fps: int = 8
+    animation_target_seconds: int = 60
+    animation_fields: tuple[str, ...] = ()
+    animation_backend: str = "auto"
+    animation_encoder: str = "h264_nvenc"
+    animation_output: str | None = None
 
 
 @dataclass

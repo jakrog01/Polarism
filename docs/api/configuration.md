@@ -110,6 +110,17 @@ with reduced grid-direction anisotropy.
 | `save_interval` | number of steps between writes | positive integer |
 | `batch_size` | buffered result chunk size | positive integer |
 | `output_directory` | output path | directory string |
+| `animate` | stream an online animation during the run | boolean |
+| `animation_fps` | encoded movie frame rate | positive integer |
+| `animation_target_seconds` | nominal target duration used for logging | positive integer |
+| `animation_fields` | optional tuple of result-node names to include | tuple of strings |
+| `animation_backend` | video backend selector | `auto`, `ffmpeg`; `pynvvideocodec` currently fails explicitly |
+| `animation_encoder` | preferred ffmpeg encoder | e.g. `h264_nvenc`, `libx264`, `ffv1`, `mpeg4` |
+| `animation_output` | output movie path | path string or `None` |
+
+`animate` uses the visitor-based results path.  The animation visitor receives
+device arrays during GPU runs and is marked non-fatal: encoder failures disable
+only the movie stream, while storage visitors remain fatal by default.
 
 ## Compute-engine options
 
