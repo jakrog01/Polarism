@@ -86,14 +86,15 @@ This separation keeps the reusable storage implementation in `polarism.results.s
 
 ## Pipeline animations
 
-`src/pump_multi_comparison/` uses the same rendering primitives but constructs
-the animation visitor directly inside `run_scenario.py`.  When
-`output.render_animation: true`, each scenario job:
+`src/pump_multi_comparison/` renders scenario movies from the scratch-local HDF5
+file after the numerical simulation finishes.  When `output.render_animation:
+true`, each scenario job:
 
 - resolves the ffmpeg binary from `FFMPEG_BIN` or `PATH`
 - respects `RENDER_ENCODER` when it is set
-- preflights the chosen encoder before the simulation starts
-- streams frames during the field-record cadence
+- scans all recorded HDF5 frames to compute global colour limits
+- uses physical zero as the black point for non-negative fields
+- streams rendered RGB frames to ffmpeg without loading the whole movie into RAM
 - writes `animation_status` and `animation_error` into scenario metadata
 
 If animation is required and fails after simulation data has been written, the
@@ -101,7 +102,12 @@ scenario copies back HDF5, sidecar, PNG, and metadata artifacts first, then exit
 nonzero.  This makes a failed movie visible to Slurm without discarding the
 scientific outputs.
 
-For multi-pulse campaigns, set per-field movie limits in the pipeline config:
+The default movie panels are `psi` as `|ψ|²`, `nA`, and `nI`.  `Pump` is kept in
+static PNGs and scalar traces rather than the default movie because narrow pulse
+trains can be under-sampled by the field-record cadence.
+
+Automatic global colour limits are the default.  Set per-field limits only when
+multiple movies must share an identical visual scale:
 
 ```yaml
 output:

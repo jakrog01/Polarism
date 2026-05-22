@@ -25,8 +25,8 @@ from matplotlib.gridspec import GridSpec
 FIELD_SPECS = {
     "psi_sq": {"source": "psi", "label": r"$|\psi|^2$", "cmap": "magma", "transform": "abs2", "norm": "power", "norm_gamma": 0.5},
     "psi_k":  {"source": "psi", "label": r"$\log_{10}|\psi_k|^2$ (norm.)", "cmap": "inferno", "transform": "kspace_log"},
-    "nI": {"source": "nI", "label": r"$n_I$", "cmap": "plasma", "transform": None},
-    "nA": {"source": "nA", "label": r"$n_A$", "cmap": "viridis", "transform": None},
+    "nI": {"source": "nI", "label": r"$n_I$", "cmap": "magma", "transform": None},
+    "nA": {"source": "nA", "label": r"$n_A$", "cmap": "inferno", "transform": None},
     "Pump": {"source": "Pump", "label": "Pump", "cmap": "inferno", "transform": None, "norm": "power"},
 }
 SCALAR_MAP = {"psi_sq": "psi_sq_max", "nI": "nI_max", "nA": "nA_max", "Pump": "P_max"}

@@ -155,9 +155,8 @@ def _compute_laser_centering(
 
 _BASE_ANIMATION_PANELS = [
     ("psi",  "magma",   "abs2",  "power", 0.5),
-    ("nA",   "viridis", None,    None,    0.3),
-    ("nI",   "plasma",  None,    None,    0.3),
-    ("Pump", "inferno", None,    "power", 0.3),
+    ("nA",   "inferno", None,    None,    0.3),
+    ("nI",   "magma",   None,    None,    0.3),
 ]
 
 
