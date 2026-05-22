@@ -29,10 +29,6 @@ This project was created as part of the NCN OPUS grant, in collaboration with th
 ## Partners
 <div class="about-logo-stack">
   <div class="about-logo-panel">
-    <img class="about-logo-light" src="../assets/about/polariton-logo-light.png" alt="Polariton Exciton Research Group logo">
-    <img class="about-logo-dark" src="../assets/about/polariton-logo-dark.png" alt="Polariton Exciton Research Group logo">
-  </div>
-  <div class="about-logo-panel">
     <img class="about-logo-light" src="../assets/about/ncn-logo-light.png" alt="NCN logo">
     <img class="about-logo-dark" src="../assets/about/ncn-logo-dark.png" alt="NCN logo">
   </div>
@@ -40,4 +36,13 @@ This project was created as part of the NCN OPUS grant, in collaboration with th
     <img class="about-logo-light" src="../assets/about/logo_ICM.png" alt="ICM logo">
     <img class="about-logo-dark" src="../assets/about/logo_ICM.png" alt="ICM logo">
   </div>
+    <div class="about-logo-panel">
+    <img class="about-logo-light" src="../assets/about/polariton-logo-light.png" alt="Polariton Exciton Research Group logo">
+    <img class="about-logo-dark" src="../assets/about/polariton-logo-dark.png" alt="Polariton Exciton Research Group logo">
+  </div>
+  <div class="about-logo-panel">
+    <img class="about-logo-light" src="../assets/about/fuw_symbol.png" alt="FUW logo">
+    <img class="about-logo-dark" src="../assets/about/fuw_symbol.png" alt="ICM logo">
+  </div>
+
 </div>
