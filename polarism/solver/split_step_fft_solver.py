@@ -30,6 +30,19 @@ class SplitStepFFTSolver(AbstractSolver):
         grid_type = getattr(config.grid, "grid_type", "periodic")
         self._use_dct = grid_type == "closed-interval"
 
+        if self._use_dct and hasattr(self.xp, "cuda"):
+            import warnings
+
+            warnings.warn(
+                "split-step-fft: closed-interval grid uses SciPy DCT "
+                "with host-device copies on every step. "
+                "This is CPU-bound and not suitable for GPU production runs. "
+                "For GPU-native spectral evolution use 'ifrk4-fft-cuda' "
+                "with a periodic grid and CAP absorber.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         if self._use_dct:
             nx, ny = grid.nx, grid.ny
             dx, dy = grid.dx, grid.dy

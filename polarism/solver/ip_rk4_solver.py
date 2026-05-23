@@ -30,6 +30,21 @@ class IPRK4Solver(AbstractSolver):
         grid_type = getattr(config.grid, "grid_type", "periodic")
         self._use_dct = grid_type == "closed-interval"
 
+        if self._use_dct and hasattr(self.xp, "cuda"):
+            import warnings
+
+            warnings.warn(
+                "ip-rk4: closed-interval grid uses SciPy DCT "
+                "with host-device copies on every step. "
+                "This is CPU-bound and not suitable for GPU production runs. "
+                "For GPU-native spectral evolution use 'ifrk4-fft-cuda' "
+                "with a periodic grid and CAP absorber.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        self._eta = getattr(config.physics, "kinetic_relaxation_eta", 0.0)
+
         if self._use_dct:
             nx, ny = grid.nx, grid.ny
             dx, dy = grid.dx, grid.dy
@@ -106,8 +121,13 @@ class IPRK4Solver(AbstractSolver):
         rho = self.xp.abs(psi) ** 2
         eff_energy = potential + g_C * rho + g_R * nR
         gain_loss = (R * nR - gamma_C) / 2.0
+        rhs = (-1j / hbar) * eff_energy * psi + gain_loss * psi
 
-        return (-1j / hbar) * eff_energy * psi + gain_loss * psi
+        if self._eta != 0.0:
+            lap_psi = self._inverse(-self._L_eig * self._forward(psi))
+            rhs = rhs + self._eta * nR * lap_psi
+
+        return rhs
 
     def step(
         self,
