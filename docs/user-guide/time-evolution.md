@@ -13,6 +13,7 @@ The codebase supports several real-time integration strategies. The best choice 
 | Split-step FFT | `split-step-fft` | Spectral runs on simple periodic-like setups |
 | Interaction-picture RK4 | `ip-rk4` | Spectral-style evolution when its assumptions fit |
 | ETD-RK2 | `etd-rk2` | Periodic spectral evolution with exponential differencing |
+| GPU-native FFT IP-RK4 | `ifrk4-fft-cuda` | GPU-native spectral production runs with stage-coupled reservoirs |
 
 ## Choosing a solver
 
@@ -20,8 +21,19 @@ Recommended order:
 
 1. Prototype with `rk4-fdm`.
 2. Confirm time-step and grid convergence.
-3. Move to `rk4-fdm-fused` or `rk4-cuda` once the physics setup is stable.
-4. Use spectral solvers only when their assumptions match the problem.
+3. Move to `rk4-fdm-fused` or `rk4-cuda` (FDM production) once the physics setup is stable.
+4. For periodic-grid spectral campaigns, use `ifrk4-fft-cuda` (GPU-native, stage-coupled quadratic-double).
+5. Use `split-step-fft`, `ip-rk4`, or `etd-rk2` only as diagnostic or reference spectral paths.
+
+## Spectral solver limitations
+
+`split-step-fft` and `ip-rk4` on `closed-interval` grids invoke SciPy DCT and
+perform host-device copies on every timestep.  On a GPU backend this is CPU-bound
+and orders of magnitude slower than `ifrk4-fft-cuda`.  Both solvers emit a
+`UserWarning` when this path is active.
+
+`etd-rk2` advances the reservoir via a separate midpoint step, not stage-coupled
+with `psi`.  It is not a production path for `quadratic-double` threshold studies.
 
 ## Time-step guidance
 

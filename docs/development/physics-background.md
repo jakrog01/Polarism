@@ -126,7 +126,11 @@ The active reservoir density driving the term is model-dependent:
 The term defaults to zero (`kinetic_relaxation_eta: 0.0`) and is disabled unless
 explicitly set.  Backward compatibility is preserved.
 
-**Production model for pulsed-memory campaigns:** `quadratic-double` + `rk4-cuda`.
+**Production models for pulsed-memory campaigns:** `quadratic-double` with either
+`rk4-cuda` (FDM, periodic or closed-interval grids) or `ifrk4-fft-cuda` (spectral,
+periodic + CAP grids).  `rk4-cuda` is the FDM production and reference path;
+`ifrk4-fft-cuda` is the spectral production path where cuFFT kinetics and
+stage-coupled reservoir integration are preferred.
 The `double` reservoir is retained as a sanity-check / reference model only.
 
 **Recommended starting values:**

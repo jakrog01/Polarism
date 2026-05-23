@@ -21,16 +21,42 @@ At the abstraction level, every solver must:
 | `split-step-fft` | spectral split-step | efficient spectral solver when assumptions match |
 | `etd-rk2` | exponential time differencing | spectral periodic-grid path |
 | `ip-rk4` | interaction-picture RK4 | spectral-style RK4 variant |
+| `ifrk4-fft-cuda` | GPU-native FFT interaction-picture RK4 | production spectral solver with stage-coupled reservoirs |
 
 ## Compatibility guidance
 
 The package includes explicit compatibility checks and warnings. In practice:
 
 - `rk4-fdm` is the safest baseline when you need a reference answer
-- `rk4-cuda` is the production path for large coupled GPE/reservoir campaigns
-- spectral solvers require more care when external potentials or closed-interval grids are involved
-- `etd-rk2` is restricted to periodic grids
+- `rk4-cuda` is the FDM production/reference path for GPU campaigns; supports periodic and closed-interval
+- `ifrk4-fft-cuda` is the spectral production path: GPU-native cuFFT, periodic + CAP, quadratic-double stage-coupled
+- `split-step-fft` and `ip-rk4` on `closed-interval` grids use SciPy DCT with host-device copies every step — CPU-bound on GPU runs; diagnostic use only
+- `etd-rk2` and `ifrk4-fft-cuda` are restricted to periodic grids
+- `etd-rk2` advances the reservoir with a separate midpoint step and is not a stage-coupled production path for quadratic-double
 - CUDA solvers are meaningful only when the GPU backend is actually active
+
+## ifrk4-fft-cuda
+
+`ifrk4-fft-cuda` is a GPU-native spectral solver with no CPU involvement in the
+time loop.
+
+Key properties:
+
+- **GPU-native**: all transforms use `xp.fft.fft2` / `xp.fft.ifft2` (cuFFT when CuPy
+  is active); there are no `.get()`, `.asnumpy()`, or `numpy.asarray()` calls inside
+  `step()`.
+- **Requires `grid_type: periodic`**: raises `ValueError` at construction for
+  `closed-interval`.  Open-boundary problems should use a wide CAP absorber on a
+  periodic grid.
+- **Quadratic-double is stage-coupled**: `(nR, nI)` are advanced through the same four
+  RK4 stages as `psi`, eliminating the O(dt) operator-splitting error present in
+  split-step-based approaches.
+- **No hard k-space filter**: high-k content is visible in `high_k_frac_0p8_nyq`
+  diagnostics without artificial suppression.
+- **Energy relaxation**: `kinetic_relaxation_eta != 0` adds
+  `eta * nR * laplacian(psi)` to the nonlinear RHS.  This term has a spatially
+  variable coefficient and is therefore evaluated in real space at every stage, not
+  folded into the integrating factor.
 
 ## RK4 CUDA Laplacian Options
 
@@ -51,10 +77,21 @@ not a new physical term.  It is useful when high-k modes expose the angular
 anisotropy of the five-point stencil.  It does not replace grid-convergence or
 time-step checks.
 
-For `quadratic-double`, use `rk4-cuda` for quantitative threshold/amplitude
-studies.  The split-step FFT path can be useful as a geometry diagnostic, but its
-operator splitting is not the production reference for coupled `psi`, `nR`, `nI`
-threshold measurements.
+For `quadratic-double` campaigns there are two production paths depending on
+grid topology:
+
+- **`rk4-cuda`** is the FDM production and reference path.  It supports both
+  periodic and closed-interval grids and integrates `psi`, `nR`, `nI` in the same
+  fused CUDA RK4 scheme.  Use it for quantitative threshold/amplitude studies,
+  especially on closed-interval grids.
+- **`ifrk4-fft-cuda`** is the spectral production path for periodic grids (or
+  periodic + CAP open-boundary problems).  It stage-couples `(nR, nI)` inside the
+  same FFT RK4 scheme as `psi`, eliminating the O(dt) splitting error.  Use it
+  for large periodic-grid campaigns where spectral kinetics are preferred.
+- **`split-step-fft`** is diagnostic only for `quadratic-double`.  Its operator
+  splitting advances the reservoir with a separate RK2 step at the end of each
+  full split-step cycle, introducing a global O(dt) coupling error.  It is not a
+  production reference for threshold or amplitude comparisons.
 
 ## Selection strategy
 

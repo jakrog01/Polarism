@@ -37,7 +37,7 @@ class ETDRK2Solver(AbstractSolver):
                 f"Consider using 'rk4-fdm' solver for non-periodic grids.",
                 UserWarning,
             )
-        self._L = 1j * hbar * grid.k_squared / (2 * m_eff)
+        self._L = -1j * hbar * grid.k_squared / (2 * m_eff)
         L_dt = self._L * dt
 
         self._exp_L = self.xp.exp(L_dt)

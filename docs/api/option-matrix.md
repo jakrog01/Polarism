@@ -61,11 +61,12 @@ For pulsed Gaussian studies:
 | --- | --- | --- |
 | `rk4-fdm` | you want the safest reference solver | best first choice for validation and comparisons |
 | `rk4-fdm-fused` | you want a faster FDM-style path without changing the basic method family | good follow-up once `rk4-fdm` is validated |
-| `rk4-cuda` | you want GPU throughput on compatible hardware | best for production-scale CUDA runs |
-| `rk4-cuda-v100` | you specifically target V100 hardware | hardware-tuned CUDA variant |
-| `split-step-fft` | you want a spectral split-step method and the problem matches its assumptions | be careful with nonzero potentials and bounded grids |
-| `etd-rk2` | you want an exponential time-differencing spectral method on a periodic grid | periodic only |
-| `ip-rk4` | you want an interaction-picture spectral-style RK4 method | requires more care on `closed-interval` grids |
+| `rk4-cuda` | you want FDM GPU production runs on periodic or closed-interval grids | FDM production/reference; stage-coupled quadratic-double |
+| `rk4-cuda-v100` | you specifically target V100 hardware | hardware-tuned CUDA variant; numerically identical to `rk4-cuda` |
+| `ifrk4-fft-cuda` | you want GPU-native spectral production on a periodic grid | requires `periodic`; use CAP absorber for open boundaries; stage-coupled quadratic-double |
+| `split-step-fft` | diagnostic spectral reference on simple periodic setups | `closed-interval` path uses CPU DCT with host-device copies — not GPU production |
+| `etd-rk2` | low-order exponential time-differencing on a periodic grid | periodic only; reservoir not stage-coupled; diagnostic use |
+| `ip-rk4` | spectral-style RK4 reference | `closed-interval` path uses CPU DCT with host-device copies — not GPU production |
 
 ## RK4 CUDA Laplacian
 
