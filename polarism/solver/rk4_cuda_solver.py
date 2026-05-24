@@ -192,7 +192,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_double(
     const {REAL} inv_dx2, const {REAL} inv_dy2,
     const {REAL} neg_hbar2_over_2m,
     const {REAL} inv_hbar,
-    const {REAL} g_C, const {REAL} g_R,
+    const {REAL} g_C, const {REAL} g_R, const {REAL} g_I,
     const {REAL} R_cond, const {REAL} gamma_C,
     const {REAL} gamma_I, const {REAL} gamma_A,
     const {REAL} R_IA, const {REAL} R_AI,
@@ -212,7 +212,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_double(
     const {REAL} nA_val = nA[tid];
     const {REAL} nI_val = nI[tid];
 
-    const {REAL} eff = V_re[tid] + g_C * rho + g_R * nA_val;
+    const {REAL} eff = V_re[tid] + g_C * rho + g_R * nA_val + g_I * nI_val;
     const {REAL} gl = (R_cond * nA_val - gamma_C) * ({REAL})0.5 + V_im[tid] * inv_hbar;
 
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
@@ -252,7 +252,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_double(
     const {REAL} inv_dx2, const {REAL} inv_dy2,
     const {REAL} neg_hbar2_over_2m,
     const {REAL} inv_hbar,
-    const {REAL} g_C, const {REAL} g_R,
+    const {REAL} g_C, const {REAL} g_R, const {REAL} g_I,
     const {REAL} R_cond, const {REAL} gamma_C,
     const {REAL} gamma_I, const {REAL} gamma_A,
     const {REAL} R_IA, const {REAL} R_AI,
@@ -281,7 +281,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_double(
     {LAP_BLOCK_FUSED}
 
     const {REAL} rho = pre*pre + pim*pim;
-    const {REAL} eff = V_re[tid] + g_C * rho + g_R * nA_val;
+    const {REAL} eff = V_re[tid] + g_C * rho + g_R * nA_val + g_I * nI_val;
     const {REAL} gl = (R_cond * nA_val - gamma_C) * ({REAL})0.5 + V_im[tid] * inv_hbar;
 
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
@@ -355,7 +355,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_qdouble(
     const {REAL} inv_dx2, const {REAL} inv_dy2,
     const {REAL} neg_hbar2_over_2m,
     const {REAL} inv_hbar,
-    const {REAL} g_C, const {REAL} g_R,
+    const {REAL} g_C, const {REAL} g_R, const {REAL} g_I,
     const {REAL} R_cond, const {REAL} gamma_C,
     const {REAL} gamma_R, const {REAL} gamma_I, const {REAL} kappa,
     const {REAL} kinetic_relaxation_eta, const {REAL} diff_I, const {REAL} diff_R
@@ -375,7 +375,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_qdouble(
     const {REAL} nI_val = nI[tid];
     const {REAL} transfer = kappa * nI_val * nI_val;
 
-    const {REAL} eff = V_re[tid] + g_C * rho + g_R * nR_val;
+    const {REAL} eff = V_re[tid] + g_C * rho + g_R * nR_val + g_I * nI_val;
     const {REAL} gl = (R_cond * nR_val - gamma_C) * ({REAL})0.5 + V_im[tid] * inv_hbar;
 
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
@@ -415,7 +415,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_qdouble(
     const {REAL} inv_dx2, const {REAL} inv_dy2,
     const {REAL} neg_hbar2_over_2m,
     const {REAL} inv_hbar,
-    const {REAL} g_C, const {REAL} g_R,
+    const {REAL} g_C, const {REAL} g_R, const {REAL} g_I,
     const {REAL} R_cond, const {REAL} gamma_C,
     const {REAL} gamma_R, const {REAL} gamma_I, const {REAL} kappa,
     const {REAL} kinetic_relaxation_eta, const {REAL} diff_I, const {REAL} diff_R
@@ -445,7 +445,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_qdouble(
     const {REAL} rho = pre*pre + pim*pim;
     const {REAL} transfer = kappa * nI_val * nI_val;
 
-    const {REAL} eff = V_re[tid] + g_C * rho + g_R * nR_val;
+    const {REAL} eff = V_re[tid] + g_C * rho + g_R * nR_val + g_I * nI_val;
     const {REAL} gl = (R_cond * nR_val - gamma_C) * ({REAL})0.5 + V_im[tid] * inv_hbar;
 
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
@@ -685,6 +685,7 @@ class RK4CudaSolver(AbstractSolver):
         self._m_eff = config.physics.m_eff
         self._g_C = config.physics.g_C
         self._g_R = config.physics.g_R
+        self._g_I = getattr(config.physics, "g_I", 0.0)
         self._R = config.physics.R
         self._gamma_C = config.physics.gamma_C
         self._gamma_R = config.physics.gamma_R
@@ -737,6 +738,7 @@ class RK4CudaSolver(AbstractSolver):
             self._k_inv_hbar = _cast(self._inv_hbar)
             self._k_g_C = _cast(self._g_C)
             self._k_g_R = _cast(self._g_R)
+            self._k_g_I = _cast(self._g_I)
             self._k_R = _cast(self._R)
             self._k_gamma_C = _cast(self._gamma_C)
             self._k_gamma_R = _cast(self._gamma_R)
@@ -963,7 +965,7 @@ class RK4CudaSolver(AbstractSolver):
                 self._k_nx, self._k_ny,
                 self._k_inv_dx2, self._k_inv_dy2,
                 self._k_neg_hbar2_over_2m, self._k_inv_hbar,
-                self._k_g_C, self._k_g_R,
+                self._k_g_C, self._k_g_R, self._k_g_I,
                 self._k_R, self._k_gamma_C,
                 self._k_gamma_I, self._k_gamma_A,
                 self._k_R_IA, self._k_R_AI,
@@ -985,7 +987,7 @@ class RK4CudaSolver(AbstractSolver):
                 c_dt,
                 self._k_inv_dx2, self._k_inv_dy2,
                 self._k_neg_hbar2_over_2m, self._k_inv_hbar,
-                self._k_g_C, self._k_g_R,
+                self._k_g_C, self._k_g_R, self._k_g_I,
                 self._k_R, self._k_gamma_C,
                 self._k_gamma_I, self._k_gamma_A,
                 self._k_R_IA, self._k_R_AI,
@@ -1060,7 +1062,7 @@ class RK4CudaSolver(AbstractSolver):
                 self._k_nx, self._k_ny,
                 self._k_inv_dx2, self._k_inv_dy2,
                 self._k_neg_hbar2_over_2m, self._k_inv_hbar,
-                self._k_g_C, self._k_g_R,
+                self._k_g_C, self._k_g_R, self._k_g_I,
                 self._k_R, self._k_gamma_C,
                 self._k_gamma_R, self._k_gamma_I, self._k_kappa,
                 self._k_kinetic_relaxation_eta, self._k_diff_I, self._k_diff_R,
@@ -1081,7 +1083,7 @@ class RK4CudaSolver(AbstractSolver):
                 c_dt,
                 self._k_inv_dx2, self._k_inv_dy2,
                 self._k_neg_hbar2_over_2m, self._k_inv_hbar,
-                self._k_g_C, self._k_g_R,
+                self._k_g_C, self._k_g_R, self._k_g_I,
                 self._k_R, self._k_gamma_C,
                 self._k_gamma_R, self._k_gamma_I, self._k_kappa,
                 self._k_kinetic_relaxation_eta, self._k_diff_I, self._k_diff_R,
@@ -1229,13 +1231,15 @@ class RK4CudaSolver(AbstractSolver):
             + 2 * (psi[-1, -2] - psi[-1, -1]) * inv_dx2
         )
 
-    def _cpu_psi_rhs(self, psi, n_active, V):
+    def _cpu_psi_rhs(self, psi, n_active, V, n_inactive=None):
         """Compute the psi right-hand side on the CPU."""
         xp = self.xp
         lap = xp.empty_like(psi)
         self._cpu_laplacian(psi, lap)
         rho = xp.abs(psi) ** 2
-        eff = V + self._g_C * rho + self._g_R * n_active
+        if n_inactive is None:
+            n_inactive = n_active * 0.0
+        eff = V + self._g_C * rho + self._g_R * n_active + self._g_I * n_inactive
         gl = (self._R * n_active - self._gamma_C) * 0.5
         kinetic = self._neg_hbar2_over_2m * lap
         hbar_over_2m = -self._neg_hbar2_over_2m * self._inv_hbar
@@ -1305,7 +1309,7 @@ class RK4CudaSolver(AbstractSolver):
 
     def _cpu_rhs_double(self, psi, nA, nI, V, pump):
         """Compute the right-hand side."""
-        dpsi = self._cpu_psi_rhs(psi, nA, V)
+        dpsi = self._cpu_psi_rhs(psi, nA, V, nI)
         rho = self.xp.abs(psi) ** 2
         dnI = (
             pump - (self._gamma_I + self._R_IA) * nI + self._R_AI * nA
@@ -1319,7 +1323,7 @@ class RK4CudaSolver(AbstractSolver):
 
     def _cpu_rhs_quadratic_double(self, psi, nR, nI, V, pump):
         """Compute the right-hand side for quadratic-double reservoir."""
-        dpsi = self._cpu_psi_rhs(psi, nR, V)
+        dpsi = self._cpu_psi_rhs(psi, nR, V, nI)
         rho = self.xp.abs(psi) ** 2
         transfer = self._kappa * nI ** 2
         dnR = (

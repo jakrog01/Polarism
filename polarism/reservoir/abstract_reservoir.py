@@ -63,3 +63,7 @@ class AbstractReservoir(ABC):
     def get_active_density(self, state: tuple):
         """Return the active reservoir density."""
         return state[0]
+
+    def get_inactive_density(self, state: tuple):
+        """Return the inactive reservoir density, or zero if the model has none."""
+        return state[0] * 0.0

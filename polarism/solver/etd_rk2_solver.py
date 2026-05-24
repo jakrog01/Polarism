@@ -66,17 +66,19 @@ class ETDRK2Solver(AbstractSolver):
         self,
         psi: Union[np.ndarray, cp.ndarray],
         nR: Union[np.ndarray, cp.ndarray],
+        nI: Union[np.ndarray, cp.ndarray],
         potential: Union[np.ndarray, cp.ndarray],
     ) -> Union[np.ndarray, cp.ndarray]:
         """Compute the nonlinear right-hand side."""
         hbar = self.config.physics.hbar
         g_C = self.config.physics.g_C
         g_R = self.config.physics.g_R
+        g_I = getattr(self.config.physics, "g_I", 0.0)
         R = self.config.physics.R
         gamma_C = self.config.physics.gamma_C
 
         rho = self.xp.abs(psi) ** 2
-        eff_energy = potential + g_C * rho + g_R * nR
+        eff_energy = potential + g_C * rho + g_R * nR + g_I * nI
         gain_loss = (R * nR - gamma_C) / 2.0
 
         return (-1j / hbar) * eff_energy * psi + gain_loss * psi
@@ -92,11 +94,13 @@ class ETDRK2Solver(AbstractSolver):
         """Advance the solver by one time step."""
         dt = self.config.solver.dt
 
-        nR = reservoir.get_reservoir_density()
+        res_state = reservoir.get_state()
+        nR = reservoir.get_active_density(res_state)
+        nI = reservoir.get_inactive_density(res_state)
 
         psi_k = self.xp.fft.fft2(state.psi)
 
-        N_n = self._nonlinear_rhs(state.psi, nR, potential)
+        N_n = self._nonlinear_rhs(state.psi, nR, nI, potential)
         N_n_k = self.xp.fft.fft2(N_n)
 
         a_k = self._exp_L * psi_k + self._phi1 * N_n_k * dt
@@ -104,9 +108,11 @@ class ETDRK2Solver(AbstractSolver):
 
         psi_mid = (state.psi + a) / 2
         reservoir.step(dt, psi_mid, pump)
-        nR_new = reservoir.get_reservoir_density()
+        res_new = reservoir.get_state()
+        nR_new = reservoir.get_active_density(res_new)
+        nI_new = reservoir.get_inactive_density(res_new)
 
-        N_a = self._nonlinear_rhs(a, nR_new, potential)
+        N_a = self._nonlinear_rhs(a, nR_new, nI_new, potential)
         N_a_k = self.xp.fft.fft2(N_a)
 
         psi_new_k = a_k + self._phi2 * (N_a_k - N_n_k) * dt

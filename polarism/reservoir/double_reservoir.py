@@ -77,6 +77,13 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         """Return the active reservoir density."""
         return state[0]
 
+    def get_inactive_density(
+        self,
+        state: tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]],
+    ) -> Union[np.ndarray, cp.ndarray]:
+        """Return the inactive reservoir density."""
+        return state[1]
+
     def get_derivatives(
         self,
         psi: Union[np.ndarray, cp.ndarray],

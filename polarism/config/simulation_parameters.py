@@ -22,6 +22,7 @@ class PhysicsConstants:
     gamma_C: float = 0.083
     g_C: float = 0.001
     g_R: float = 0.002
+    g_I: float = 0.002
     gamma_I: float = 0.001
     gamma_A: float = 0.005
     R: float = 0.02

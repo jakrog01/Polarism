@@ -30,6 +30,8 @@ class AbstractLaser(ABC):
         """Set up the shared laser state."""
         self.xp = compute_engine.xp
         self._real_dtype = real_dtype(self.xp, precision)
+        self.laser_type = laser_config.laser_type
+        self.power_definition = getattr(laser_config, "power_definition", "peak_amplitude")
         self.P0 = laser_config.P0
         self.x0 = laser_config.x0
         self.y0 = laser_config.y0

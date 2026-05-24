@@ -74,8 +74,10 @@ class IFRK4FFTCudaSolver(AbstractSolver):
         self._minus_k_squared = -grid.k_squared
 
         self._hbar = hbar
+        self._hbar_over_2m = hbar / (2.0 * m_eff)
         self._g_C = config.physics.g_C
         self._g_R = config.physics.g_R
+        self._g_I = getattr(config.physics, "g_I", 0.0)
         self._R = config.physics.R
         self._gamma_C = config.physics.gamma_C
         self._eta = getattr(config.physics, "kinetic_relaxation_eta", 0.0)
@@ -90,15 +92,16 @@ class IFRK4FFTCudaSolver(AbstractSolver):
         """Evaluate the nonlinear GPE right-hand side in real space."""
         xp = self.xp
         n_active = reservoir.get_active_density(res_state)
+        n_inactive = reservoir.get_inactive_density(res_state)
         rho = xp.abs(psi) ** 2
 
-        eff_energy = potential + self._g_C * rho + self._g_R * n_active
+        eff_energy = potential + self._g_C * rho + self._g_R * n_active + self._g_I * n_inactive
         gain_loss = 0.5 * (self._R * n_active - self._gamma_C)
         rhs = (-1j / self._hbar) * eff_energy * psi + gain_loss * psi
 
         if self._eta != 0.0:
             lap_psi = xp.fft.ifft2(self._minus_k_squared * xp.fft.fft2(psi))
-            rhs = rhs + self._eta * n_active * lap_psi
+            rhs = rhs + self._eta * n_active * self._hbar_over_2m * lap_psi
 
         return rhs
 

@@ -128,10 +128,13 @@ class SplitStepFFTSolver(AbstractSolver):
         hbar = self.config.physics.hbar
         g_C = self.config.physics.g_C
         g_R = self.config.physics.g_R
+        g_I = getattr(self.config.physics, "g_I", 0.0)
         R = self.config.physics.R
         gamma_C = self.config.physics.gamma_C
 
-        nR = reservoir.get_reservoir_density()
+        res_state = reservoir.get_state()
+        nR = reservoir.get_active_density(res_state)
+        nI = reservoir.get_inactive_density(res_state)
 
         if self._use_dct:
             state.psi = self._kinetic_half_step_dct(state.psi)
@@ -139,7 +142,7 @@ class SplitStepFFTSolver(AbstractSolver):
             state.psi = self._kinetic_half_step_fft(state.psi)
 
         rho = self.xp.abs(state.psi) ** 2
-        eff_energy = potential + g_C * rho + g_R * nR
+        eff_energy = potential + g_C * rho + g_R * nR + g_I * nI
         gain_loss = (R * nR - gamma_C) / 2.0
         state.psi = state.psi * self.xp.exp((-1j * eff_energy / hbar + gain_loss) * dt)
 
