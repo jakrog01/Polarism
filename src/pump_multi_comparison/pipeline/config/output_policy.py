@@ -11,6 +11,7 @@ class OutputPolicy:
     render_snapshots: bool = True
     render_animation: bool = True
     archive_raw_hdf5: bool = False
+    render_downscale_factor: int = 1
     animation_clim: dict[str, tuple[float, float]] = dataclasses.field(default_factory=dict)
 
 
@@ -41,11 +42,18 @@ def output_policy_from_config(cfg: dict) -> OutputPolicy:
                 stacklevel=2,
             )
 
+    downscale = int(out.get("render_downscale_factor", 1))
+    if downscale < 1:
+        raise ValueError(
+            f"output.render_downscale_factor must be >= 1, got {downscale}"
+        )
+
     return OutputPolicy(
         field_record_stride=field_stride,
         scalar_record_stride=scalar_stride,
         render_snapshots=bool(out.get("render_snapshots", True)),
         render_animation=bool(out.get("render_animation", True)),
         archive_raw_hdf5=bool(out.get("archive_raw_hdf5", False)),
+        render_downscale_factor=downscale,
         animation_clim=animation_clim,
     )

@@ -19,11 +19,35 @@ import sys
 from typing import Any
 
 from pipeline.config.loader import build_timing_namespace, resolve_delay, resolve_power
-from pipeline.config.sweep import parameter_sweep_enabled
+from pipeline.config.sweep import parameter_sweep_enabled, resolve_laser_type
 
 _BASE_TIMING_NAMES: frozenset[str] = frozenset(
     {"sigma_time", "pulse_separation", "cutoff_sigma"}
 )
+
+_GRID_KEYS: frozenset[str] = frozenset({"nx", "ny", "lx", "ly", "grid_type"})
+_PHYSICS_KEYS: frozenset[str] = frozenset({
+    "hbar", "m_eff", "gamma_R", "gamma_C", "g_C", "g_R", "g_I",
+    "gamma_I", "gamma_A", "R", "R_IA", "R_AI", "kappa",
+    "kinetic_relaxation_eta", "reservoir_diffusion_I", "reservoir_diffusion_A",
+    "reservoir_diffusion_R", "init_eps", "init_mode", "init_k_cutoff_um", "init_seed",
+})
+_SOLVER_KEYS: frozenset[str] = frozenset({"total_time", "dt", "method", "precision", "laplacian"})
+_RESERVOIR_KEYS: frozenset[str] = frozenset({"expose_results", "reservoir_type"})
+_BC_KEYS: frozenset[str] = frozenset({"profile_type", "strength", "absorption", "mask_width_percent"})
+_LASER_DEFAULTS_KEYS: frozenset[str] = frozenset({
+    "laser_type", "P0", "Pmax", "x0", "y0", "sigma_space", "sigma_time",
+    "pulse_separation", "cutoff_sigma", "delay", "n_pulses", "power_definition",
+    "mode", "config_file", "expose_results",
+})
+_LASER_DEF_KEYS: frozenset[str] = _LASER_DEFAULTS_KEYS | frozenset({"id", "power", "tags"})
+
+
+def _check_unknown_keys(location: str, known: frozenset[str], mapping: dict[str, Any]) -> list[str]:
+    unknown = [k for k in mapping if not k.startswith("_") and k not in known]
+    if unknown:
+        return [f"{location} contains unknown key(s): {sorted(unknown)}"]
+    return []
 
 
 def _resolve_threshold_pulse_sep_values(
@@ -76,6 +100,7 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
     g = cfg["global"]
 
     grid = g.get("grid", {})
+    errors.extend(_check_unknown_keys("global.grid", _GRID_KEYS, grid))
     for key in ("nx", "ny", "lx", "ly"):
         val = grid.get(key)
         if val is None:
@@ -84,6 +109,7 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
             errors.append(f"global.grid.{key}={val!r} must be positive")
 
     solver = g.get("solver", {})
+    errors.extend(_check_unknown_keys("global.solver", _SOLVER_KEYS, solver))
     dt = solver.get("dt")
     total_time = solver.get("total_time")
 
@@ -104,6 +130,7 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
             )
 
     physics = g.get("physics", {})
+    errors.extend(_check_unknown_keys("global.physics", _PHYSICS_KEYS, physics))
     for key in ("hbar", "m_eff", "gamma_R", "gamma_C"):
         val = physics.get(key)
         if val is not None:
@@ -122,7 +149,25 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
     if global_laplacian is not None:
         errors.extend(_validate_laplacian("global.solver", global_laplacian))
 
+    errors.extend(_check_unknown_keys("global.boundary_condition", _BC_KEYS, g.get("boundary_condition", {})))
+    errors.extend(_check_unknown_keys("global.reservoir", _RESERVOIR_KEYS, g.get("reservoir", {})))
+
     laser_defaults = g.get("laser_defaults", {})
+    errors.extend(_check_unknown_keys("global.laser_defaults", _LASER_DEFAULTS_KEYS, laser_defaults))
+    global_laser_type = str(laser_defaults.get("laser_type", "pulse-gaussian"))
+    _known_laser_types: frozenset[str] = frozenset()
+    try:
+        import polarism.laser  # noqa: F401 — triggers @register_laser decorators
+        from polarism.laser.laser_registy import available_lasers as _available_lasers
+        _known_laser_types = frozenset(_available_lasers.keys())
+        if global_laser_type not in _available_lasers:
+            errors.append(
+                f"global.laser_defaults.laser_type={global_laser_type!r} is not a known laser type. "
+                f"Known: {sorted(_available_lasers)}"
+            )
+    except Exception:
+        pass
+    _global_is_pulse = global_laser_type == "pulse-gaussian"
     power_def = laser_defaults.get("power_definition", "peak_amplitude")
     _valid_power_defs = {"peak_amplitude", "pulse_energy"}
     if power_def not in _valid_power_defs:
@@ -167,7 +212,7 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
         pulse_sep_formula = None
         if not power_values:
             errors.append("parameter_sweep.power_values is empty")
-        if not pulse_sep_values:
+        if _global_is_pulse and not pulse_sep_values:
             errors.append("parameter_sweep.pulse_separation_values is empty")
         if not sigma_time_values:
             errors.append("parameter_sweep.sigma_time_values is empty")
@@ -191,20 +236,21 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
             isinstance(v, (int, float)) and float(v) > 0 for v in sigma_time_values
         ):
             errors.append("parameter_sweep.sigma_time_values must all be positive numbers")
-        for st in sigma_time_values or []:
-            for ps in pulse_sep_values or []:
-                if float(ps) < 2.0 * cutoff_sigma * float(st):
-                    errors.append(
-                        "parameter_sweep pulse separation must be at least one full "
-                        f"Gaussian support: pulse_separation={float(ps):.3g}, "
-                        f"sigma_time={float(st):.3g}, cutoff_sigma={cutoff_sigma:.3g}"
-                    )
+        if _global_is_pulse:
+            for st in sigma_time_values or []:
+                for ps in pulse_sep_values or []:
+                    if float(ps) < 2.0 * cutoff_sigma * float(st):
+                        errors.append(
+                            "parameter_sweep pulse separation must be at least one full "
+                            f"Gaussian support: pulse_separation={float(ps):.3g}, "
+                            f"sigma_time={float(st):.3g}, cutoff_sigma={cutoff_sigma:.3g}"
+                        )
     else:
         if not power_values:
             errors.append("threshold_search.power_values is empty")
         if not sigma_time_values:
             errors.append("threshold_search.sigma_time_values is empty")
-        if pulse_sep_formula is None and not pulse_sep_values:
+        if _global_is_pulse and pulse_sep_formula is None and not pulse_sep_values:
             errors.append("threshold_search.pulse_separation_values is empty")
 
         if power_values and not all(
@@ -228,7 +274,7 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
         if n_pulses is not None and not (isinstance(n_pulses, int) and n_pulses >= 0):
             errors.append("threshold_search.n_pulses must be a non-negative integer when set")
 
-        if sigma_time_values and (pulse_sep_values or pulse_sep_formula is not None):
+        if _global_is_pulse and sigma_time_values and (pulse_sep_values or pulse_sep_formula is not None):
             valid_pairs = sum(
                 1
                 for st, ps in _resolve_threshold_pulse_sep_values(
@@ -346,8 +392,22 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
         errors.extend(_validate_timing_vars(name, timing_vars))
         allowed_delay_names = _BASE_TIMING_NAMES | frozenset(timing_vars.keys())
 
+        scenario_has_pulse_laser = False
         for i, ldef in enumerate(laser_defs):
             lid = laser_ids[i]
+            errors.extend(_check_unknown_keys(
+                f"scenario '{name}' laser '{lid}'", _LASER_DEF_KEYS, ldef
+            ))
+
+            ldef_laser_type = resolve_laser_type(ldef, laser_defaults)
+            if _known_laser_types and ldef_laser_type not in _known_laser_types:
+                errors.append(
+                    f"Scenario '{name}' laser '{lid}'.laser_type={ldef_laser_type!r} "
+                    f"is not a known laser type. Known: {sorted(_known_laser_types)}"
+                )
+            if ldef_laser_type == "pulse-gaussian":
+                scenario_has_pulse_laser = True
+
             for key in ("x0", "y0"):
                 val = ldef.get(key, 0.0)
                 try:
@@ -406,7 +466,8 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
                     )
 
         if (
-            not sweep_enabled
+            scenario_has_pulse_laser
+            and not sweep_enabled
             and isinstance(total_time, (int, float))
             and float(total_time) > 0
             and sigma_time_values
@@ -425,7 +486,8 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
                 )
             )
         elif (
-            sweep_enabled
+            scenario_has_pulse_laser
+            and sweep_enabled
             and isinstance(total_time, (int, float))
             and float(total_time) > 0
         ):

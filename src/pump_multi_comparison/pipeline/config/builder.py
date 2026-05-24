@@ -29,7 +29,8 @@ from polarism.config.simulation_parameters import (
     ResultParameters,
     SolverParameters,
 )
-from polarism.laser.pulse_gaussian import PulseGaussian
+import polarism.laser  # noqa: F401 - populate laser registry
+from polarism.laser.laser_registy import available_lasers
 
 
 def build_scenario_config(
@@ -86,6 +87,7 @@ def build_scenario_config(
             sigma_time=sigma_time,
             pulse_separation=pulse_sep,
             cutoff_sigma=cutoff_sigma,
+            n_pulses=int(defaults.get("n_pulses", 0)),
         ),
         reservoir=make_dataclass(
             ReservoirParameters,
@@ -210,8 +212,9 @@ def build_scenario_lasers(
     Returns
     -------
     (lasers, phases)
-        List of ``PulseGaussian`` instances and phase offsets (radians).
-        When explicit delays are used, phases are all zero.
+        List of laser instances (class resolved from registry by ``laser_type``)
+        and phase offsets (radians).  When explicit delays are used, phases are
+        all zero.
 
     Notes
     -----
@@ -245,17 +248,22 @@ def build_scenario_lasers(
     has_explicit_delays = scenario.get("timing_vars") is not None or any(
         "delay" in ldef for ldef in laser_defs
     )
+    any_pulse = any(
+        str({**defaults, **ldef}.get("laser_type", "pulse-gaussian")) == "pulse-gaussian"
+        for ldef in laser_defs
+    )
 
     if has_explicit_delays:
         timing_ns = build_timing_namespace(
             threshold, defaults, scenario.get("timing_vars")
         )
         phases_out: list[float] = [0.0] * n_lasers
-    else:
-        raw_phases: np.ndarray = (
-            rng.uniform(0, 2 * np.pi, size=n_lasers) if n_lasers > 1 else np.zeros(1)
-        )
+    elif any_pulse and n_lasers > 1:
+        raw_phases: np.ndarray = rng.uniform(0, 2 * np.pi, size=n_lasers)
         phases_out = raw_phases.tolist()
+        timing_ns = None
+    else:
+        phases_out = [0.0] * n_lasers
         timing_ns = None
 
     lasers: list[Any] = []
@@ -273,6 +281,7 @@ def build_scenario_lasers(
         else:
             pulse_sep = float(raw_sep)
 
+        resolved_laser_type = str(merged.get("laser_type", "pulse-gaussian"))
         if timing_ns is not None:
             per_laser_ns = {
                 **timing_ns,
@@ -286,10 +295,11 @@ def build_scenario_lasers(
                     f"Laser '{ids[i]}' resolved delay={delay!r} must be "
                     "finite and non-negative"
                 )
+        elif resolved_laser_type == "pulse-gaussian" and n_lasers > 1:
+            delay = float(phases_out[i] / (2 * np.pi) * pulse_sep)
         else:
-            delay = (
-                float(phases_out[i] / (2 * np.pi) * pulse_sep) if n_lasers > 1 else 0.0
-            )
+            delay = float(ldef.get("delay", 0.0))
+            phases_out[i] = 0.0
 
         laser_cfg = LaserParameters(
             mode="single",
@@ -306,6 +316,12 @@ def build_scenario_lasers(
             n_pulses=int(merged.get("n_pulses", 0)),
             power_definition=str(merged.get("power_definition", "peak_amplitude")),
         )
-        lasers.append(PulseGaussian(laser_cfg, grid.X, grid.Y))
+        laser_cls = available_lasers.get(laser_cfg.laser_type)
+        if laser_cls is None:
+            raise ValueError(
+                f"Unknown laser type: {laser_cfg.laser_type!r}. "
+                f"Available: {sorted(available_lasers)}"
+            )
+        lasers.append(laser_cls(laser_cfg, grid.X, grid.Y))
 
     return lasers, phases_out

@@ -34,6 +34,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         self._m_eff = config.physics.m_eff
         self._g_C = config.physics.g_C
         self._g_R = config.physics.g_R
+        self._g_I = getattr(config.physics, "g_I", 0.0)
         self._R = config.physics.R
         self._gamma_C = config.physics.gamma_C
         self._dt = config.solver.dt
@@ -66,6 +67,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         xp = self.xp
         g_C = self._g_C
         g_R = self._g_R
+        g_I = self._g_I
         R = self._R
         gamma_C = self._gamma_C
         minus_i_over_hbar = self._minus_i_over_hbar
@@ -74,10 +76,10 @@ class RK4FDMFusedSolver(AbstractSolver):
         hbar_over_2m = self._hbar_over_2m
 
         @xp.fuse()
-        def fused_rhs(psi, lap, potential, n_active):
+        def fused_rhs(psi, lap, potential, n_active, n_inactive):
             """Compute the fused right-hand side."""
             rho = xp.abs(psi) ** 2
-            eff_energy = potential + g_C * rho + g_R * n_active
+            eff_energy = potential + g_C * rho + g_R * n_active + g_I * n_inactive
             gain_loss = (R * n_active - gamma_C) * 0.5
             kinetic_energy = kinetic_coeff * lap
             return (
@@ -177,15 +179,15 @@ class RK4FDMFusedSolver(AbstractSolver):
             + 2 * (psi[-1, -2] - psi[-1, -1]) * inv_dx2
         )
 
-    def _rhs_into(self, psi, n_active, potential, out) -> None:
+    def _rhs_into(self, psi, n_active, n_inactive, potential, out) -> None:
         """Write the right-hand side into the output buffer."""
         if self._fused_rhs is not None:
             self._laplacian(psi, self._lap)
-            out[:] = self._fused_rhs(psi, self._lap, potential, n_active)
+            out[:] = self._fused_rhs(psi, self._lap, potential, n_active, n_inactive)
         else:
             self._laplacian(psi, self._lap)
             rho = self.xp.abs(psi) ** 2
-            eff_energy = potential + self._g_C * rho + self._g_R * n_active
+            eff_energy = potential + self._g_C * rho + self._g_R * n_active + self._g_I * n_inactive
             gain_loss = (self._R * n_active - self._gamma_C) * 0.5
             kinetic = self._kinetic_coeff * self._lap
             out[:] = (
@@ -210,28 +212,32 @@ class RK4FDMFusedSolver(AbstractSolver):
         res0 = reservoir.get_state()
 
         nR_0 = reservoir.get_active_density(res0)
-        self._rhs_into(psi0, nR_0, potential, self._k1_psi)
+        nI_0 = reservoir.get_inactive_density(res0)
+        self._rhs_into(psi0, nR_0, nI_0, potential, self._k1_psi)
         k1_res = reservoir.get_derivatives(psi0, pump, res0)
 
         self._tmp_psi[:] = psi0
         self._tmp_psi += 0.5 * dt * self._k1_psi
         res2 = tuple(r + 0.5 * dt * k for r, k in zip(res0, k1_res))
         nR_2 = reservoir.get_active_density(res2)
-        self._rhs_into(self._tmp_psi, nR_2, potential, self._k2_psi)
+        nI_2 = reservoir.get_inactive_density(res2)
+        self._rhs_into(self._tmp_psi, nR_2, nI_2, potential, self._k2_psi)
         k2_res = reservoir.get_derivatives(self._tmp_psi, pump, res2)
 
         self._tmp_psi[:] = psi0
         self._tmp_psi += 0.5 * dt * self._k2_psi
         res3 = tuple(r + 0.5 * dt * k for r, k in zip(res0, k2_res))
         nR_3 = reservoir.get_active_density(res3)
-        self._rhs_into(self._tmp_psi, nR_3, potential, self._k3_psi)
+        nI_3 = reservoir.get_inactive_density(res3)
+        self._rhs_into(self._tmp_psi, nR_3, nI_3, potential, self._k3_psi)
         k3_res = reservoir.get_derivatives(self._tmp_psi, pump, res3)
 
         self._tmp_psi[:] = psi0
         self._tmp_psi += dt * self._k3_psi
         res4 = tuple(r + dt * k for r, k in zip(res0, k3_res))
         nR_4 = reservoir.get_active_density(res4)
-        self._rhs_into(self._tmp_psi, nR_4, potential, self._k4_psi)
+        nI_4 = reservoir.get_inactive_density(res4)
+        self._rhs_into(self._tmp_psi, nR_4, nI_4, potential, self._k4_psi)
         k4_res = reservoir.get_derivatives(self._tmp_psi, pump, res4)
 
         dt6 = dt / 6.0

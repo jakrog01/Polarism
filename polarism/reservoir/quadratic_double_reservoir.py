@@ -99,6 +99,15 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
         """Return the active reservoir density ``nR``."""
         return state[0]
 
+    def get_inactive_density(
+        self,
+        state: tuple[
+            Union["np.ndarray", "cp.ndarray"], Union["np.ndarray", "cp.ndarray"]
+        ],
+    ) -> Union["np.ndarray", "cp.ndarray"]:
+        """Return the inactive reservoir density ``nI``."""
+        return state[1]
+
     def get_derivatives(
         self,
         psi: Union["np.ndarray", "cp.ndarray"],

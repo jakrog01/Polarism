@@ -9,6 +9,7 @@ import math
 import os
 import traceback
 
+import h5py
 import numpy as np
 
 from pipeline.config.output_policy import OutputPolicy
@@ -31,6 +32,7 @@ from polarism.solver.create_solver import create_solver
 from tqdm import trange
 
 COND_GROWTH_FACTOR = 1e6
+COND_PSI_SQ_THRESHOLD = 5e-2
 CHECK_EVERY = 50
 MIN_CHECK_TIME = 50.0
 RNG_SEED = 42
@@ -40,6 +42,13 @@ _FIELD_SPECS: dict[str, np.dtype] = {
     "nI": np.dtype(np.float64),
     "nA": np.dtype(np.float64),
     "Pump": np.dtype(np.float64),
+}
+
+_ANIMATION_EXTREMA_ATTRS: dict[str, str] = {
+    "psi_sq": "animation_global_max_psi_sq",
+    "nI": "animation_global_max_nI",
+    "nA": "animation_global_max_nA",
+    "Pump": "animation_global_max_Pump",
 }
 
 
@@ -174,6 +183,45 @@ def _active_inactive_reservoir_fields(reservoir: object, inactive_zero: object):
         "Reservoir state must contain one active field or active/inactive fields; "
         f"got {len(state)} entries"
     )
+
+
+def _init_animation_extrema(xp: object) -> dict[str, object]:
+    """Create backend scalars for exact full-run animation colour limits."""
+    return {
+        key: xp.asarray(0.0, dtype=xp.float64)
+        for key in _ANIMATION_EXTREMA_ATTRS
+    }
+
+
+def _update_animation_extrema(
+    extrema: dict[str, object],
+    psi_sq: object,
+    nA: object,
+    nI: object,
+    pump: object,
+    xp: object,
+) -> None:
+    """Update full-run maxima without synchronizing GPU work to the CPU."""
+    extrema["psi_sq"] = xp.maximum(extrema["psi_sq"], xp.max(psi_sq))
+    extrema["nA"] = xp.maximum(extrema["nA"], xp.max(nA))
+    extrema["nI"] = xp.maximum(extrema["nI"], xp.max(nI))
+    extrema["Pump"] = xp.maximum(extrema["Pump"], xp.max(pump))
+
+
+def _write_animation_extrema_attrs(
+    h5_path: str,
+    extrema: dict[str, object] | None,
+) -> dict[str, float]:
+    """Persist exact full-run maxima as HDF5 attrs for the movie renderer."""
+    if extrema is None:
+        return {}
+    values: dict[str, float] = {}
+    for key, attr_name in _ANIMATION_EXTREMA_ATTRS.items():
+        values[attr_name] = float(np.asarray(compute_engine.to_cpu(extrema[key])))
+    with h5py.File(h5_path, "a") as h5:
+        for attr_name, value in values.items():
+            h5.attrs[attr_name] = value
+    return values
 
 
 def run_simulation_from_config(
@@ -323,6 +371,21 @@ AnimationVisitor.record_frame` is called at each field-record step and
     P_zero = xp.zeros((grid.ny, grid.nx), dtype=xp.float64)
     inactive_zero = xp.zeros((grid.ny, grid.nx), dtype=xp.float64)
     cumulative_pump = 0.0
+    animation_extrema = (
+        _init_animation_extrema(xp) if output_policy.render_animation else None
+    )
+    if animation_extrema is not None:
+        nA_initial, nI_initial = _active_inactive_reservoir_fields(
+            reservoir, inactive_zero
+        )
+        _update_animation_extrema(
+            animation_extrema,
+            xp.abs(state.psi) ** 2,
+            nA_initial,
+            nI_initial,
+            P_zero,
+            xp,
+        )
 
     N_initial = float(xp.sum(xp.abs(state.psi) ** 2))
     t_cond = None
@@ -341,14 +404,44 @@ AnimationVisitor.record_frame` is called at each field-record step and
             cumulative_pump += P_area_integral_step * dt
             solver.step(potential, P_total, reservoir, bc, state)
 
+            nA_current = None
+            nI_current = None
+            psi_sq_current = None
+            if animation_extrema is not None:
+                nA_current, nI_current = _active_inactive_reservoir_fields(
+                    reservoir, inactive_zero
+                )
+                psi_sq_current = xp.abs(state.psi) ** 2
+                _update_animation_extrema(
+                    animation_extrema,
+                    psi_sq_current,
+                    nA_current,
+                    nI_current,
+                    P_total,
+                    xp,
+                )
+
             if step > 0 and step % CHECK_EVERY == 0:
-                N_total = float(xp.sum(xp.abs(state.psi) ** 2))
+                psi_sq_check = (
+                    psi_sq_current
+                    if psi_sq_current is not None
+                    else xp.abs(state.psi) ** 2
+                )
+                psi_sq_max_current = float(xp.max(psi_sq_check))
+                N_total = float(xp.sum(psi_sq_check))
                 if math.isnan(N_total) or math.isinf(N_total):
                     raise RuntimeError(
                         f"Numerical divergence at step {step}, t={t:.4f} ps: "
                         f"psi norm is {N_total}"
                     )
-                if not condensed and t >= MIN_CHECK_TIME and N_total > N_initial * COND_GROWTH_FACTOR:
+                if (
+                    not condensed
+                    and t >= MIN_CHECK_TIME
+                    and (
+                        psi_sq_max_current > COND_PSI_SQ_THRESHOLD
+                        or N_total > N_initial * COND_GROWTH_FACTOR
+                    )
+                ):
                     t_cond = (step + 1) * dt
                     condensed = True
                     print(f"\n    Condensation at t={t:.2f} ps (step {step})")
@@ -357,8 +450,15 @@ AnimationVisitor.record_frame` is called at each field-record step and
             record_fields = step % output_policy.field_record_stride == 0
 
             if record_scalars or record_fields:
-                nA, nI = _active_inactive_reservoir_fields(reservoir, inactive_zero)
-                psi_sq = xp.abs(state.psi) ** 2
+                if nA_current is None or nI_current is None:
+                    nA, nI = _active_inactive_reservoir_fields(reservoir, inactive_zero)
+                else:
+                    nA, nI = nA_current, nI_current
+                psi_sq = (
+                    psi_sq_current
+                    if psi_sq_current is not None
+                    else xp.abs(state.psi) ** 2
+                )
                 kspace_metrics = _compute_kspace_metrics(state.psi, k_r, k_nyquist_min, xp)
                 nA_max_val = float(xp.max(nA))
                 damping_nyq = kinetic_relaxation_eta * nA_max_val * hbar_over_2m * k_nyquist_min ** 2
@@ -394,7 +494,6 @@ AnimationVisitor.record_frame` is called at each field-record step and
                     scalar_acc[name].append(scalars.get(name, 0.0))
 
             if record_fields:
-                nA, nI = _active_inactive_reservoir_fields(reservoir, inactive_zero)
                 raw_frame = {"psi": state.psi, "nI": nI, "nA": nA, "Pump": P_total}
                 writer.record(
                     (step + 1) * dt,
@@ -425,6 +524,15 @@ AnimationVisitor.record_frame` is called at each field-record step and
         print("    Closing HDF5 writer ...")
         writer.close()
         print("    HDF5 finalized.")
+        extrema_attrs = _write_animation_extrema_attrs(out_path, animation_extrema)
+        if extrema_attrs:
+            print(
+                "    Animation fixed-scale maxima: "
+                + ", ".join(
+                    f"{name.replace('animation_global_max_', '')}={value:.6g}"
+                    for name, value in extrema_attrs.items()
+                )
+            )
         if animation_visitor is not None:
             try:
                 animation_visitor.finalize()

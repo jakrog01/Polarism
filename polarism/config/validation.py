@@ -58,11 +58,11 @@ def _validate_physics(cfg: Config) -> None:
                 f"got {val}"
             )
 
-    for name in ("kinetic_relaxation_eta", "reservoir_diffusion_I", "reservoir_diffusion_A", "reservoir_diffusion_R"):
+    for name in ("g_C", "g_R", "g_I", "kinetic_relaxation_eta", "reservoir_diffusion_I", "reservoir_diffusion_A", "reservoir_diffusion_R"):
         val = getattr(p, name, None)
         if val is not None and val < 0.0:
             raise ConfigValidationError(
-                f"physics.{name} must be >= 0 (relaxation/diffusion coefficients cannot be negative), "
+                f"physics.{name} must be >= 0 (interaction/relaxation/diffusion coefficients cannot be negative), "
                 f"got {val}"
             )
 

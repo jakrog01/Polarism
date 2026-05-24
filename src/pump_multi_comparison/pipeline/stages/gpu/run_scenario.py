@@ -18,6 +18,7 @@ import shutil
 import sys
 import time
 import traceback
+from typing import Any
 import warnings
 
 import numpy as np
@@ -153,10 +154,25 @@ def _compute_laser_centering(
     }
 
 
+def _laser_timing_end(laser: Any) -> float:
+    sigma_time = getattr(laser, "sigma_time", None)
+    if sigma_time is None:
+        return laser.delay
+    cutoff = float(getattr(laser, "cutoff_sigma", 3.0))
+    n_pulses = int(getattr(laser, "n_pulses", 0))
+    if n_pulses > 0:
+        return (
+            laser.delay
+            + (n_pulses - 1) * float(laser.pulse_separation)
+            + 2.0 * cutoff * float(sigma_time)
+        )
+    return laser.delay + 2.0 * cutoff * float(sigma_time)
+
+
 _BASE_ANIMATION_PANELS = [
-    ("psi",  "magma",   "abs2",  "power", 0.5),
-    ("nA",   "inferno", None,    None,    0.3),
-    ("nI",   "magma",   None,    None,    0.3),
+    ("psi",  "magma",   "abs2",  None,    1.0),
+    ("nA",   "inferno", None,    None,    1.0),
+    ("nI",   "magma",   None,    None,    1.0),
 ]
 
 
@@ -190,6 +206,7 @@ def _render_animation_artifact(
     scratch_results_dir: str,
     extent: list[float],
     clim_overrides: dict[str, tuple[float, float]] | None = None,
+    downscale_factor: int = 1,
 ) -> None:
     """Generate the movie from scratch-local HDF5 after the run completes.
 
@@ -204,6 +221,7 @@ def _render_animation_artifact(
         extent,
         data_dir=data_dir,
         results_dir=scratch_results_dir,
+        downscale_factor=downscale_factor,
     )
 
 
@@ -372,7 +390,7 @@ def main() -> None:
     print(f"  Lasers: {len(lasers)}")
     for i, laser in enumerate(lasers):
         print(
-            f"    [{i}] P={laser.P0:.2f}  "
+            f"    [{i}] {laser.laser_type} ({type(laser).__name__})  P={laser.P0:.2f}  "
             f"pos=({laser.x0:.1f}, {laser.y0:.1f})  "
             f"delay={laser.delay:.3f} ps"
         )
@@ -384,16 +402,7 @@ def main() -> None:
                 f"r={roi['radius']:.3g}"
             )
 
-    required_time = max(
-        (
-            laser.delay
-            + (max(laser.n_pulses, 1) - 1) * laser.pulse_separation
-            + 2.0 * laser.cutoff_sigma * laser.sigma_time
-            if getattr(laser, "n_pulses", 0) > 0
-            else laser.delay + 2.0 * laser.cutoff_sigma * laser.sigma_time
-        )
-        for laser in lasers
-    )
+    required_time = max(_laser_timing_end(laser) for laser in lasers)
     if required_time > sim_cfg.solver.total_time:
         print(
             "ERROR: scenario timing does not fit inside the configured simulation "
@@ -452,6 +461,7 @@ def main() -> None:
                 scratch_results_dir,
                 extent,
                 clim_overrides=output_policy.animation_clim or None,
+                downscale_factor=output_policy.render_downscale_factor,
             )
             animation_status = "ok"
         except Exception as e:
@@ -518,6 +528,8 @@ def main() -> None:
         "lasers": [
             {
                 "id": laser_ids[i] if i < len(laser_ids) else f"laser_{i}",
+                "laser_type": laser.laser_type,
+                "runtime_class": type(laser).__name__,
                 "x0": float(laser.x0), "y0": float(laser.y0),
                 "P0": float(laser.P0),
                 "input_power": float(laser.P0),
@@ -532,10 +544,16 @@ def main() -> None:
                     if getattr(laser, "power_definition", "peak_amplitude") == "pulse_energy"
                     else {}
                 ),
-                "sigma_time": float(laser.sigma_time),
+                **(
+                    {
+                        "sigma_time": float(laser.sigma_time),
+                        "pulse_separation": float(laser.pulse_separation),
+                        "n_pulses": int(getattr(laser, "n_pulses", 0)),
+                    }
+                    if getattr(laser, "sigma_time", None) is not None
+                    else {}
+                ),
                 "sigma_space": float(laser.sigma_space),
-                "pulse_separation": float(laser.pulse_separation),
-                "n_pulses": int(getattr(laser, "n_pulses", 0)),
                 "delay": float(laser.delay),
                 **{k: v for k, v in centering["laser_centering"][i].items()
                    if k not in ("id", "x0", "y0")},

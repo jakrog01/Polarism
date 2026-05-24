@@ -42,6 +42,7 @@ from typing import Any
 import numpy as np
 
 from pipeline.config.builder import build_scenario_lasers
+from pipeline.config.sweep import _PULSE_LASER_TYPES, resolve_laser_type
 from pipeline.config.loader import (
     get_threshold_search_cfg,
     load_config,
@@ -72,6 +73,7 @@ from polarism.simulation_state import SimulationState
 from polarism.solver.create_solver import create_solver
 
 COND_GROWTH_FACTOR = 1e6
+COND_PSI_SQ_THRESHOLD = 5e-2
 CHECK_EVERY = 500
 MIN_CHECK_TIME = 50.0
 RNG_SEED = 42
@@ -211,10 +213,17 @@ def _run_simulation_kernel(
 
         if step > 0 and step % CHECK_EVERY == 0:
             t_now = (step + 1) * dt
+            psi_sq_max_current = float(xp.max(xp.abs(state.psi) ** 2))
             N_total = float(xp.sum(xp.abs(state.psi) ** 2))
             if math.isnan(N_total) or math.isinf(N_total):
                 return {"condensed": False, "reason": "diverged"}
-            if t_now >= MIN_CHECK_TIME and N_total > infra.N_initial * COND_GROWTH_FACTOR:
+            if (
+                t_now >= MIN_CHECK_TIME
+                and (
+                    psi_sq_max_current > COND_PSI_SQ_THRESHOLD
+                    or N_total > infra.N_initial * COND_GROWTH_FACTOR
+                )
+            ):
                 return {"condensed": True, "t_cond": t_now}
 
     return {"condensed": False, "reason": "no_condensation"}
@@ -454,6 +463,24 @@ def main() -> None:
     print(f"  sigma_times    : {sigma_time_values}")
     if n_pulses > 0:
         print(f"  Max pulses     : {n_pulses}")
+    non_pulse_types: list[str] = []
+    default_laser_type = defaults.get("laser_type", "pulse-gaussian")
+    if default_laser_type not in _PULSE_LASER_TYPES:
+        non_pulse_types.append(default_laser_type)
+    if first_scenario is not None:
+        for ldef in first_scenario.get("lasers", []):
+            lt = resolve_laser_type(ldef, defaults)
+            if lt not in _PULSE_LASER_TYPES and lt not in non_pulse_types:
+                non_pulse_types.append(lt)
+    if non_pulse_types:
+        print(
+            f"ERROR: threshold_search does not support non-pulse laser types "
+            f"(found: {non_pulse_types}). "
+            "Use parameter_sweep instead — continuous-wave condensation threshold is "
+            "a critical-power sweep, not a pulse-parameter search.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     if first_scenario is not None:
         print(f"  Search kernel  : multi-laser (scenario '{first_scenario.get('name', 'unnamed')}')")
     else:

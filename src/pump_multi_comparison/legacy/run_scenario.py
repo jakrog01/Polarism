@@ -222,6 +222,18 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+
+    laser_type = str(
+        cfg.get("global", {}).get("laser_defaults", {}).get("laser_type", "pulse-gaussian")
+    )
+    if laser_type != "pulse-gaussian":
+        print(
+            f"ERROR: legacy runner does not support laser_type={laser_type!r}. "
+            "Use the pipeline GPU stage (pipeline.stages.gpu.run_scenario) instead.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     threshold = load_threshold_result()
 
     if not threshold.get("search_completed"):

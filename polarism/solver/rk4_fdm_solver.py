@@ -156,6 +156,7 @@ class RK4FDMSolver(AbstractSolver):
         """Compute the right-hand side."""
         res_derivs = reservoir.get_derivatives(psi, pump, res_state)
         n_active = reservoir.get_active_density(res_state)
+        n_inactive = reservoir.get_inactive_density(res_state)
 
         lap = self._laplacian_buf
         if lap is None:
@@ -169,6 +170,7 @@ class RK4FDMSolver(AbstractSolver):
             potential
             + self.config.physics.g_C * self.xp.abs(psi) ** 2
             + self.config.physics.g_R * n_active
+            + getattr(self.config.physics, "g_I", 0.0) * n_inactive
         )
         gain_loss = (
             self.config.physics.R * n_active - self.config.physics.gamma_C

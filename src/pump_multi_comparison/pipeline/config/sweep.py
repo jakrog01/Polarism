@@ -7,10 +7,18 @@ from typing import Any
 
 from pipeline.config.loader import resolve_delay, resolve_power
 
+_PULSE_LASER_TYPES: frozenset[str] = frozenset({"pulse-gaussian"})
+_P_RELATIVE_POWER_RE = re.compile(r"^\s*([0-9]*\.?[0-9]*)\s*P\s*$")
+
 
 def parameter_sweep_enabled(cfg: dict[str, Any]) -> bool:
     """Return whether the config requests direct parameter-sweep mode."""
     return bool(cfg.get("global", {}).get("parameter_sweep", {}).get("enabled", False))
+
+
+def resolve_laser_type(ldef: dict[str, Any], defaults: dict[str, Any]) -> str:
+    """Return the effective laser_type for a laser definition."""
+    return str(ldef.get("laser_type", defaults.get("laser_type", "pulse-gaussian")))
 
 
 def _fmt_value(value: float) -> str:
@@ -22,6 +30,15 @@ def _fmt_value(value: float) -> str:
 def _power_suffix_prefix(power_definition: str) -> str:
     """Return the scenario-name prefix for the swept pump-strength value."""
     return "E" if power_definition == "pulse_energy" else "P"
+
+
+def _is_reference_power(expr: Any) -> bool:
+    """Return whether *expr* depends on the sweep reference power ``P``."""
+    if expr is None:
+        return True
+    if isinstance(expr, str):
+        return _P_RELATIVE_POWER_RE.match(expr) is not None
+    return False
 
 
 def _selected_base_scenarios(
@@ -53,6 +70,31 @@ def _apply_absolute_power(
         ldef["power"] = float(power)
 
     scenario.pop("power_modifiers", None)
+
+
+def _uses_absolute_power_label(scenario: dict[str, Any]) -> bool:
+    """Return whether scenario naming should use resolved absolute laser power."""
+    laser_defs: list[dict[str, Any]] = scenario.get("lasers", [])
+    modifiers: list[dict[str, Any]] = scenario.get("power_modifiers", [])
+    ids = [str(ldef.get("id", f"laser_{i}")) for i, ldef in enumerate(laser_defs)]
+
+    for i, ldef in enumerate(laser_defs):
+        tags = ldef.get("tags") or []
+        power_expr = ldef.get("power")
+        for mod in modifiers:
+            if ids[i] in mod.get("ids", []) or any(t in tags for t in mod.get("tags", [])):
+                power_expr = mod.get("power")
+        if not _is_reference_power(power_expr):
+            return True
+    return False
+
+
+def _representative_resolved_power(scenario: dict[str, Any], fallback: float) -> float:
+    """Return a compact power label for an already resolved scenario."""
+    return max(
+        (float(ld.get("power", fallback)) for ld in scenario.get("lasers", [{}])),
+        default=float(fallback),
+    )
 
 
 def _apply_timing_grid_point(
@@ -91,11 +133,17 @@ def _apply_timing_grid_point(
 def expand_parameter_sweep(
     cfg: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str], dict[str, Any]]:
-    """Expand base scenarios over power and pulse-separation values.
+    """Expand base scenarios over power (and optionally pulse-separation) values.
 
     Returns an expanded config snapshot, expanded scenario names, and a synthetic
     threshold result that lets the existing scenario stage run without invoking
     threshold search.
+
+    For pulse-gaussian laser types, the expansion includes the pulse_separation
+    axis and produces scenario names with a ``_sep{value}`` component.  For all
+    other laser types (continuous-gaussian, etc.) the pulse_separation axis is
+    omitted — ``pulse_separation_values`` is not required in the config, and
+    scenario names carry only the power (and optionally sigma_space) component.
     """
     if not parameter_sweep_enabled(cfg):
         names = [sc["name"] for sc in cfg.get("scenarios", [])]
@@ -111,7 +159,7 @@ def expand_parameter_sweep(
 
     cutoff_sigma: float = float(defaults.get("cutoff_sigma", 3.0))
     powers = [float(v) for v in sweep_cfg["power_values"]]
-    separations = [float(v) for v in sweep_cfg["pulse_separation_values"]]
+    separations: list[float] = [float(v) for v in sweep_cfg.get("pulse_separation_values", [])]
     sigma_times = [
         float(v)
         for v in sweep_cfg.get(
@@ -132,52 +180,74 @@ def expand_parameter_sweep(
 
     multiple_sigma = len(sigma_times) > 1
     multiple_sigma_space = len(sigma_spaces) > 1
+    any_pulse_scenario = False
+
     for base in base_scenarios:
         base_name = str(base["name"])
+        scenario_has_pulse = any(
+            resolve_laser_type(ldef, defaults) in _PULSE_LASER_TYPES
+            for ldef in base.get("lasers", [])
+        )
+        if scenario_has_pulse:
+            any_pulse_scenario = True
+        use_resolved_power_label = _uses_absolute_power_label(base)
         first_laser_n_pulses = int(
             base.get("lasers", [{}])[0].get("n_pulses", 0)
         ) if base.get("lasers") else 0
+        sep_loop: list[float | None] = separations if scenario_has_pulse else [None]
+
         for sigma_time in sigma_times:
-            for pulse_sep in separations:
+            for pulse_sep in sep_loop:
                 for sigma_space in sigma_spaces:
                     for power in powers:
                         sc = copy.deepcopy(base)
-                        suffix = f"{power_prefix}{_fmt_value(power)}_sep{_fmt_value(pulse_sep)}"
+                        _apply_absolute_power(sc, power)
+                        sweep_power = (
+                            _representative_resolved_power(sc, power)
+                            if use_resolved_power_label
+                            else float(power)
+                        )
+                        suffix = f"{power_prefix}{_fmt_value(sweep_power)}"
+                        if scenario_has_pulse and pulse_sep is not None:
+                            suffix += f"_sep{_fmt_value(pulse_sep)}"
                         if multiple_sigma:
                             suffix += f"_sig{_fmt_value(sigma_time)}"
                         if multiple_sigma_space:
                             suffix += f"_sp{_fmt_value(sigma_space)}"
                         sc["name"] = f"{base_name}_{suffix}"
-                        _apply_absolute_power(sc, power)
-                        _apply_timing_grid_point(sc, pulse_sep, sigma_time, cutoff_sigma)
+                        if scenario_has_pulse and pulse_sep is not None:
+                            _apply_timing_grid_point(sc, pulse_sep, sigma_time, cutoff_sigma)
                         for ldef in sc.get("lasers", []):
                             ldef["sigma_space"] = float(sigma_space)
-                        sc["sweep"] = {
+                        sweep_meta: dict[str, Any] = {
                             "base_scenario": base_name,
-                            "power": float(power),
-                            "pulse_separation": float(pulse_sep),
-                            "sigma_time": float(sigma_time),
+                            "power": sweep_power,
                             "sigma_space": float(sigma_space),
-                            "n_pulses": first_laser_n_pulses,
                             "power_definition": power_definition,
                             "power_label": power_prefix,
                         }
+                        if scenario_has_pulse and pulse_sep is not None:
+                            sweep_meta["pulse_separation"] = float(pulse_sep)
+                            sweep_meta["sigma_time"] = float(sigma_time)
+                            sweep_meta["n_pulses"] = first_laser_n_pulses
+                        sc["sweep"] = sweep_meta
                         expanded_scenarios.append(sc)
 
     expanded_cfg["scenarios"] = expanded_scenarios
     names = [sc["name"] for sc in expanded_scenarios]
 
     grid = global_cfg.get("grid", {})
-    threshold_stub = {
+    threshold_stub: dict[str, Any] = {
         "search_completed": True,
         "mode": "parameter_sweep",
         "P_threshold": 1.0,
         "power_definition": power_definition,
         "sigma_time": sigma_times[0],
-        "pulse_separation": separations[0],
         "cutoff_sigma": cutoff_sigma,
         "sigma_space": sigma_spaces[0],
         "lx": float(grid.get("lx", 100.0)),
         "ly": float(grid.get("ly", 100.0)),
     }
+    if any_pulse_scenario and separations:
+        threshold_stub["pulse_separation"] = separations[0]
     return expanded_cfg, names, threshold_stub

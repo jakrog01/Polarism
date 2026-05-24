@@ -92,6 +92,21 @@ def pick_indices(n: int, count: int = SNAPSHOT_COUNT) -> list[int]:
     return [int(i * (n - 1) / (count - 1)) for i in range(count)]
 
 
+def _load_sidecar_scalars(routine: str, data_dir: str, keys: list[str]) -> dict[str, np.ndarray]:
+    """Load dense scalar traces from the sidecar if it is available."""
+    sidecar_path = os.path.join(data_dir, f"{routine}_scalars.npz")
+    if not os.path.exists(sidecar_path):
+        return {}
+
+    wanted = ["time", *keys]
+    arrays: dict[str, np.ndarray] = {}
+    with np.load(sidecar_path) as npz:
+        for key in wanted:
+            if key in npz:
+                arrays[key] = np.asarray(npz[key]).copy()
+    return arrays
+
+
 def _make_norm(spec: dict, vmin: float, vmax: float):
     """Build the color normalization for a plot."""
     if spec.get("norm") == "power":
@@ -137,6 +152,22 @@ def generate_field_png(
 
         scalar_data = h5[f"scalars/{scalar_key}"][:][sort_order] if has_scalar else None
         laser_data_map = {lk: h5[f"scalars/{lk}"][:][sort_order] for lk in per_laser_keys}
+
+        trace_scalar_time = time_sorted
+        trace_scalar_data = scalar_data
+        trace_laser_data_map = laser_data_map
+        trace_laser_time_map = {lk: time_sorted for lk in per_laser_keys}
+        sidecar_keys = ([scalar_key] if scalar_key else []) + per_laser_keys
+        sidecar_scalars = _load_sidecar_scalars(routine, data_dir, sidecar_keys)
+        if "time" in sidecar_scalars:
+            sidecar_time = sidecar_scalars["time"]
+            if scalar_key in sidecar_scalars:
+                trace_scalar_data = sidecar_scalars[scalar_key]
+                trace_scalar_time = sidecar_time
+            for lk in per_laser_keys:
+                if lk in sidecar_scalars:
+                    trace_laser_data_map[lk] = sidecar_scalars[lk]
+                    trace_laser_time_map[lk] = sidecar_time
 
         peak_logical: int | None = None
         if field_key in _PEAK_FIELDS and scalar_data is not None:
@@ -193,14 +224,15 @@ def generate_field_png(
 
     if show_scalar_row:
         ax_sc = fig.add_subplot(gs[1, :])
-        if has_scalar and scalar_data is not None:
+        if has_scalar and trace_scalar_data is not None:
             label = "Total" if per_laser_keys else scalar_key
-            ax_sc.plot(time_sorted[: len(scalar_data)], scalar_data,
+            ax_sc.plot(trace_scalar_time[: len(trace_scalar_data)], trace_scalar_data,
                        linewidth=1.2, color="black", label=label)
         for lk in per_laser_keys:
-            ld = laser_data_map[lk]
+            ld = trace_laser_data_map[lk]
+            lt = trace_laser_time_map[lk]
             laser_label = lk.replace("P_max_", "Laser ") if lk.startswith("P_max_") else lk.replace("psi_sq_max_w", "Spot ")
-            ax_sc.plot(time_sorted[: len(ld)], ld, linewidth=0.9, alpha=0.8, label=laser_label)
+            ax_sc.plot(lt[: len(ld)], ld, linewidth=0.9, alpha=0.8, label=laser_label)
         ax_sc.set_xlabel("t (ps)")
         ax_sc.set_ylabel(scalar_key if has_scalar else "P_max")
         ax_sc.legend(fontsize=8, loc="best")
