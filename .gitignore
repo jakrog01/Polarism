@@ -22,3 +22,4 @@ src/dot_response_fit/runs/
 # Keep src/pump_multi_comparison/config.yaml as the tracked default example;
 # store ad-hoc validation and production campaigns here.
 src/pump_multi_comparison/scenarios/*.yaml
+src/threshold_finder/scenarios/*.yaml

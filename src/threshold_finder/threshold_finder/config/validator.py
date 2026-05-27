@@ -91,6 +91,9 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
         if float(p_min) >= float(p_max):
             errors.append(f"sweep.P_min={p_min} must be < sweep.P_max={p_max}")
 
+    laser = cfg.get("laser", {})
+    power_definition = str(laser.get("power_definition", "peak_amplitude"))
+
     if (
         isinstance(p_min, (int, float))
         and isinstance(p_max, (int, float))
@@ -99,12 +102,12 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
         and isinstance(total_time, (int, float))
     ):
         R_val = float(physics.get("R", 0.02))
-        p_max_f = float(p_max)
+        p_max_f = _estimate_peak_pump_density(float(p_max), laser, power_definition)
         dt_f = float(dt)
         if R_val * p_max_f * dt_f > 0.5:
             errors.append(
-                f"Pump-growth guard: R*P_max*dt = {R_val * p_max_f * dt_f:.4f} > 0.5 — "
-                f"high-power points (P ≈ {p_max_f}) may drive fast reservoir growth "
+                f"Pump-growth guard: R*P_peak_max*dt = {R_val * p_max_f * dt_f:.4f} > 0.5 — "
+                f"high-power points (local peak P ≈ {p_max_f}) may drive fast reservoir growth "
                 "that RK4 cannot track accurately. Consider reducing dt or P_max."
             )
 
@@ -121,7 +124,9 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
             dy = float(ly_val) / float(ny_val)
             k_max = _math.pi / min(dx, dy)
             kinetic_dt_limit = float(m_eff_val) / (float(hbar_val) * k_max ** 2)
-            if dt_f > 0.5 * kinetic_dt_limit:
+            method = str(solver.get("method", "rk4-cuda"))
+            spectral_methods = {"split-step-fft", "ip-rk4", "ifrk4-fft-cuda"}
+            if method not in spectral_methods and dt_f > 0.5 * kinetic_dt_limit:
                 finer_axis = "x" if dx <= dy else "y"
                 errors.append(
                     f"Kinetic stability warning: dt={dt_f} exceeds "
@@ -153,7 +158,6 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
         except (TypeError, ValueError):
             errors.append(f"sweep.max_concurrent={max_concurrent!r} must be a positive integer")
 
-    laser = cfg.get("laser", {})
     for key in ("sigma_space", "sigma_time", "pulse_separation"):
         val = laser.get(key)
         if val is not None:
@@ -167,8 +171,54 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
         errors.append(
             f"laser.laser_type={laser['laser_type']!r} — only 'pulse-gaussian' is supported"
         )
+    if power_definition not in {"peak_amplitude", "pulse_energy"}:
+        errors.append(
+            f"laser.power_definition={power_definition!r} must be 'peak_amplitude' "
+            "or 'pulse_energy'"
+        )
+    n_pulses = laser.get("n_pulses")
+    if n_pulses is not None:
+        try:
+            if int(n_pulses) < 0:
+                errors.append(f"laser.n_pulses={n_pulses!r} must be non-negative")
+        except (TypeError, ValueError):
+            errors.append(f"laser.n_pulses={n_pulses!r} must be an integer")
+    try:
+        sigma_time = float(laser.get("sigma_time", 1.0))
+        pulse_sep = float(laser.get("pulse_separation", 10.0))
+        cutoff_sigma = float(laser.get("cutoff_sigma", 3.0))
+        if cutoff_sigma <= 0:
+            errors.append(f"laser.cutoff_sigma={cutoff_sigma!r} must be positive")
+        if cutoff_sigma * sigma_time >= pulse_sep / 2.0:
+            errors.append(
+                "laser pulse separation must be at least one full Gaussian support: "
+                f"pulse_separation={pulse_sep:.3g}, sigma_time={sigma_time:.3g}, "
+                f"cutoff_sigma={cutoff_sigma:.3g}"
+            )
+    except (TypeError, ValueError):
+        pass
 
     return errors
+
+
+def _estimate_peak_pump_density(
+    power: float,
+    laser: dict[str, Any],
+    power_definition: str,
+) -> float:
+    """Estimate local pump peak for the timestep guard."""
+    if power_definition != "pulse_energy":
+        return power
+    sigma_space = float(laser.get("sigma_space", 5.0))
+    sigma_time = float(laser.get("sigma_time", 1.0))
+    cutoff_sigma = float(laser.get("cutoff_sigma", 3.0))
+    spatial_integral = 2.0 * math.pi * sigma_space**2
+    temporal_integral = (
+        math.sqrt(2.0 * math.pi)
+        * sigma_time
+        * math.erf(cutoff_sigma / math.sqrt(2.0))
+    )
+    return power / (spatial_integral * temporal_integral)
 
 
 def validate_slurm_env(env_path: str) -> list[str]:

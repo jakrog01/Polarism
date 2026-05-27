@@ -25,6 +25,8 @@ import numpy as np
 
 from threshold_finder.manifest.io import atomic_write_json, set_manifest_field
 
+CONDENSATION_PSI_SQ_THRESHOLD = 5e-2
+
 
 def _load_all_results(run_dir: str) -> list[dict[str, Any]]:
     pattern = os.path.join(run_dir, "powers", "power_*.json")
@@ -56,6 +58,9 @@ def _write_plot(results: list[dict[str, Any]], out_path: str) -> None:
 
     if ok_P:
         ax.plot(ok_P, ok_psi, "b-o", markersize=4, linewidth=1.5, label="ok")
+        positive = [v for v in ok_psi if v > 0.0]
+        if positive:
+            ax.set_yscale("log")
 
     if div_P:
         y_div = max(ok_psi) if ok_psi else 1.0
@@ -72,6 +77,13 @@ def _write_plot(results: list[dict[str, Any]], out_path: str) -> None:
     ax.set_xlabel("Pump power P")
     ax.set_ylabel(r"$\max |\psi|^2$")
     ax.set_title(r"$\psi_\mathrm{max}^2$ vs pump power")
+    ax.axhline(
+        CONDENSATION_PSI_SQ_THRESHOLD,
+        color="crimson",
+        linestyle="--",
+        linewidth=1.0,
+        label=r"$|\psi|^2_{max}=5\times10^{-2}$",
+    )
     ax.legend()
     ax.grid(True, alpha=0.3)
 
@@ -100,7 +112,17 @@ def main() -> None:
 
     n_ok = sum(1 for r in results if r["status"] == "ok")
     n_div = sum(1 for r in results if r["status"] == "diverged")
+    threshold_row = next(
+        (
+            r for r in results
+            if r["status"] == "ok"
+            and float(r.get("psi_sq_max", 0.0)) >= CONDENSATION_PSI_SQ_THRESHOLD
+        ),
+        None,
+    )
+    threshold_estimate = threshold_row["P"] if threshold_row is not None else None
     print(f"  Loaded  : {len(results)} results  ({n_ok} ok, {n_div} diverged)")
+    print(f"  Threshold estimate: {threshold_estimate}")
 
     csv_path = os.path.join(run_dir, "threshold_curve.csv")
     _write_csv(results, csv_path)
@@ -109,6 +131,17 @@ def main() -> None:
     json_path = os.path.join(run_dir, "threshold_curve.json")
     atomic_write_json(json_path, results)
     print(f"  JSON    : {json_path}")
+
+    threshold_path = os.path.join(run_dir, "threshold_estimate.json")
+    atomic_write_json(
+        threshold_path,
+        {
+            "criterion": f"psi_sq_max >= {CONDENSATION_PSI_SQ_THRESHOLD}",
+            "P_threshold_estimate": threshold_estimate,
+            "threshold_row": threshold_row,
+        },
+    )
+    print(f"  Estimate: {threshold_path}")
 
     results_dir = os.path.join(run_dir, "results")
     os.makedirs(results_dir, exist_ok=True)
@@ -123,6 +156,7 @@ def main() -> None:
         set_manifest_field(run_dir, "finalize_complete", True)
         set_manifest_field(run_dir, "n_ok", n_ok)
         set_manifest_field(run_dir, "n_diverged", n_div)
+        set_manifest_field(run_dir, "P_threshold_estimate", threshold_estimate)
         set_manifest_field(run_dir, "csv_path", csv_path)
         set_manifest_field(run_dir, "json_path", json_path)
         set_manifest_field(run_dir, "png_path", png_path)

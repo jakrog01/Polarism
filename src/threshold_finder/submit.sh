@@ -48,10 +48,13 @@ done
 export PYTHONPATH="${PROJECT_ROOT}:${THRESHOLD_DIR}:${PYTHONPATH:-}"
 
 HOSTNAME_SHORT="$(hostname -s 2>/dev/null || hostname)"
-if [[ "$HOSTNAME_SHORT" != rysy* ]]; then
+if [[ "$HOSTNAME_SHORT" != rysy* && $DRY_RUN -eq 0 ]]; then
     echo "ERROR: submit.sh must be run on a Rysy login node." >&2
     echo "Current host: $HOSTNAME_SHORT" >&2
     exit 1
+fi
+if [[ "$HOSTNAME_SHORT" != rysy* && $DRY_RUN -eq 1 ]]; then
+    echo "  [DRY RUN] Not on Rysy (host: $HOSTNAME_SHORT) — Slurm calls will be skipped."
 fi
 
 echo "  Config    : $CONFIG"

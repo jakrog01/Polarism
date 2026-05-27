@@ -16,18 +16,18 @@ Sweeps laser pump power P from `P_min` to `P_max` in steps of `P_step`, runs one
 ## Quick start (Rysy login node)
 
 ```bash
-# dry run — prints planned jobs without submitting
 bash src/threshold_finder/submit.sh --dry-run
 
-# real submit with default config
 bash src/threshold_finder/submit.sh
 
-# custom config
 bash src/threshold_finder/submit.sh --config /path/to/my_config.yaml
 
-# block until all jobs finish
 bash src/threshold_finder/submit.sh --wait
 ```
+
+The default `config.yaml` is a GaAs 9-pulse scalar threshold scan. Local campaign
+YAML files can be stored in `src/threshold_finder/scenarios/`; `*.yaml` files in
+that directory are ignored by Git.
 
 ## Config fields
 
@@ -37,6 +37,7 @@ bash src/threshold_finder/submit.sh --wait
 | `global.solver` | `dt`, `total_time`, `method` | Time-step, run length, solver backend |
 | `global.physics` | standard constants | `hbar`, `m_eff`, `gamma_R`, `gamma_C`, `R`, … |
 | `laser` | `sigma_space`, `sigma_time`, `pulse_separation`, `cutoff_sigma`, `n_pulses` | Single Gaussian pump laser (shared across all P values) |
+| `laser` | `power_definition` | `peak_amplitude` or `pulse_energy`; use `pulse_energy` for integrated per-pulse dose sweeps |
 | `sweep` | `P_min`, `P_max`, `P_step` | Power range and step |
 | `sweep` | `scalar_check_every` | Record psi_sq_max every N steps (≥ 1) |
 | `sweep` | `early_stop_on_divergence` | Terminate task immediately on NaN/Inf |

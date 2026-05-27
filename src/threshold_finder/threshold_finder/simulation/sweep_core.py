@@ -19,7 +19,9 @@ from polarism.grid.create_grid import create_grid
 from polarism.laser.pulse_gaussian import PulseGaussian
 from polarism.potential.create_potential import create_potential
 from polarism.reservoir.create_reservoir import create_reservoir
+from polarism.init_condition import make_initial_psi
 from polarism.simulation_state import SimulationState
+import polarism.solver  # noqa: F401 - populate solver registry
 from polarism.solver.create_solver import create_solver
 
 from threshold_finder.config.builder import build_power_config
@@ -43,20 +45,6 @@ class PowerResult:
     wall_time_seconds: float
     scalar_times: list[float] = field(default_factory=list)
     scalar_psi_sq_max: list[float] = field(default_factory=list)
-
-
-def _p_time_pure(
-    t: float,
-    pulse_separation: float,
-    cutoff_sigma: float,
-    sigma_time: float,
-) -> float:
-    phase = cutoff_sigma * sigma_time
-    n = max(0, round((t - phase) / pulse_separation))
-    dt_val = t - n * pulse_separation - phase
-    if abs(dt_val) > cutoff_sigma * sigma_time:
-        return 0.0
-    return math.exp(-0.5 * (dt_val / sigma_time) ** 2)
 
 
 def run_power_point(
@@ -100,14 +88,20 @@ def run_power_point(
     potential = create_potential(sim_cfg.potential, grid)
     reservoir = create_reservoir(sim_cfg.reservoir, sim_cfg.physics, grid)
 
-    rng_gpu = xp.random.default_rng(RNG_SEED)
     state = SimulationState.__new__(SimulationState)
-    state.psi = (
-        sim_cfg.physics.init_eps * (
-            rng_gpu.random((grid.ny, grid.nx), dtype=xp.float64)
-            + 1j * rng_gpu.random((grid.ny, grid.nx), dtype=xp.float64)
-        )
-    ).astype(xp.complex128)
+    state.psi = make_initial_psi(
+        xp,
+        grid.ny,
+        grid.nx,
+        eps=sim_cfg.physics.init_eps,
+        mode=getattr(sim_cfg.physics, "init_mode", "legacy_positive_uniform"),
+        dx=grid.dx,
+        dy=grid.dy,
+        k_cutoff_um=getattr(sim_cfg.physics, "init_k_cutoff_um", None),
+        seed=getattr(sim_cfg.physics, "init_seed", None) or RNG_SEED,
+        cdtype=xp.complex128,
+        rdtype=xp.float64,
+    )
     state.t = 0.0
 
     solver = create_solver(sim_cfg, grid)
@@ -119,7 +113,7 @@ def run_power_point(
     potential = potential + cap
 
     laser = PulseGaussian(sim_cfg.laser, grid.X, grid.Y)
-    spatial_profile = laser._P_space(grid.X, grid.Y)
+    spatial_profile = laser._spatial_envelope
     P_zero = xp.zeros((grid.ny, grid.nx), dtype=xp.float64)
 
     n_steps = int(sim_cfg.solver.total_time / sim_cfg.solver.dt)
@@ -147,12 +141,7 @@ def run_power_point(
         t_eff = t - sim_cfg.laser.delay
         if t_eff >= 0.0:
             amp = laser._amplitude(t_eff)
-            pt = _p_time_pure(
-                t_eff,
-                sim_cfg.laser.pulse_separation,
-                sim_cfg.laser.cutoff_sigma,
-                sim_cfg.laser.sigma_time,
-            )
+            pt = laser._P_time(t_eff)
             temporal = float(amp) * pt
         else:
             temporal = 0.0
