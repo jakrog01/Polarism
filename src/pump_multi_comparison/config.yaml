@@ -1,98 +1,143 @@
 global:
   grid:
-    nx: 512
-    ny: 512
-    lx: 128.0
-    ly: 128.0
+    nx: 1024
+    ny: 1024
+    lx: 160.0
+    ly: 160.0
     grid_type: periodic
 
   physics:
     hbar: 0.6582119514
-    m_eff: 0.284
-    gamma_R: 0.005
-    gamma_C: 0.083
-    g_C: 0.001
-    g_R: 0.002
+    m_eff: 0.32
+    gamma_C: 0.1
+    gamma_R: 0.15
     gamma_I: 0.001
-    R: 0.02
+    g_C: 0.00024
+    g_R: 0.0006
+    g_I: 0.0
+    R: 0.023
     kappa: 0.05
     init_eps: 0.001
+    init_mode: filtered_complex_gaussian
+    init_k_cutoff_um: 3.0
+    init_seed: 42
+    kinetic_relaxation_eta: 0.0
+    reservoir_diffusion_I: 0.0
+    reservoir_diffusion_R: 0.0
 
   boundary_condition:
     absorption: cap
+    profile_type: sin2
+    strength: 5.0
+    mask_width_percent: 0.2
 
   solver:
-    total_time: 450.0
-    dt: 0.001
-    method: rk4-cuda
+    total_time: 500.0
+    dt: 0.01
+    method: ifrk4-fft-cuda
+    laplacian: five-point
 
   reservoir:
     reservoir_type: quadratic-double
 
   laser_defaults:
     laser_type: pulse-gaussian
-    sigma_space: 0.75
+    sigma_space: 2.0
+    sigma_time: 1.7
     cutoff_sigma: 3.0
     power_definition: pulse_energy
 
-  threshold_search:
-    max_runtime_minutes: 120
-    condensation_fraction: 0.7
-    dt_multiplier: 5
-    n_pulses: 0
-    # power_definition: pulse_energy means these are integrated per-pulse doses.
-    # For sigma_space=0.75 and sigma_time=0.85, E≈375 gives the same centre
-    # peak density as the old peak_amplitude P0=50 configuration.
-    power_values:
-      - 25.0
-      - 50.0
-      - 100.0
-      - 200.0
-      - 400.0
-    sigma_time_values:
-      - 0.85
-      - 1.7
-    pulse_separation_formula: "8 * cutoff_sigma * sigma_time"
-
   parameter_sweep:
     enabled: true
+    base_scenarios:
+      - gentle
+      - moderate_lo
+      - moderate
+      - strong
+      - burst
     power_values:
-      - 100.0
-      - 200.0
-      - 400.0
-      - 800.0
+      - 1.0
     sigma_time_values:
-      - 0.85
+      - 1.7
     pulse_separation_values:
       - 12.0
-      - 20.0
-      - 30.0
     sigma_space_values:
-      - 0.75
+      - 2.0
 
 output:
-  render_animation: false
+  render_animation: true
   render_snapshots: true
   archive_raw_hdf5: false
-  field_record_stride: 200
-  scalar_record_stride: 10
+  field_record_stride: 100
+  scalar_record_stride: 5
+  render_downscale_factor: 2
+  roi_metrics:
+    enabled: true
+    rois:
+      - id: core_1sigma
+        shape: circle
+        x0: 0.0
+        y0: 0.0
+        radius: "sigma_space"
+      - id: core_2sigma
+        shape: circle
+        x0: 0.0
+        y0: 0.0
+        radius: "2 * sigma_space"
 
 _timing_vars_single: &timing_vars_single
   pulse_duration: "2 * cutoff_sigma * sigma_time"
   cycle_duration: "pulse_separation"
 
-_single_center_laser: &single_center_laser
-  - id: "center"
-    power: "P"
-    x0: 0.0
-    y0: 0.0
-    delay: 0.0
-    pulse_separation: "cycle_duration"
-    n_pulses: 0
+_spot_laser_base: &spot_laser_base
+  id: center
+  x0: 0.0
+  y0: 0.0
+  delay: 0.0
+  pulse_separation: "cycle_duration"
 
 scenarios:
-  - name: single_spot_center
+  - name: gentle
     potential:
       potential_type: zero
     timing_vars: *timing_vars_single
-    lasers: *single_center_laser
+    lasers:
+      - <<: *spot_laser_base
+        power: 3500.0
+        n_pulses: 25
+
+  - name: moderate_lo
+    potential:
+      potential_type: zero
+    timing_vars: *timing_vars_single
+    lasers:
+      - <<: *spot_laser_base
+        power: 5000.0
+        n_pulses: 15
+
+  - name: moderate
+    potential:
+      potential_type: zero
+    timing_vars: *timing_vars_single
+    lasers:
+      - <<: *spot_laser_base
+        power: 8000.0
+        n_pulses: 10
+
+  - name: strong
+    potential:
+      potential_type: zero
+    timing_vars: *timing_vars_single
+    lasers:
+      - <<: *spot_laser_base
+        power: 13000.0
+        n_pulses: 5
+
+  - name: burst
+    potential:
+      potential_type: zero
+    timing_vars: *timing_vars_single
+    lasers:
+      - <<: *spot_laser_base
+        power: 20000.0
+        n_pulses: 3

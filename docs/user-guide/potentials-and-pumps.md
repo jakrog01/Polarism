@@ -148,6 +148,7 @@ Supported reservoir models:
 
 - `single`
 - `double`
+- `quadratic-double`
 
 Example:
 
@@ -187,6 +188,29 @@ $$
 $$
 
 In this model, `R_IA` transfers density from the inactive to the active reservoir, `R_AI` allows reverse transfer, and only `n_A` enters the condensate equation.
+
+### Quadratic double reservoir
+
+Use `quadratic-double` for pulsed nonresonant campaigns where the pump first
+fills a slow inactive reservoir `n_I`, and the active reservoir `n_R` is fed by
+a nonlinear carrier-relaxation term.
+
+The implemented evolution is:
+
+$$
+\frac{\partial n_I}{\partial t}
+= P(x, y, t) - \kappa n_I^2 - \gamma_I n_I,
+$$
+
+$$
+\frac{\partial n_R}{\partial t}
+= \kappa n_I^2 - \gamma_R n_R - R n_R |\psi|^2.
+$$
+
+Only `n_R` enters the condensate gain term and reservoir blueshift.  The
+optional `g_I` coefficient can add an inactive-reservoir blueshift, but the
+GaAs spot-sweep preset keeps `g_I: 0.0` so the inactive population only acts
+through delayed feeding of `n_R`.
 
 Choose the reservoir model based on the physical process you are trying to resolve, then confirm the solver choice remains compatible and the timestep remains stable for the chosen rates.
 

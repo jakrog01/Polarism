@@ -141,8 +141,91 @@ Bad `animation_clim` entries produce a warning and are ignored.
 
 ## Scenario configuration
 
-The current `src/pump_multi_comparison/config.yaml` example uses a deterministic
-multi-laser scenario schema built around reusable YAML anchors:
+The current `src/pump_multi_comparison/config.yaml` example is a GaAs/AlGaAs
+single-spot pulsed campaign for the `quadratic-double` reservoir model.  It is
+not a dimensionless toy preset: the interaction constants, lifetime scales,
+pump normalization, spot size, and solver choice are intended to be read
+together.
+
+### Default GaAs spot sweep
+
+The default campaign uses a 4-quantum-well GaAs microcavity estimate with
+exciton fraction \(|X|^2 = 0.40\).  The condensate and reservoir interaction
+constants are derived from the 2D exciton estimate
+\(g_{xx} = 6 E_b a_B^2\), using \(E_b = 10\,\mathrm{meV}\) and
+\(a_B = 0.01\,\mu\mathrm{m}\), then scaled by the Hopfield coefficient and
+`N_QW = 4`.
+
+| Parameter | Value in `config.yaml` | Meaning |
+| --- | ---: | --- |
+| `m_eff` | `0.32` | lower-polariton effective mass in meV ps^2 / um^2 |
+| `gamma_C` | `0.1` | condensate decay rate, about 10 ps lifetime |
+| `gamma_R` | `0.15` | active-reservoir decay rate |
+| `gamma_I` | `0.001` | slow inactive-reservoir decay |
+| `g_C` | `0.00024` | condensate self-interaction in meV um^2 |
+| `g_R` | `0.0006` | active-reservoir blueshift in meV um^2 |
+| `g_I` | `0.0` | inactive-reservoir blueshift disabled in this preset |
+| `R` | `0.023` | stimulated scattering rate in ps^-1 um^2 |
+| `kappa` | `0.05` | quadratic inactive-to-active transfer rate |
+
+These values are a GaAs working preset for the current pulsed protocol, not a
+claim that every coefficient has a unique material value.  In particular,
+`gamma_I` and `kappa` are phenomenological reservoir-memory parameters and
+should be swept if the burst dynamics are the conclusion of the study.
+
+The pump is normalized with:
+
+```yaml
+global:
+  laser_defaults:
+    laser_type: pulse-gaussian
+    sigma_space: 2.0
+    sigma_time: 1.7
+    power_definition: pulse_energy
+```
+
+The scenario powers (`3500`, `5000`, `8000`, `13000`, `20000`) are absolute
+integrated per-pulse doses.  Because those powers live on the scenarios,
+`parameter_sweep.power_values: [1.0]` is only a one-point sweep placeholder.
+During expansion, absolute per-laser powers are used in scenario names and
+metadata, so the default run expands to names such as `gentle_E3500_sep12` and
+`burst_E20000_sep12`.
+
+For threshold-relative or percentage-style powers (`P`, `0.6P`, `1.2P`, and
+the same forms in `power_modifiers`), the sweep label remains the swept
+reference value.  For example, a laser with `power: "0.6P"` at
+`parameter_sweep.power_values: [100.0]` is named with `E100`, while the resolved
+laser dose is `60.0`.
+
+Source context for the GaAs preset:
+
+- Comaron et al., "Coherence of a non-equilibrium polariton condensate across
+  the interaction-mediated phase transition", Communications Physics 8, 94
+  (2025), https://doi.org/10.1038/s42005-025-01977-7.  This provides recent
+  GaAs/AlGaAs context for excitonic-fraction-dependent interactions and
+  driven-dissipative simulations.
+- Gnusov et al., "Quantum vortex formation in the rotating bucket experiment
+  with polariton condensates", Science Advances 9, eadd1299 (2023),
+  https://doi.org/10.1126/sciadv.add1299.  This is a GaAs polariton-flow
+  experiment modeled with a generalized Gross-Pitaevskii equation.
+- Hu, Deng, and Liu, "Two-dimensional exciton-polariton interactions beyond
+  the Born approximation", Physical Review A 106, 063303 (2022),
+  https://doi.org/10.1103/PhysRevA.106.063303.  This is the reference for the
+  limits of the Born-style interaction estimate used to set the scale here.
+- Sun et al., "Direct measurement of polariton-polariton interaction
+  strength", Nature Physics 13, 870-875 (2017),
+  https://doi.org/10.1038/nphys4148.  This is useful context for the magnitude
+  and ambiguity of GaAs interaction-strength measurements.
+- Pieczarka et al., "Effect of optically induced potential on the energy of
+  trapped exciton polaritons below the condensation threshold", Physical Review
+  B 100, 085301 (2019), https://doi.org/10.1103/PhysRevB.100.085301.  This is
+  a cautionary reference for interpreting blueshifts when reservoir-induced
+  potentials are present.
+
+### YAML structure
+
+The scenario schema supports deterministic single- or multi-laser studies built
+around reusable YAML anchors:
 
 - `timing_vars` defines shared arithmetic expressions such as `pulse_duration`
   and `cycle_duration`, evaluated from threshold-search results
