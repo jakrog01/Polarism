@@ -16,10 +16,15 @@ slurm.env
 !.github/workflows/
 !.github/workflows/*.yml
 site/
-src/dot_response_fit/runs/
+# Local-only launch helpers and outputs. These are machine/user specific and
+# should never be part of the tracked pipeline contract.
+src/*/localrun.sh
+src/*/local_run.sh
+src/*/local_submit.sh
+src/*/runs/
 
-# Local pump_multi_comparison campaign/scenario configs.
-# Keep src/pump_multi_comparison/config.yaml as the tracked default example;
-# store ad-hoc validation and production campaigns here.
+# Local campaign/scenario configs. Keep each pipeline's config.yaml as the
+# tracked default; store ad-hoc validation and production campaigns here.
 src/pump_multi_comparison/scenarios/*.yaml
 src/threshold_finder/scenarios/*.yaml
+src/create_characteristic/scenarios/*.yaml
