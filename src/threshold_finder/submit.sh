@@ -28,7 +28,7 @@ CONFIG="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
 SLURM_ENV="$PROJECT_ROOT/slurm.env"
 
 echo "========================================"
-echo " Threshold-Finder  |  psi_max(P) sweep"
+echo " Threshold-Finder  |  scalar response sweep"
 echo " Rysy-only  |  run from a Rysy login node"
 echo "========================================"
 
@@ -72,11 +72,11 @@ mapfile -t _PARSED < <(python3 - "$CONFIG" "$PROJECT_ROOT" "$THRESHOLD_DIR" <<'P
 import sys
 sys.path.insert(0, sys.argv[2])
 sys.path.insert(0, sys.argv[3])
-from threshold_finder.config.loader import load_config, get_sweep_config, generate_power_values
+from threshold_finder.config.loader import load_config, get_sweep_config, generate_sweep_points
 cfg = load_config(sys.argv[1])
 sweep = get_sweep_config(cfg)
-values = generate_power_values(sweep)
-print(len(values))
+points = generate_sweep_points(cfg)
+print(len(points))
 print(int(sweep.get("max_concurrent", 4)))
 PYEOF
 )
@@ -113,7 +113,7 @@ done
 
 RUNS_BASE_DIR="${RUNS_BASE_DIR:-$TETYDA_RUNS_BASE}"
 
-echo "  Powers    : $N_POWERS  (array $POWER_ARRAY_SPEC)"
+echo "  Points    : $N_POWERS  (array $POWER_ARRAY_SPEC)"
 echo "  GPU time  : $GPU_TIME"
 echo "  Rysy GPU  : partition=$SLURM_PARTITION  mem=$SLURM_MEM  gpus=$SLURM_GPUS"
 echo "  Repo root : $PROJECT_ROOT"
@@ -147,13 +147,13 @@ if [[ $DRY_RUN -eq 0 ]]; then
 import sys, json
 sys.path.insert(0, sys.argv[3])
 sys.path.insert(0, sys.argv[4])
-from threshold_finder.config.loader import load_config, get_sweep_config, generate_power_values
+from threshold_finder.config.loader import load_config, generate_sweep_points
 run_dir, cfg_path = sys.argv[1], sys.argv[2]
 cfg = load_config(cfg_path)
-values = generate_power_values(get_sweep_config(cfg))
+values = generate_sweep_points(cfg)
 with open(f"{run_dir}/power_index.json", "w") as f:
     json.dump(values, f, indent=2)
-print(f"  power_index.json: {len(values)} values  [{values[0]}, ..., {values[-1]}]")
+print(f"  power_index.json: {len(values)} points")
 PYEOF
 
     python3 - "$RUN_DIR" "$CONFIG" "$PROJECT_ROOT" "$THRESHOLD_DIR" <<'PYEOF'
@@ -221,7 +221,7 @@ _wait_rysy() {
 if [[ $POWER_ARRAY_ENABLED -eq 0 ]]; then
     SWEEP_ARRAY_JOB=""
 elif [[ $DRY_RUN -eq 1 ]]; then
-    echo "[1a] power sweep array  (array=${POWER_ARRAY_SPEC}, time=${GPU_TIME})  [DRY RUN]"
+    echo "[1a] scalar sweep array  (array=${POWER_ARRAY_SPEC}, time=${GPU_TIME})  [DRY RUN]"
     SWEEP_ARRAY_JOB="DRY_1"
 else
     SWEEP_ARRAY_JOB=$(_rysy_sbatch \
@@ -239,14 +239,14 @@ else
         "$CLUSTER_DIR/job_gpu.sh" \
             python -m threshold_finder.stages.gpu.run_power \
                 --run-dir "$RUN_DIR")
-    echo "[1a] power sweep array  -> Rysy job $SWEEP_ARRAY_JOB  (array=${POWER_ARRAY_SPEC}, time=${GPU_TIME})"
+    echo "[1a] scalar sweep array  -> Rysy job $SWEEP_ARRAY_JOB  (array=${POWER_ARRAY_SPEC}, time=${GPU_TIME})"
     if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
         _wait_rysy "$SWEEP_ARRAY_JOB" "sweep_array"
     fi
 fi
 
 if [[ $DRY_RUN -eq 1 ]]; then
-    echo "[1b] power sweep last   (index=${POWER_LAST_INDEX}, singleton, time=${GPU_TIME})  [DRY RUN]"
+    echo "[1b] scalar sweep last   (index=${POWER_LAST_INDEX}, singleton, time=${GPU_TIME})  [DRY RUN]"
     SWEEP_LAST_JOB="DRY_1B"
 else
     SWEEP_LAST_JOB=$(_rysy_sbatch \
@@ -264,7 +264,7 @@ else
             python -m threshold_finder.stages.gpu.run_power \
                 --run-dir "$RUN_DIR" \
                 --power-index "$POWER_LAST_INDEX")
-    echo "[1b] power sweep last   -> Rysy job $SWEEP_LAST_JOB  (index=${POWER_LAST_INDEX}, time=${GPU_TIME})"
+    echo "[1b] scalar sweep last   -> Rysy job $SWEEP_LAST_JOB  (index=${POWER_LAST_INDEX}, time=${GPU_TIME})"
     if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
         _wait_rysy "$SWEEP_LAST_JOB" "sweep_last"
     fi

@@ -77,32 +77,59 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
                 errors.append(f"global.physics.{key}={val!r} must be finite and positive")
 
     sweep = cfg.get("sweep", {})
+    sweep_variable = str(sweep.get("variable", "P"))
     p_min = sweep.get("P_min")
     p_max = sweep.get("P_max")
     p_step = sweep.get("P_step")
+    p_guard = p_max
 
-    for name, val in (("P_min", p_min), ("P_max", p_max), ("P_step", p_step)):
-        if val is None:
-            errors.append(f"sweep.{name} is missing")
-        elif not (isinstance(val, (int, float)) and float(val) > 0):
-            errors.append(f"sweep.{name}={val!r} must be a positive number")
+    if sweep_variable in {"P", "power", "pulse_energy"}:
+        for name, val in (("P_min", p_min), ("P_max", p_max), ("P_step", p_step)):
+            if val is None:
+                errors.append(f"sweep.{name} is missing")
+            elif not (isinstance(val, (int, float)) and float(val) > 0):
+                errors.append(f"sweep.{name}={val!r} must be a positive number")
 
-    if isinstance(p_min, (int, float)) and isinstance(p_max, (int, float)):
-        if float(p_min) >= float(p_max):
-            errors.append(f"sweep.P_min={p_min} must be < sweep.P_max={p_max}")
+        if isinstance(p_min, (int, float)) and isinstance(p_max, (int, float)):
+            if float(p_min) >= float(p_max):
+                errors.append(f"sweep.P_min={p_min} must be < sweep.P_max={p_max}")
+    elif sweep_variable == "pulse_separation":
+        p_fixed = sweep.get("P_fixed")
+        sep_min = sweep.get("pulse_separation_min")
+        sep_max = sweep.get("pulse_separation_max")
+        sep_step = sweep.get("pulse_separation_step")
+        p_guard = p_fixed
+        for name, val in (
+            ("P_fixed", p_fixed),
+            ("pulse_separation_min", sep_min),
+            ("pulse_separation_max", sep_max),
+            ("pulse_separation_step", sep_step),
+        ):
+            if val is None:
+                errors.append(f"sweep.{name} is missing")
+            elif not (isinstance(val, (int, float)) and float(val) > 0):
+                errors.append(f"sweep.{name}={val!r} must be a positive number")
+        if isinstance(sep_min, (int, float)) and isinstance(sep_max, (int, float)):
+            if float(sep_min) >= float(sep_max):
+                errors.append(
+                    f"sweep.pulse_separation_min={sep_min} must be < "
+                    f"pulse_separation_max={sep_max}"
+                )
+    else:
+        errors.append(
+            f"sweep.variable={sweep_variable!r} must be 'P' or 'pulse_separation'"
+        )
 
     laser = cfg.get("laser", {})
     power_definition = str(laser.get("power_definition", "peak_amplitude"))
 
     if (
-        isinstance(p_min, (int, float))
-        and isinstance(p_max, (int, float))
-        and isinstance(p_step, (int, float))
+        isinstance(p_guard, (int, float))
         and isinstance(dt, (int, float))
         and isinstance(total_time, (int, float))
     ):
         R_val = float(physics.get("R", 0.02))
-        p_max_f = _estimate_peak_pump_density(float(p_max), laser, power_definition)
+        p_max_f = _estimate_peak_pump_density(float(p_guard), laser, power_definition)
         dt_f = float(dt)
         if R_val * p_max_f * dt_f > 0.5:
             errors.append(
@@ -185,7 +212,11 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
             errors.append(f"laser.n_pulses={n_pulses!r} must be an integer")
     try:
         sigma_time = float(laser.get("sigma_time", 1.0))
-        pulse_sep = float(laser.get("pulse_separation", 10.0))
+        pulse_sep = float(
+            sweep.get("pulse_separation_min", laser.get("pulse_separation", 10.0))
+            if sweep_variable == "pulse_separation"
+            else laser.get("pulse_separation", 10.0)
+        )
         cutoff_sigma = float(laser.get("cutoff_sigma", 3.0))
         if cutoff_sigma <= 0:
             errors.append(f"laser.cutoff_sigma={cutoff_sigma!r} must be positive")

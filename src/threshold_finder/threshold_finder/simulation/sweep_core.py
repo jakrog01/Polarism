@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-import numpy as np
+from tqdm import trange
 
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine
@@ -134,46 +134,52 @@ def run_power_point(
     diverged_at_t: float | None = None
     last_step = 0
 
-    for step in range(n_steps):
-        t = step * dt
-        last_step = step
+    pbar_desc = f"  P={P:.4g}"
+    with trange(n_steps, desc=pbar_desc, dynamic_ncols=True) as pbar:
+        for step in pbar:
+            t = step * dt
+            last_step = step
 
-        t_eff = t - sim_cfg.laser.delay
-        if t_eff >= 0.0:
-            amp = laser._amplitude(t_eff)
-            pt = laser._P_time(t_eff)
-            temporal = float(amp) * pt
-        else:
-            temporal = 0.0
-        P_total = temporal * spatial_profile if temporal != 0.0 else P_zero
+            t_eff = t - sim_cfg.laser.delay
+            if t_eff >= 0.0:
+                amp = laser._amplitude(t_eff)
+                pt = laser._P_time(t_eff)
+                temporal = float(amp) * pt
+            else:
+                temporal = 0.0
+            P_total = temporal * spatial_profile if temporal != 0.0 else P_zero
 
-        solver.step(potential, P_total, reservoir, bc, state)
+            solver.step(potential, P_total, reservoir, bc, state)
 
-        if step > 0 and step % scalar_check_every == 0:
-            psi_sq_max = float(xp.max(xp.abs(state.psi) ** 2))
-            t_now = (step + 1) * dt
+            if step > 0 and step % scalar_check_every == 0:
+                psi_sq_max = float(xp.max(xp.abs(state.psi) ** 2))
+                t_now = (step + 1) * dt
 
-            if math.isnan(psi_sq_max) or math.isinf(psi_sq_max):
-                status = "diverged"
-                diverged_at_step = step
-                diverged_at_t = t_now
-                print(
-                    f"  DIVERGED at step={step}, t={t_now:.3f} ps  "
-                    f"(P={P:.4f})"
-                )
-                if save_trace:
-                    scalar_times.append(t_now)
-                    scalar_psi_sq_max_vals.append(float("nan"))
-                if early_stop_on_divergence:
-                    break
+                if math.isnan(psi_sq_max) or math.isinf(psi_sq_max):
+                    status = "diverged"
+                    diverged_at_step = step
+                    diverged_at_t = t_now
+                    pbar.write(
+                        f"  DIVERGED at step={step}, t={t_now:.3f} ps  "
+                        f"(P={P:.4f})"
+                    )
+                    if save_trace:
+                        scalar_times.append(t_now)
+                        scalar_psi_sq_max_vals.append(float("nan"))
+                    if early_stop_on_divergence:
+                        break
 
-            if status == "ok":
-                if save_trace:
-                    scalar_times.append(t_now)
-                    scalar_psi_sq_max_vals.append(psi_sq_max)
-                if psi_sq_max > psi_sq_max_global:
-                    psi_sq_max_global = psi_sq_max
-                    t_psi_sq_max_global = t_now
+                if status == "ok":
+                    if save_trace:
+                        scalar_times.append(t_now)
+                        scalar_psi_sq_max_vals.append(psi_sq_max)
+                    if psi_sq_max > psi_sq_max_global:
+                        psi_sq_max_global = psi_sq_max
+                        t_psi_sq_max_global = t_now
+                    pbar.set_postfix(
+                        psi_sq=f"{psi_sq_max:.2e}",
+                        max=f"{psi_sq_max_global:.2e}",
+                    )
 
     if status == "ok" and n_steps > 0:
         t_final = n_steps * dt

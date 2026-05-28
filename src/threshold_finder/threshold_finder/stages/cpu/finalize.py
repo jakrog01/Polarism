@@ -35,12 +35,20 @@ def _load_all_results(run_dir: str) -> list[dict[str, Any]]:
     for p in paths:
         with open(p) as f:
             results.append(json.load(f))
-    return sorted(results, key=lambda r: r["P"])
+    return sorted(results, key=lambda r: float(r.get("sweep_value", r["P"])))
+
+
+def _sweep_axis(results: list[dict[str, Any]]) -> tuple[str, str, str]:
+    variable = str(results[0].get("sweep_variable", "P"))
+    if variable == "pulse_separation":
+        return "pulse_separation", "Pulse separation (ps)", "psi_max_vs_pulse_separation.png"
+    return "P", "Pump power P", "psi_max_vs_power.png"
 
 
 def _write_csv(results: list[dict[str, Any]], path: str) -> None:
     fieldnames = [
-        "P", "psi_sq_max", "status", "t_psi_sq_max",
+        "sweep_variable", "sweep_value", "P", "pulse_separation",
+        "total_time", "psi_sq_max", "status", "t_psi_sq_max",
         "diverged_at_t", "wall_time_seconds",
     ]
     with open(path, "w", newline="") as f:
@@ -50,9 +58,10 @@ def _write_csv(results: list[dict[str, Any]], path: str) -> None:
 
 
 def _write_plot(results: list[dict[str, Any]], out_path: str) -> None:
-    ok_P = [r["P"] for r in results if r["status"] == "ok"]
+    axis_key, axis_label, _ = _sweep_axis(results)
+    ok_P = [r.get(axis_key, r["P"]) for r in results if r["status"] == "ok"]
     ok_psi = [r["psi_sq_max"] for r in results if r["status"] == "ok"]
-    div_P = [r["P"] for r in results if r["status"] == "diverged"]
+    div_P = [r.get(axis_key, r["P"]) for r in results if r["status"] == "diverged"]
 
     fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -74,9 +83,9 @@ def _write_plot(results: list[dict[str, Any]], out_path: str) -> None:
             label=f"diverged ({len(div_P)})",
         )
 
-    ax.set_xlabel("Pump power P")
+    ax.set_xlabel(axis_label)
     ax.set_ylabel(r"$\max |\psi|^2$")
-    ax.set_title(r"$\psi_\mathrm{max}^2$ vs pump power")
+    ax.set_title(rf"$\psi_\mathrm{{max}}^2$ vs {axis_label}")
     ax.axhline(
         CONDENSATION_PSI_SQ_THRESHOLD,
         color="crimson",
@@ -120,7 +129,11 @@ def main() -> None:
         ),
         None,
     )
-    threshold_estimate = threshold_row["P"] if threshold_row is not None else None
+    axis_key, axis_label, plot_name = _sweep_axis(results)
+    threshold_estimate = (
+        threshold_row.get(axis_key, threshold_row["P"])
+        if threshold_row is not None else None
+    )
     print(f"  Loaded  : {len(results)} results  ({n_ok} ok, {n_div} diverged)")
     print(f"  Threshold estimate: {threshold_estimate}")
 
@@ -137,7 +150,10 @@ def main() -> None:
         threshold_path,
         {
             "criterion": f"psi_sq_max >= {CONDENSATION_PSI_SQ_THRESHOLD}",
-            "P_threshold_estimate": threshold_estimate,
+            "threshold_axis": axis_key,
+            "threshold_axis_label": axis_label,
+            "threshold_estimate": threshold_estimate,
+            "P_threshold_estimate": threshold_estimate if axis_key == "P" else None,
             "threshold_row": threshold_row,
         },
     )
@@ -145,7 +161,7 @@ def main() -> None:
 
     results_dir = os.path.join(run_dir, "results")
     os.makedirs(results_dir, exist_ok=True)
-    png_path = os.path.join(results_dir, "psi_max_vs_power.png")
+    png_path = os.path.join(results_dir, plot_name)
     try:
         _write_plot(results, png_path)
         print(f"  Plot    : {png_path}")
@@ -156,7 +172,10 @@ def main() -> None:
         set_manifest_field(run_dir, "finalize_complete", True)
         set_manifest_field(run_dir, "n_ok", n_ok)
         set_manifest_field(run_dir, "n_diverged", n_div)
-        set_manifest_field(run_dir, "P_threshold_estimate", threshold_estimate)
+        set_manifest_field(run_dir, "threshold_axis", axis_key)
+        set_manifest_field(run_dir, "threshold_estimate", threshold_estimate)
+        if axis_key == "P":
+            set_manifest_field(run_dir, "P_threshold_estimate", threshold_estimate)
         set_manifest_field(run_dir, "csv_path", csv_path)
         set_manifest_field(run_dir, "json_path", json_path)
         set_manifest_field(run_dir, "png_path", png_path)

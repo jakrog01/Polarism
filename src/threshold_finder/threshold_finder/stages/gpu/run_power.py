@@ -44,6 +44,13 @@ def _result_to_dict(result: Any) -> dict:
     }
 
 
+def _resolve_sweep_point(entry: Any) -> dict[str, Any]:
+    if isinstance(entry, dict):
+        return dict(entry)
+    p = float(entry)
+    return {"P": p, "sweep_variable": "P", "sweep_value": p}
+
+
 def main() -> None:
     """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description="GPU power-sweep task")
@@ -73,23 +80,32 @@ def main() -> None:
     cfg = load_config(os.path.join(run_dir, "config.yaml"))
     sweep = get_sweep_config(cfg)
 
-    power_values = load_power_index(run_dir)
-    if power_index >= len(power_values):
+    sweep_points = load_power_index(run_dir)
+    if power_index >= len(sweep_points):
         print(
-            f"ERROR: power_index={power_index} out of range (have {len(power_values)} powers).",
+            f"ERROR: power_index={power_index} out of range (have {len(sweep_points)} points).",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    P = power_values[power_index]
+    point = _resolve_sweep_point(sweep_points[power_index])
+    P = float(point["P"])
+    if "pulse_separation" in point:
+        cfg.setdefault("laser", {})["pulse_separation"] = float(point["pulse_separation"])
+    if "total_time" in point:
+        cfg.setdefault("global", {}).setdefault("solver", {})["total_time"] = float(point["total_time"])
     save_trace = cfg.get("output", {}).get("save_per_power_trace", True)
 
     print("=" * 60)
     print(" Power-Sweep GPU Task")
     print("=" * 60)
     print(f"  Run dir     : {run_dir}")
-    print(f"  Power index : {power_index}  /  {len(power_values) - 1}")
+    print(f"  Point index : {power_index}  /  {len(sweep_points) - 1}")
     print(f"  P           : {P}")
+    if "pulse_separation" in point:
+        print(f"  Separation  : {point['pulse_separation']} ps")
+    if "total_time" in point:
+        print(f"  Total time  : {point['total_time']} ps")
     print(f"  Save trace  : {save_trace}")
     print()
 
@@ -108,7 +124,9 @@ def main() -> None:
     os.makedirs(powers_dir, exist_ok=True)
 
     out_path = power_result_path(run_dir, power_index)
-    atomic_write_json(out_path, _result_to_dict(result))
+    out_data = _result_to_dict(result)
+    out_data.update({k: v for k, v in point.items() if k != "index"})
+    atomic_write_json(out_path, out_data)
     print(f"\n  Result written: {out_path}")
 
     if save_trace and result.scalar_times:
