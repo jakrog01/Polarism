@@ -8,6 +8,21 @@ from typing import Any
 from pipeline.config.loader import resolve_delay, resolve_power
 
 _PULSE_LASER_TYPES: frozenset[str] = frozenset({"pulse-gaussian"})
+
+_SQUARE4_CORNERS: tuple[tuple[float, float], ...] = (
+    (-1.0, -1.0),
+    ( 1.0, -1.0),
+    (-1.0,  1.0),
+    ( 1.0,  1.0),
+)
+
+
+def _apply_square_side(scenario: dict[str, Any], a: float) -> None:
+    half = a / 2.0
+    for i, ldef in enumerate(scenario.get("lasers", [])[:4]):
+        cx, cy = _SQUARE4_CORNERS[i]
+        ldef["x0"] = cx * half
+        ldef["y0"] = cy * half
 _P_RELATIVE_POWER_RE = re.compile(r"^\s*([0-9]*\.?[0-9]*)\s*P\s*$")
 
 
@@ -144,6 +159,14 @@ def expand_parameter_sweep(
     other laser types (continuous-gaussian, etc.) the pulse_separation axis is
     omitted — ``pulse_separation_values`` is not required in the config, and
     scenario names carry only the power (and optionally sigma_space) component.
+
+    For scenarios with ``geometry: square4``, the ``square_side_values`` axis is
+    expanded instead of the pulse-separation axis.  Four laser positions are set
+    to the corners ``(±a/2, ±a/2)`` for each side length ``a``, and the scenario
+    name carries an ``_a{value}`` component.  The first pulse-separation value is
+    still applied as fixed laser timing and recorded in metadata, but no
+    ``_sep`` suffix is added; other scenario types retain their existing
+    separation-axis behaviour regardless of ``n_pulses``.
     """
     if not parameter_sweep_enabled(cfg):
         names = [sc["name"] for sc in cfg.get("scenarios", [])]
@@ -160,6 +183,9 @@ def expand_parameter_sweep(
     cutoff_sigma: float = float(defaults.get("cutoff_sigma", 3.0))
     powers = [float(v) for v in sweep_cfg["power_values"]]
     separations: list[float] = [float(v) for v in sweep_cfg.get("pulse_separation_values", [])]
+    square_side_values: list[float] = [
+        float(v) for v in sweep_cfg.get("square_side_values", [])
+    ]
     sigma_times = [
         float(v)
         for v in sweep_cfg.get(
@@ -184,6 +210,7 @@ def expand_parameter_sweep(
 
     for base in base_scenarios:
         base_name = str(base["name"])
+        is_square4 = base.get("geometry") == "square4"
         scenario_has_pulse = any(
             resolve_laser_type(ldef, defaults) in _PULSE_LASER_TYPES
             for ldef in base.get("lasers", [])
@@ -194,44 +221,63 @@ def expand_parameter_sweep(
         first_laser_n_pulses = int(
             base.get("lasers", [{}])[0].get("n_pulses", 0)
         ) if base.get("lasers") else 0
-        sep_loop: list[float | None] = separations if scenario_has_pulse else [None]
+
+        if is_square4:
+            sep_loop: list[float | None] = [separations[0] if separations else None]
+        elif scenario_has_pulse:
+            sep_loop = separations if separations else [None]
+        else:
+            sep_loop = [None]
+
+        side_loop: list[float | None] = square_side_values if is_square4 else [None]
 
         for sigma_time in sigma_times:
-            for pulse_sep in sep_loop:
-                for sigma_space in sigma_spaces:
-                    for power in powers:
-                        sc = copy.deepcopy(base)
-                        _apply_absolute_power(sc, power)
-                        sweep_power = (
-                            _representative_resolved_power(sc, power)
-                            if use_resolved_power_label
-                            else float(power)
-                        )
-                        suffix = f"{power_prefix}{_fmt_value(sweep_power)}"
-                        if scenario_has_pulse and pulse_sep is not None:
-                            suffix += f"_sep{_fmt_value(pulse_sep)}"
-                        if multiple_sigma:
-                            suffix += f"_sig{_fmt_value(sigma_time)}"
-                        if multiple_sigma_space:
-                            suffix += f"_sp{_fmt_value(sigma_space)}"
-                        sc["name"] = f"{base_name}_{suffix}"
-                        if scenario_has_pulse and pulse_sep is not None:
-                            _apply_timing_grid_point(sc, pulse_sep, sigma_time, cutoff_sigma)
-                        for ldef in sc.get("lasers", []):
-                            ldef["sigma_space"] = float(sigma_space)
-                        sweep_meta: dict[str, Any] = {
-                            "base_scenario": base_name,
-                            "power": sweep_power,
-                            "sigma_space": float(sigma_space),
-                            "power_definition": power_definition,
-                            "power_label": power_prefix,
-                        }
-                        if scenario_has_pulse and pulse_sep is not None:
-                            sweep_meta["pulse_separation"] = float(pulse_sep)
-                            sweep_meta["sigma_time"] = float(sigma_time)
-                            sweep_meta["n_pulses"] = first_laser_n_pulses
-                        sc["sweep"] = sweep_meta
-                        expanded_scenarios.append(sc)
+            for square_side in side_loop:
+                for pulse_sep in sep_loop:
+                    for sigma_space in sigma_spaces:
+                        for power in powers:
+                            sc = copy.deepcopy(base)
+                            _apply_absolute_power(sc, power)
+                            sweep_power = (
+                                _representative_resolved_power(sc, power)
+                                if use_resolved_power_label
+                                else float(power)
+                            )
+                            side_prefix = (
+                                f"a{_fmt_value(square_side)}_"
+                                if is_square4 and square_side is not None
+                                else ""
+                            )
+                            suffix = f"{side_prefix}{power_prefix}{_fmt_value(sweep_power)}"
+                            if scenario_has_pulse and pulse_sep is not None and not is_square4:
+                                suffix += f"_sep{_fmt_value(pulse_sep)}"
+                            if multiple_sigma:
+                                suffix += f"_sig{_fmt_value(sigma_time)}"
+                            if multiple_sigma_space:
+                                suffix += f"_sp{_fmt_value(sigma_space)}"
+                            sc["name"] = f"{base_name}_{suffix}"
+                            if scenario_has_pulse and pulse_sep is not None:
+                                _apply_timing_grid_point(sc, pulse_sep, sigma_time, cutoff_sigma)
+                            if is_square4 and square_side is not None:
+                                _apply_square_side(sc, square_side)
+                            for ldef in sc.get("lasers", []):
+                                ldef["sigma_space"] = float(sigma_space)
+                            sweep_meta: dict[str, Any] = {
+                                "base_scenario": base_name,
+                                "power": sweep_power,
+                                "sigma_space": float(sigma_space),
+                                "power_definition": power_definition,
+                                "power_label": power_prefix,
+                            }
+                            if is_square4 and square_side is not None:
+                                sweep_meta["square_side"] = float(square_side)
+                            if scenario_has_pulse:
+                                sweep_meta["n_pulses"] = first_laser_n_pulses
+                                sweep_meta["sigma_time"] = float(sigma_time)
+                                if pulse_sep is not None:
+                                    sweep_meta["pulse_separation"] = float(pulse_sep)
+                            sc["sweep"] = sweep_meta
+                            expanded_scenarios.append(sc)
 
     expanded_cfg["scenarios"] = expanded_scenarios
     names = [sc["name"] for sc in expanded_scenarios]

@@ -935,6 +935,7 @@ def validate_slurm_env(env_path: str) -> list[str]:
         "TIME_RESPONSE_MEM", "TIME_RESPONSE_CPUS", "TIME_RESPONSE_TIME",
         "PREPARE_REF_MEM", "PREPARE_REF_CPUS", "PREPARE_REF_TIME",
         "SCRATCH",
+        "CHARACTERISTIC_TIME",
     })
 
     if not os.path.isfile(env_path):

@@ -55,6 +55,23 @@ ROI_LABEL_SUFFIXES = {
 }
 
 
+def _sweep_axis(rows: list[dict]) -> tuple[str, str]:
+    """Return the horizontal sweep axis key and label for scalar heatmaps."""
+    if any(row.get("square_side") is not None for row in rows):
+        return "square_side", "square side a (um)"
+    return "pulse_separation", "pulse separation (ps)"
+
+
+def _sweep_axis_values(rows: list[dict], key: str) -> list[float]:
+    vals: list[float] = []
+    for row in rows:
+        value = row.get(key)
+        if value is None:
+            continue
+        vals.append(float(value))
+    return sorted(set(vals))
+
+
 def routine_dir(routine: str, results_dir: str) -> str:
     """Return the output directory for *routine* within *results_dir*."""
     return os.path.join(results_dir, routine)
@@ -481,8 +498,9 @@ def generate_sweep_heatmaps(
                     if float(row.get("sigma_space", 0.0)) == sigma_space
                 ]
                 powers = sorted({float(row["power"]) for row in sigma_rows})
-                separations = sorted({float(row["pulse_separation"]) for row in sigma_rows})
-                if not powers or not separations:
+                x_key, x_label = _sweep_axis(sigma_rows)
+                x_values = _sweep_axis_values(sigma_rows, x_key)
+                if not powers or not x_values:
                     continue
 
                 power_def = next(
@@ -501,19 +519,19 @@ def generate_sweep_heatmaps(
                 )
                 gs = GridSpec(1, len(metric_keys), figure=fig)
                 for col, key in enumerate(metric_keys):
-                    arr = np.full((len(powers), len(separations)), np.nan, dtype=float)
+                    arr = np.full((len(powers), len(x_values)), np.nan, dtype=float)
                     for row in sigma_rows:
-                        if key not in row["metrics"]:
+                        if key not in row["metrics"] or row.get(x_key) is None:
                             continue
                         pi = powers.index(float(row["power"]))
-                        si = separations.index(float(row["pulse_separation"]))
-                        arr[pi, si] = row["metrics"][key]
+                        xi = x_values.index(float(row[x_key]))
+                        arr[pi, xi] = row["metrics"][key]
                     ax = fig.add_subplot(gs[0, col])
                     im = ax.imshow(arr, origin="lower", aspect="auto", cmap="viridis")
                     ax.set_title(metric_labels.get(key, _roi_label(key)), fontsize=9)
-                    ax.set_xlabel("pulse separation (ps)")
+                    ax.set_xlabel(x_label)
                     ax.set_ylabel(power_axis_label if col == 0 else "")
-                    ax.set_xticks(range(len(separations)), [f"{v:g}" for v in separations], rotation=45)
+                    ax.set_xticks(range(len(x_values)), [f"{v:g}" for v in x_values], rotation=45)
                     ax.set_yticks(range(len(powers)), [f"{v:g}" for v in powers])
                     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
@@ -613,8 +631,9 @@ def generate_sweep_diagnostics(
                     if float(row.get("sigma_space", 0.0)) == sigma_space
                 ]
                 powers = sorted({float(row["power"]) for row in sigma_rows})
-                separations = sorted({float(row["pulse_separation"]) for row in sigma_rows})
-                if not powers or not separations:
+                x_key, x_label = _sweep_axis(sigma_rows)
+                x_values = _sweep_axis_values(sigma_rows, x_key)
+                if not powers or not x_values:
                     continue
 
                 power_def = next(
@@ -628,17 +647,19 @@ def generate_sweep_diagnostics(
                 )
 
                 maps = {
-                    "log10 psi peak / psi0": np.full((len(powers), len(separations)), np.nan),
-                    "log10 psi final / psi0": np.full((len(powers), len(separations)), np.nan),
-                    "n_active peak": np.full((len(powers), len(separations)), np.nan),
-                    "max(R n_active - gamma_C)": np.full((len(powers), len(separations)), np.nan),
-                    "time gain > 0 (ps)": np.full((len(powers), len(separations)), np.nan),
-                    "nI peak": np.full((len(powers), len(separations)), np.nan),
+                    "log10 psi peak / psi0": np.full((len(powers), len(x_values)), np.nan),
+                    "log10 psi final / psi0": np.full((len(powers), len(x_values)), np.nan),
+                    "n_active peak": np.full((len(powers), len(x_values)), np.nan),
+                    "max(R n_active - gamma_C)": np.full((len(powers), len(x_values)), np.nan),
+                    "time gain > 0 (ps)": np.full((len(powers), len(x_values)), np.nan),
+                    "nI peak": np.full((len(powers), len(x_values)), np.nan),
                 }
 
                 for row in sigma_rows:
+                    if row.get(x_key) is None:
+                        continue
                     pi = powers.index(float(row["power"]))
-                    si = separations.index(float(row["pulse_separation"]))
+                    xi = x_values.index(float(row[x_key]))
                     time = row["time"]
                     psi = row["psi_sq_max"]
                     nA = row["nA_max"]
@@ -648,21 +669,21 @@ def generate_sweep_diagnostics(
                         psi0 = max(float(psi[0]), 1e-300)
                         late = psi[time[: len(psi)] >= PSI_DIAGNOSTIC_IGNORE_PS]
                         if late.size:
-                            maps["log10 psi peak / psi0"][pi, si] = float(
+                            maps["log10 psi peak / psi0"][pi, xi] = float(
                                 np.log10(max(float(np.nanmax(late)), 1e-300) / psi0)
                             )
-                        maps["log10 psi final / psi0"][pi, si] = float(
+                        maps["log10 psi final / psi0"][pi, xi] = float(
                             np.log10(max(float(psi[-1]), 1e-300) / psi0)
                         )
                     if nA is not None and nA.size:
                         gain_margin = R * nA - gamma_C
-                        maps["n_active peak"][pi, si] = float(np.nanmax(nA))
-                        maps["max(R n_active - gamma_C)"][pi, si] = float(np.nanmax(gain_margin))
-                        maps["time gain > 0 (ps)"][pi, si] = _positive_duration(
+                        maps["n_active peak"][pi, xi] = float(np.nanmax(nA))
+                        maps["max(R n_active - gamma_C)"][pi, xi] = float(np.nanmax(gain_margin))
+                        maps["time gain > 0 (ps)"][pi, xi] = _positive_duration(
                             time[: len(gain_margin)], gain_margin > 0.0
                         )
                     if nI is not None and nI.size:
-                        maps["nI peak"][pi, si] = float(np.nanmax(nI))
+                        maps["nI peak"][pi, xi] = float(np.nanmax(nI))
 
                 fig = plt.figure(figsize=(13.0, 7.2), constrained_layout=True)
                 gs = GridSpec(2, 3, figure=fig)
@@ -670,15 +691,15 @@ def generate_sweep_diagnostics(
                     ax = fig.add_subplot(gs[idx // 3, idx % 3])
                     im = ax.imshow(arr, origin="lower", aspect="auto", cmap="viridis")
                     ax.set_title(title, fontsize=10)
-                    ax.set_xlabel("pulse separation (ps)")
+                    ax.set_xlabel(x_label)
                     ax.set_ylabel(power_axis_label if idx % 3 == 0 else "")
-                    ax.set_xticks(range(len(separations)), [f"{v:g}" for v in separations])
+                    ax.set_xticks(range(len(x_values)), [f"{v:g}" for v in x_values])
                     ax.set_yticks(range(len(powers)), [f"{v:g}" for v in powers])
                     for pi, _ in enumerate(powers):
-                        for si, _ in enumerate(separations):
-                            val = arr[pi, si]
+                        for xi, _ in enumerate(x_values):
+                            val = arr[pi, xi]
                             if np.isfinite(val):
-                                ax.text(si, pi, f"{val:.2g}", ha="center", va="center",
+                                ax.text(xi, pi, f"{val:.2g}", ha="center", va="center",
                                         color="white", fontsize=7)
                     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 

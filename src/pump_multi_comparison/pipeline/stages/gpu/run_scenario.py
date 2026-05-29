@@ -264,6 +264,10 @@ def _copyback_artifacts(
     if os.path.isfile(src_sidecar):
         shutil.copy2(src_sidecar, os.path.join(run_dir, f"{scenario_name}_scalars.npz"))
 
+    src_fringe = os.path.join(scratch_dir, f"{scenario_name}_fringe.json")
+    if os.path.isfile(src_fringe):
+        shutil.copy2(src_fringe, os.path.join(run_dir, f"{scenario_name}_fringe.json"))
+
     if archive_raw_hdf5:
         src_h5 = os.path.join(scratch_dir, f"{scenario_name}.h5")
         if os.path.isfile(src_h5):
@@ -470,6 +474,37 @@ def main() -> None:
             traceback.print_exc()
             print(f" WARNING: animation render failed: {e}", file=sys.stderr)
 
+    fringe_sidecar_written = False
+    if output_policy.fringe_analysis_enabled:
+        print("\n  Fringe analysis ...", end="", flush=True)
+        try:
+            from pipeline.analysis.fringe import compute_fringe_sidecar
+
+            pump_cores = [(float(laser.x0), float(laser.y0)) for laser in lasers]
+            pump_core_excl = (
+                float(getattr(lasers[0], "cutoff_sigma", 3.0))
+                * float(getattr(lasers[0], "sigma_space", 2.0))
+                if lasers else 6.0
+            )
+            pump_end_t = max((_laser_timing_end(laser) for laser in lasers), default=0.0)
+            fringe_data = compute_fringe_sidecar(
+                scenario_name,
+                scratch_dir,
+                output_policy.fringe_analysis_window_radius,
+                sim_cfg,
+                threshold_criterion=5e-2,
+                pump_cores=pump_cores,
+                pump_core_exclusion_radius=pump_core_excl,
+                t_min_ps=pump_end_t + 1.0,
+            )
+            fringe_path = os.path.join(scratch_dir, f"{scenario_name}_fringe.json")
+            atomic_write_json(fringe_path, fringe_data)
+            fringe_sidecar_written = True
+            print(" done")
+        except Exception as e:
+            print(f" WARNING: fringe analysis failed: {e}", file=sys.stderr)
+            traceback.print_exc()
+
     copyback_seconds: float = 0.0
     if using_scratch:
         print(f"\n  Copying artifacts scratch → {run_dir} ...")
@@ -510,6 +545,9 @@ def main() -> None:
         "t_cond": t_cond,
         "h5_file": f"{scenario_name}.h5" if output_policy.archive_raw_hdf5 else None,
         "sidecar_file": f"{scenario_name}_scalars.npz",
+        "fringe_sidecar_file": (
+            f"{scenario_name}_fringe.json" if fringe_sidecar_written else None
+        ),
         "n_lasers": len(lasers),
         "phase_offsets": phases,
         "sweep": scenario.get("sweep"),

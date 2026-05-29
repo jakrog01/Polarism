@@ -13,6 +13,8 @@ class OutputPolicy:
     archive_raw_hdf5: bool = False
     render_downscale_factor: int = 1
     animation_clim: dict[str, tuple[float, float]] = dataclasses.field(default_factory=dict)
+    fringe_analysis_enabled: bool = False
+    fringe_analysis_window_radius: float = 16.0
 
 
 def output_policy_from_config(cfg: dict) -> OutputPolicy:
@@ -48,6 +50,10 @@ def output_policy_from_config(cfg: dict) -> OutputPolicy:
             f"output.render_downscale_factor must be >= 1, got {downscale}"
         )
 
+    fringe_cfg = out.get("fringe_analysis", {})
+    fringe_enabled = bool(fringe_cfg.get("enabled", False))
+    fringe_radius = float(fringe_cfg.get("fringe_window_radius", 16.0))
+
     return OutputPolicy(
         field_record_stride=field_stride,
         scalar_record_stride=scalar_stride,
@@ -56,4 +62,6 @@ def output_policy_from_config(cfg: dict) -> OutputPolicy:
         archive_raw_hdf5=bool(out.get("archive_raw_hdf5", False)),
         render_downscale_factor=downscale,
         animation_clim=animation_clim,
+        fringe_analysis_enabled=fringe_enabled,
+        fringe_analysis_window_radius=fringe_radius,
     )
