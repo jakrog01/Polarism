@@ -6,13 +6,19 @@
 
 The pipeline takes a study configuration, creates a run directory, submits Rysy jobs locally from a Rysy login node, executes GPU simulation stages, renders per-scenario artifacts inline, and then performs a lightweight final summary step.
 
+There are two supported run modes:
+
+- `threshold_search`: run a calibration search first, then evaluate scenarios using the threshold result
+- `parameter_sweep`: expand scenarios directly over configured axes and skip threshold search by writing a synthetic threshold stub
+
 At a high level, the workflow is:
 
 1. validate the configuration and scheduler environment
-2. run a threshold-search stage
-3. launch one simulation job per scenario
-4. stream the per-scenario animation during simulation and render PNG artifacts afterward
-5. aggregate results into a final summary
+2. freeze an expanded run-local config and scenario index
+3. run threshold search when the config is not in `parameter_sweep` mode
+4. launch one simulation job per scenario
+5. render PNG, animation, ROI, and optional fringe artifacts from node-local scratch
+6. aggregate results into final summaries and sweep diagnostics
 
 ## Entry point
 
@@ -31,31 +37,44 @@ This wrapper owns the run-directory setup and stage polling logic on a Rysy logi
 | Submission wrapper | `submit.sh` | validates inputs, prepares run directory, submits and polls Rysy jobs |
 | Cluster wrappers | `cluster/` | site-specific environment and resource setup |
 | Config layer | `pipeline/config/` | YAML loading, validation, translation into `polarism.Config` |
+| Parameter sweep layer | `pipeline/config/sweep.py` | direct expansion over power, pulse separation, pulse width, spot size, and square-side axes |
 | Manifest layer | `pipeline/manifest/` | run metadata and atomic JSON writes |
 | Simulation core | `pipeline/simulation/core.py` | drives `polarism` and delegates HDF5 output to reusable storage backends |
+| Analysis layer | `pipeline/analysis/` | NumPy-only post-run metrics such as square-4 fringe analysis |
 | GPU stages | `pipeline/stages/gpu/` | threshold search and scenario execution |
 | CPU stages | `pipeline/stages/cpu/` | final aggregation and optional post-hoc visualization from archived HDF5 |
 | Legacy scripts | `legacy/` | deprecated paths kept outside the supported workflow |
 
 ## Slurm execution model
 
-The pipeline is organized as a simple synchronous flow:
+The threshold-search mode is organized as:
 
 ```text
 submit.sh
   -> sbatch threshold_search
-  -> wait
-  -> sbatch scenario array
-  -> wait
+  -> sbatch scenario array + last-scenario singleton
+  -> sbatch finalize
+```
+
+The direct-sweep mode is shorter:
+
+```text
+submit.sh
+  -> prepare_run writes threshold_result.json stub
+  -> sbatch scenario array + last-scenario singleton
   -> sbatch finalize
 ```
 
 More precisely:
 
 - `threshold_search` runs first and prepares the parameter region for the scenarios
-- `run_scenario.py` executes one scenario per array task on GPU resources, renders outputs inline, and copies back lightweight artifacts
+- `parameter_sweep` skips `threshold_search`; expanded scenario powers are already absolute in the frozen `config.yaml`
+- `run_scenario.py` executes one scenario per array task or singleton on GPU resources, renders outputs inline, and copies back lightweight artifacts
 - `visualize.py` is a post-hoc helper used only when raw HDF5 archival is enabled
 - `finalize.py` builds cross-scenario summaries from metadata and scalar sidecars once all upstream work succeeds
+
+The last scenario is submitted as a singleton so the project does not rely on
+the Rysy Slurm array parent task for real GPU work.
 
 ## Typical outputs
 
@@ -64,8 +83,11 @@ Each run produces a timestamped directory containing:
 - a frozen config snapshot
 - scenario index and manifest JSON files
 - one scalar sidecar per scenario
+- optional ROI trace PNGs when ROI metrics are configured
+- optional fringe JSON sidecars for square/interference studies
 - per-scenario metadata
 - plots and aggregated summaries
+- parameter-sweep heatmaps and diagnostic maps when sweep metadata is present
 - optional per-scenario `dynamics.mp4` or `dynamics.mkv` files
 - optional raw HDF5 files only if archival is enabled
 - Slurm logs
@@ -146,6 +168,13 @@ single-spot pulsed campaign for the `quadratic-double` reservoir model.  It is
 not a dimensionless toy preset: the interaction constants, lifetime scales,
 pump normalization, spot size, and solver choice are intended to be read
 together.
+
+The tracked default uses `global.parameter_sweep.enabled: true`, so submission
+skips the threshold-search GPU stage.  `prepare_run` expands the configured base
+scenarios into a frozen run-local `config.yaml`, writes `scenario_index.json`,
+and writes a synthetic `threshold_result.json` with `mode: parameter_sweep`.
+That stub exists only to keep the downstream scenario builder on the same
+runtime path as threshold-calibrated runs.
 
 ### Default GaAs spot sweep
 
@@ -235,10 +264,19 @@ around reusable YAML anchors:
   expressions such as `0.9P`
 - `laser_defaults.power_definition` controls whether pulsed Gaussian `power`
   values are local peak amplitudes or integrated per-pulse doses
+- `parameter_sweep` can expand `power_values`, `pulse_separation_values`,
+  `sigma_time_values`, `sigma_space_values`, and selected `base_scenarios`
 
 This keeps the scenario description readable while remaining flexible for
 regular or irregular spatial layouts. The older relational `timing:` syntax is
 not part of the current schema.
+
+For `geometry: square4`, the sweep layer treats `square_side_values` as the
+spatial axis.  The first four lasers are moved to
+`(-a/2,-a/2)`, `(a/2,-a/2)`, `(-a/2,a/2)`, and `(a/2,a/2)` for each side
+length `a`; scenario names use an `_a..._E...` or `_a..._P...` suffix instead
+of `_sep...`.  The first pulse-separation value is still applied as fixed pulse
+timing and recorded in scenario metadata.
 
 For geometry-sensitive pulsed campaigns, use:
 
@@ -263,6 +301,71 @@ For pulsed Gaussian lasers, `n_pulses` has two distinct meanings:
 
 This is important when interpreting repeated reservoir excitation. A run with
 `n_pulses: 0` is not a single-pulse experiment.
+
+### ROI and fringe diagnostics
+
+The output block can request circular ROI metrics:
+
+```yaml
+output:
+  roi_metrics:
+    enabled: true
+    rois:
+      - id: core_1sigma
+        shape: circle
+        x0: 0.0
+        y0: 0.0
+        radius: "sigma_space"
+```
+
+ROI radii may be numeric or expressions resolved against the first laser and
+scenario namespace.  Scalar sidecars then include ROI traces such as mean
+`|psi|^2`, integrated `|psi|^2`, reservoir means, and an emission proxy.  The
+PNG renderer writes `roi_traces.png` next to each scenario's field snapshots.
+
+For interference-style square studies, enable:
+
+```yaml
+output:
+  fringe_analysis:
+    enabled: true
+    fringe_window_radius: 16.0
+```
+
+`run_scenario.py` computes the fringe sidecar after HDF5 output and rendering,
+while the file is still on node-local scratch.  Pump cores are excluded using
+`cutoff_sigma * sigma_space`, frames before the pulse train has ended are
+skipped, and the finalizer writes:
+
+- `<scenario>_fringe.json` per scenario
+- `results/spatiotemporal_square4_fringe_summary.csv`
+- `results/spatiotemporal_square4_fringe_summary.json`
+- `results/selected_extremes.json`
+
+The fringe metrics include robust contrast, coefficient of variation, dominant
+FFT fringe spacing, horizontal/vertical line-scan contrast, central ROI peaks,
+and a `crossed_threshold` flag using `psi_sq_max >= 5e-2` inside the analysis
+window.
+
+### Square-4 spatiotemporal preflight
+
+`src/pump_multi_comparison/scenarios/config_spatiotemporal_square4.yaml` is the
+current square-4 preflight for the spiking-paper campaign.  It uses four
+synchronous pulsed Gaussian spots on the corners of a square, scans square side
+length from `8.0` to `32.0 um`, and evaluates pulse energies
+`1600`, `2000`, and `2400` in `pulse_energy` mode.
+
+Run it from a Rysy login node:
+
+```bash
+cd ~/polaritonSNN/PolaritonSNN/src/pump_multi_comparison
+bash submit.sh --config scenarios/config_spatiotemporal_square4.yaml --dry-run
+bash submit.sh --config scenarios/config_spatiotemporal_square4.yaml
+```
+
+This config is a parameter-sweep preflight, not a threshold-calibrated protocol:
+threshold search is skipped, the square side is the sweep axis, and the useful
+outputs are the scalar sweep heatmaps, ROI traces, and fringe summaries.
 
 ## Current artifact-diagnostics workflow
 

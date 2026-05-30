@@ -11,6 +11,8 @@ This section documents the example applications that live in `src/`. These are n
 ## Current examples
 
 - [pump_multi_comparison](pump-multi-comparison.md): a Slurm-oriented pipeline for threshold search, scenario sweeps, per-scenario visualization, and final aggregation
+- [threshold_finder](threshold-finder.md): a scalar GPU sweep for estimating a condensation threshold or scanning pulse separation without retaining field data
+- [create_characteristic](create-characteristic.md): a two-dimensional map of peak condensate density over pulse energy and pulse separation
 - [dot_response_fit](dot-response-fit.md): a Slurm-oriented MNIST batch workflow for fitting the Gaussian pump spot size against time-only ODE reference traces
 
 ## Relationship to the package

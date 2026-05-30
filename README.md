@@ -35,6 +35,7 @@ src/                          Example applications built on `polarism`
   pump_multi_comparison/      Slurm-oriented Rysy parameter-sweep pipeline
   dot_response_fit/           Dot-response analysis workflow
   threshold_finder/           Threshold-search workflow
+  create_characteristic/      2-D pulse-energy/separation characteristic maps
 
 docs/                         MkDocs Material documentation site
 run.py                        Tyro CLI over the public `polarism.Config`
@@ -186,15 +187,15 @@ Key entry points:
   for laser and pump definitions.
 - [`docs/user-guide/output-and-visualization.md`](docs/user-guide/output-and-visualization.md)
   for HDF5, scalar sidecars, plots, and movies.
-- [`docs/examples/pump-multi-comparison.md`](docs/examples/pump-multi-comparison.md)
-  for the Slurm pipeline workflow.
+- [`docs/examples/index.md`](docs/examples/index.md)
+  for the documented Slurm workflows in `src/`.
 
 ## Development Notes
 
 - Keep reusable physics logic inside `polarism/`.
 - Keep tests for engine behavior inside `tests/`.
 - Keep example-specific Slurm, scratch, manifest, and rendering orchestration inside
-  `src/pump_multi_comparison/pipeline/` and `cluster/`.
+  the relevant `src/*/` pipeline and `cluster/` directories.
 - Do not commit large run outputs. Persistent Rysy outputs belong under the run
   base configured in `slurm.env`; local campaign YAMLs belong in
   `src/pump_multi_comparison/scenarios/`.

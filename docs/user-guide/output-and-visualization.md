@@ -128,6 +128,8 @@ The Slurm pipeline in `src/pump_multi_comparison/` writes a richer run directory
 - scenario metadata JSON files
 - HDF5 simulation outputs
 - per-scenario plots
+- optional ROI trace plots from scalar sidecars
+- optional fringe-analysis JSON and summary tables for square/interference studies
 - optional `dynamics.mp4` or `dynamics.mkv` movies
 - cross-scenario summary artifacts
 

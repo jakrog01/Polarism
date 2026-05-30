@@ -20,6 +20,8 @@ nav:
   - Examples:
       - examples/index.md
       - pump_multi_comparison Pipeline: examples/pump-multi-comparison.md
+      - threshold_finder Pipeline: examples/threshold-finder.md
+      - create_characteristic Pipeline: examples/create-characteristic.md
       - dot_response_fit Pipeline: examples/dot-response-fit.md
   - API Reference:
       - Overview: api/overview.md

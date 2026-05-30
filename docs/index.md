@@ -16,7 +16,7 @@ Polarism is a **Gross-Pitaevskii Equation solver** oriented toward fast 2-D driv
 The repository is split along clean responsibility boundaries:
 
 - `polarism/` contains the reusable simulation library: configuration dataclasses, solver implementations, result handling, and the `SimulationController` class.
-- `src/pump_multi_comparison/` contains an example HPC-oriented Slurm pipeline built on top of `polarism`. It is not the core package API and is best read as a reference workflow.
+- `src/` contains example HPC-oriented workflows built on top of `polarism`, including `pump_multi_comparison`, `threshold_finder`, `create_characteristic`, and `dot_response_fit`. They are not the core package API and are best read as reference workflows.
 - `tests/` contains correctness, compliance, and benchmark-style validation suites.
 - `docs/` and `mkdocs.yml` define the documentation site and generated API reference.
 
@@ -26,7 +26,7 @@ The repository is split along clean responsibility boundaries:
 - Multiple solver families, including finite-difference RK4, fused CUDA RK4, split-step FFT, ETD-RK2, and interaction-picture RK4.
 - Configurable grid topology, boundary absorption, pumps, reservoirs, and result storage.
 - Batch-oriented HDF5, JSON, and NumPy output paths plus real-time visualization hooks.
-- Slurm pipeline support for multi-scenario parameter studies on cluster hardware.
+- Slurm pipeline support for multi-scenario parameter studies, scalar threshold scans, characteristic maps, and response-fit campaigns on cluster hardware.
 
 ## Documentation pillars
 

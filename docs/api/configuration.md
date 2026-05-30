@@ -122,7 +122,7 @@ The condensate equation receives `nR` as the active reservoir density.
 
 | Field | Meaning | Main options |
 | --- | --- | --- |
-| `method` | time integrator | `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`, `rk4-cuda-v100`, `split-step-fft`, `etd-rk2`, `ip-rk4` |
+| `method` | time integrator | `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`, `rk4-cuda-v100`, `split-step-fft`, `etd-rk2`, `ip-rk4`, `ifrk4-fft-cuda` |
 | `dt` | timestep | positive float |
 | `total_time` | total simulation time | positive float |
 | `precision` | arithmetic mode where supported | typically `single`, `double` |
