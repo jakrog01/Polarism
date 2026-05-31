@@ -19,7 +19,7 @@ import sys
 from typing import Any
 
 from pipeline.config.loader import build_timing_namespace, resolve_delay, resolve_power
-from pipeline.config.sweep import parameter_sweep_enabled, resolve_laser_type
+from pipeline.config.sweep import parameter_sweep_enabled, probe5_sweep_enabled, resolve_laser_type
 
 _BASE_TIMING_NAMES: frozenset[str] = frozenset(
     {"sigma_time", "pulse_separation", "cutoff_sigma"}
@@ -193,6 +193,7 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
                     )
 
     sweep_enabled = parameter_sweep_enabled(cfg)
+    probe5_mode = probe5_sweep_enabled(cfg)
     ts = g.get("threshold_search", {})
     sweep_cfg = g.get("parameter_sweep", {})
     power_values: list = ts.get("power_values", [])
@@ -210,10 +211,13 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
             ts.get("sigma_time_values", [g.get("laser_defaults", {}).get("sigma_time", 1.0)]),
         )
         pulse_sep_formula = None
-        if not power_values:
-            errors.append("parameter_sweep.power_values is empty")
-        if _global_is_pulse and not pulse_sep_values:
-            errors.append("parameter_sweep.pulse_separation_values is empty")
+        if probe5_mode:
+            errors.extend(_validate_probe5_sweep(sweep_cfg, laser_defaults, cfg))
+        else:
+            if not power_values:
+                errors.append("parameter_sweep.power_values is empty")
+            if _global_is_pulse and not pulse_sep_values:
+                errors.append("parameter_sweep.pulse_separation_values is empty")
         if not sigma_time_values:
             errors.append("parameter_sweep.sigma_time_values is empty")
         base_scenario_filter = sweep_cfg.get("base_scenarios")
@@ -895,6 +899,106 @@ def _validate_sweep_timing_budget(
                     f"pulse_sep={ps:.3g} requires {required_time:.1f} ps but "
                     f"global.solver.total_time={total_time:.1f} ps"
                 )
+
+    return errors
+
+
+def _validate_probe5_sweep(
+    sweep_cfg: dict[str, Any],
+    defaults: dict[str, Any],
+    cfg: dict[str, Any],
+) -> list[str]:
+    """Validate the probe5-specific sweep section."""
+    errors: list[str] = []
+
+    probe_delay_values = sweep_cfg.get("probe_delay_values")
+    probe_energy_values = sweep_cfg.get("probe_energy_values")
+    probe_laser_id = str(sweep_cfg.get("probe_laser_id", "probe"))
+
+    for name, vals in (
+        ("probe_delay_values", probe_delay_values),
+        ("probe_energy_values", probe_energy_values),
+    ):
+        if vals is None:
+            errors.append(f"parameter_sweep.{name} is missing for probe5 mode")
+        elif not vals:
+            errors.append(f"parameter_sweep.{name} is empty for probe5 mode")
+        elif not all(isinstance(v, (int, float)) and float(v) > 0 for v in vals):
+            errors.append(f"parameter_sweep.{name} must all be positive numbers")
+
+    for name in ("square_side", "ring_energy"):
+        val = sweep_cfg.get(name)
+        if val is None:
+            errors.append(f"parameter_sweep.{name} is missing for probe5 mode")
+        elif not (isinstance(val, (int, float)) and float(val) > 0):
+            errors.append(f"parameter_sweep.{name}={val!r} must be a positive number")
+
+    base_scenario_filter = sweep_cfg.get("base_scenarios")
+    if base_scenario_filter:
+        selected = {str(n) for n in base_scenario_filter} if isinstance(base_scenario_filter, list) else {str(base_scenario_filter)}
+        for sc in cfg.get("scenarios", []):
+            if sc.get("name") in selected:
+                laser_ids = [
+                    str(ld.get("id", f"laser_{i}"))
+                    for i, ld in enumerate(sc.get("lasers", []))
+                ]
+                if probe_laser_id not in laser_ids:
+                    errors.append(
+                        f"probe5 probe_laser_id='{probe_laser_id}' not found in scenario "
+                        f"'{sc['name']}' (available: {laser_ids})"
+                    )
+                if len(laser_ids) < 5:
+                    errors.append(
+                        f"probe5 scenario '{sc['name']}' must have at least 5 lasers "
+                        f"(4 ring + 1 probe), found {len(laser_ids)}"
+                    )
+                if probe_laser_id in laser_ids[:4]:
+                    errors.append(
+                        f"probe5 scenario '{sc['name']}' has probe_laser_id="
+                        f"'{probe_laser_id}' inside the first four lasers. "
+                        "The first four lasers must be the square ring because "
+                        "square-side expansion moves lasers[:4]."
+                    )
+
+    cutoff_sigma = float(defaults.get("cutoff_sigma", 3.0))
+    sigma_time = float(defaults.get("sigma_time", 1.5))
+    pulse_sep = sweep_cfg.get("pulse_separation")
+    solver = cfg.get("global", {}).get("solver", {})
+    total_time = solver.get("total_time")
+
+    if probe_delay_values and isinstance(total_time, (int, float)):
+        max_delay = float(max(float(v) for v in probe_delay_values))
+        probe_end = max_delay + 2.0 * cutoff_sigma * sigma_time
+        if probe_end >= float(total_time):
+            errors.append(
+                f"probe5 max probe_delay={max_delay} + probe pulse support "
+                f"2*{cutoff_sigma}*{sigma_time}={2*cutoff_sigma*sigma_time:.1f} ps = "
+                f"{probe_end:.1f} ps >= global.solver.total_time={total_time}. "
+                "Increase total_time."
+            )
+
+    if (
+        probe_delay_values
+        and pulse_sep is not None
+        and isinstance(pulse_sep, (int, float))
+    ):
+        n_ring_pulses = 9
+        for sc in cfg.get("scenarios", []):
+            base_filter = sweep_cfg.get("base_scenarios", [])
+            if sc.get("name") in (base_filter if isinstance(base_filter, list) else []):
+                ring_laser = (sc.get("lasers") or [{}])[0]
+                n_ring_pulses = int(ring_laser.get("n_pulses", 9))
+                break
+        pump_end = (n_ring_pulses - 1) * float(pulse_sep) + 2.0 * cutoff_sigma * sigma_time
+        min_delay = float(min(float(v) for v in probe_delay_values))
+        min_safe_delay = pump_end + 1.0
+        if min_delay < min_safe_delay:
+            errors.append(
+                f"probe5 min probe_delay={min_delay} ps < estimated ring pump_end + 1 ps="
+                f"{min_safe_delay:.1f} ps. Ring pump_end="
+                f"{pump_end:.1f} ps (({n_ring_pulses}-1)*{pulse_sep}+2*{cutoff_sigma}*{sigma_time}). "
+                "Probe must start after the ring train has fully ended."
+            )
 
     return errors
 

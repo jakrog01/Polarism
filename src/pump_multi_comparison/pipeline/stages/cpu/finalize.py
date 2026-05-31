@@ -31,6 +31,17 @@ from pipeline.stages.cpu.viz_engine import (
 )
 
 
+_PROBE5_CSV_COLUMNS = [
+    "scenario", "probe_delay_ps", "probe_energy", "ring_energy",
+    "square_side_um", "sigma_space", "pump_end_ps",
+    "central_roi_peak_psi_sq", "central_roi_peak_emission",
+    "central_roi_peak_nR", "t_peak_emission_ps",
+    "crossed_threshold",
+]
+
+_PROBE5_THRESHOLD_CRITERION = 0.05
+
+
 _FRINGE_CSV_COLUMNS = [
     "scenario", "square_side_um", "energy", "sigma_space",
     "fringe_contrast_max", "t_fringe_contrast_max_ps",
@@ -158,6 +169,196 @@ def _generate_selected_extremes(rows: list[dict], results_dir: str) -> None:
     atomic_write_json(os.path.join(results_dir, "selected_extremes.json"), extremes)
 
 
+def _post_probe_max(
+    data: "np.ndarray",
+    time_arr: "np.ndarray | None",
+    key: str,
+    probe_delay: float,
+) -> float:
+    if key not in data:
+        return float("nan")
+    arr = data[key]
+    if time_arr is not None and len(time_arr) == len(arr):
+        arr = arr[time_arr >= probe_delay]
+    return float(arr.max()) if len(arr) > 0 else float("nan")
+
+
+def _time_of_max(
+    data: "np.ndarray",
+    time_arr: "np.ndarray | None",
+    key: str,
+    probe_delay: float,
+) -> float:
+    if key not in data or time_arr is None:
+        return float("nan")
+    arr = data[key]
+    if len(time_arr) != len(arr):
+        return float("nan")
+    mask = time_arr >= probe_delay
+    arr_post = arr[mask]
+    t_post = time_arr[mask]
+    if len(arr_post) == 0:
+        return float("nan")
+    return float(t_post[arr_post.argmax()])
+
+
+def _generate_probe5_heatmap(
+    rows: list[dict],
+    results_dir: str,
+    metric: str,
+    filename: str,
+    title: str,
+) -> None:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+
+    delays = sorted({float(r["probe_delay_ps"]) for r in rows if r.get("probe_delay_ps") is not None})
+    energies = sorted({float(r["probe_energy"]) for r in rows if r.get("probe_energy") is not None})
+    if not delays or not energies:
+        return
+
+    z = np.full((len(energies), len(delays)), float("nan"))
+    delay_idx = {d: i for i, d in enumerate(delays)}
+    energy_idx = {e: i for i, e in enumerate(energies)}
+
+    for r in rows:
+        d = r.get("probe_delay_ps")
+        e = r.get("probe_energy")
+        v = r.get(metric)
+        if d is None or e is None or v is None:
+            continue
+        if float(d) in delay_idx and float(e) in energy_idx and np.isfinite(float(v)):
+            z[energy_idx[float(e)], delay_idx[float(d)]] = float(v)
+
+    fig, ax = plt.subplots(figsize=(max(6, len(delays) * 0.55), max(4, len(energies) * 0.28)))
+    im = ax.pcolormesh(delays, energies, z, shading="nearest", cmap="hot")
+    plt.colorbar(im, ax=ax, label=metric)
+    ax.set_xlabel("probe delay (ps)")
+    ax.set_ylabel("probe energy")
+    ax.set_title(title)
+    fig.tight_layout()
+    plt.savefig(os.path.join(results_dir, filename), dpi=150)
+    plt.close(fig)
+
+
+def _generate_probe5_selected_cases(rows: list[dict], results_dir: str) -> None:
+    above = [r for r in rows if r.get("crossed_threshold")]
+    below = [
+        r for r in rows
+        if not r.get("crossed_threshold")
+        and np.isfinite(float(r.get("central_roi_peak_psi_sq", float("nan"))))
+    ]
+
+    cases: dict = {}
+    if rows:
+        cases["max_response"] = max(
+            rows, key=lambda r: float(r.get("central_roi_peak_psi_sq") or 0.0)
+        )
+        cases["min_response"] = min(
+            rows, key=lambda r: float(r.get("central_roi_peak_psi_sq") or float("inf"))
+        )
+    if above:
+        cases["first_above_threshold"] = min(
+            above, key=lambda r: float(r.get("probe_energy") or float("inf"))
+        )
+    if below:
+        cases["closest_below_threshold"] = max(
+            below, key=lambda r: float(r.get("central_roi_peak_psi_sq") or 0.0)
+        )
+
+    atomic_write_json(
+        os.path.join(results_dir, "selected_probe5_threshold_cases.json"), cases
+    )
+
+
+def _generate_probe5_summary(
+    scenarios: list[str], run_dir: str, results_dir: str
+) -> None:
+    rows: list[dict] = []
+    for name in scenarios:
+        meta = load_scenario_meta(run_dir, name)
+        sweep = meta.get("sweep") or {}
+        if sweep.get("mode") != "probe5":
+            continue
+
+        sidecar_path = os.path.join(run_dir, f"{name}_scalars.npz")
+        if not os.path.isfile(sidecar_path):
+            continue
+
+        data = np.load(sidecar_path)
+        probe_delay = float(sweep.get("probe_delay_ps", 0.0))
+        time_arr = data.get("time", None)
+        prefix = "roi_center_D_circle"
+
+        row: dict = {
+            "scenario": name,
+            "probe_delay_ps": probe_delay,
+            "probe_energy": float(sweep.get("probe_energy", float("nan"))),
+            "ring_energy": float(sweep.get("ring_energy", float("nan"))),
+            "square_side_um": float(sweep.get("square_side", float("nan"))),
+            "sigma_space": float(sweep.get("sigma_space", float("nan"))),
+            "pump_end_ps": float(sweep.get("pump_end_ps", float("nan"))),
+            "central_roi_peak_psi_sq": _post_probe_max(
+                data, time_arr, f"{prefix}_mean_psi_sq", probe_delay
+            ),
+            "central_roi_peak_emission": _post_probe_max(
+                data, time_arr, f"{prefix}_integral_emission", probe_delay
+            ),
+            "central_roi_peak_nR": _post_probe_max(
+                data, time_arr, f"{prefix}_mean_nR", probe_delay
+            ),
+            "t_peak_emission_ps": _time_of_max(
+                data, time_arr, f"{prefix}_integral_emission", probe_delay
+            ),
+        }
+        row["crossed_threshold"] = (
+            np.isfinite(row["central_roi_peak_psi_sq"])
+            and row["central_roi_peak_psi_sq"] > _PROBE5_THRESHOLD_CRITERION
+        )
+        rows.append(row)
+
+    if not rows:
+        return
+
+    csv_path = os.path.join(results_dir, "probe5_threshold_summary.csv")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_PROBE5_CSV_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    json_path = os.path.join(results_dir, "probe5_threshold_summary.json")
+    atomic_write_json(json_path, rows)
+
+    try:
+        _generate_probe5_heatmap(
+            rows,
+            results_dir,
+            "central_roi_peak_psi_sq",
+            "probe5_threshold_heatmap_psi_sq.png",
+            f"Probe5 central |ψ|² peak  (threshold={_PROBE5_THRESHOLD_CRITERION})",
+        )
+        _generate_probe5_heatmap(
+            rows,
+            results_dir,
+            "central_roi_peak_emission",
+            "probe5_threshold_heatmap_emission.png",
+            "Probe5 central emission peak",
+        )
+    except Exception as e:
+        print(f"  WARNING: probe5 heatmap generation failed: {e}", file=sys.stderr)
+
+    try:
+        _generate_probe5_selected_cases(rows, results_dir)
+    except Exception as e:
+        print(f"  WARNING: probe5 selected cases failed: {e}", file=sys.stderr)
+
+    print(f"  Probe5 summary: {csv_path}  ({len(rows)} scenarios)")
+
+
 def _check_artifacts(run_dir: str, scenarios: list[str]) -> list[str]:
     """Return error strings for any missing required per-scenario artifact."""
     errors: list[str] = []
@@ -246,13 +447,24 @@ def main() -> None:
 
     results_dir = os.path.join(run_dir, "results")
     os.makedirs(results_dir, exist_ok=True)
-    print("  Generating cross-scenario comparison plot ...")
-    try:
-        generate_summary(scenarios, run_dir, results_dir)
-    except Exception as e:
-        print(f"  WARNING: summary plot failed: {e}", file=sys.stderr)
+    probe5_scenarios = [
+        meta.get("scenario")
+        for meta in sweep_metas
+        if (meta.get("sweep") or {}).get("mode") == "probe5"
+    ]
+    probe5_scenarios = [name for name in probe5_scenarios if name]
+    all_probe5 = len(probe5_scenarios) == len(scenarios)
 
-    if sweep_metas:
+    if all_probe5:
+        print("  Skipping generic comparison plot for probe5 sweep.")
+    else:
+        print("  Generating cross-scenario comparison plot ...")
+        try:
+            generate_summary(scenarios, run_dir, results_dir)
+        except Exception as e:
+            print(f"  WARNING: summary plot failed: {e}", file=sys.stderr)
+
+    if sweep_metas and not all_probe5:
         print("  Generating parameter-sweep heatmaps ...")
         try:
             generate_sweep_heatmaps(scenarios, run_dir, results_dir)
@@ -274,6 +486,13 @@ def main() -> None:
             _generate_fringe_summary(fringe_sidecars, run_dir, results_dir)
         except Exception as e:
             print(f"  WARNING: fringe summary failed: {e}", file=sys.stderr)
+
+    if probe5_scenarios:
+        print("  Generating probe5 threshold summary ...")
+        try:
+            _generate_probe5_summary(probe5_scenarios, run_dir, results_dir)
+        except Exception as e:
+            print(f"  WARNING: probe5 summary failed: {e}", file=sys.stderr)
 
     try:
         set_manifest_field(run_dir, "finalize_complete", True)

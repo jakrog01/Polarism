@@ -449,7 +449,7 @@ def generate_sweep_heatmaps(
         with open(meta_path) as f:
             meta = json.load(f)
         sweep = meta.get("sweep")
-        if not sweep:
+        if not sweep or sweep.get("mode") == "probe5":
             continue
         npz = np.load(sidecar)
         metrics = {}
@@ -571,7 +571,7 @@ def _load_sweep_diagnostic_rows(routines: list[str], data_dir: str) -> list[dict
         with open(meta_path) as f:
             meta = json.load(f)
         sweep = meta.get("sweep")
-        if not sweep:
+        if not sweep or sweep.get("mode") == "probe5":
             continue
         npz = np.load(sidecar)
         rows.append({
