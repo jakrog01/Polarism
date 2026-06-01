@@ -23,7 +23,14 @@ def _apply_square_side(scenario: dict[str, Any], a: float) -> None:
         cx, cy = _SQUARE4_CORNERS[i]
         ldef["x0"] = cx * half
         ldef["y0"] = cy * half
-_P_RELATIVE_POWER_RE = re.compile(r"^\s*([0-9]*\.?[0-9]*)\s*P\s*$")
+_P_RELATIVE_POWER_RE = re.compile(
+    r"^\s*([0-9]*\.?[0-9]*)\s*"
+    r"(P(?:_(?:ring|probe|assisted|assisted_probe|probe_assisted|"
+    r"assisted_ring|ring_assisted))?"
+    r"|P(?:ring|probe|assisted|assistedprobe|probeassisted|"
+    r"assistedring|ringassisted))\s*$",
+    re.IGNORECASE,
+)
 
 
 def parameter_sweep_enabled(cfg: dict[str, Any]) -> bool:
@@ -151,20 +158,67 @@ def probe5_sweep_enabled(cfg: dict[str, Any]) -> bool:
     return bool(ps.get("enabled", False)) and str(ps.get("mode", "")) == "probe5"
 
 
+def probe5_ring_calibration_enabled(cfg: dict[str, Any]) -> bool:
+    """Return True when probe5 should run a ring-only calibration first."""
+    if not probe5_sweep_enabled(cfg):
+        return False
+    ps = cfg.get("global", {}).get("parameter_sweep", {})
+    ring_cal = ps.get("ring_calibration", {})
+    return bool(ring_cal.get("enabled", False))
+
+
+def probe5_probe_calibration_enabled(cfg: dict[str, Any]) -> bool:
+    """Return True when probe5 should also calibrate the center probe alone."""
+    if not probe5_ring_calibration_enabled(cfg):
+        return False
+    ps = cfg.get("global", {}).get("parameter_sweep", {})
+    probe_cal = ps.get("probe_calibration", {})
+    return bool(probe_cal.get("enabled", False))
+
+
+def probe5_assisted_probe_calibration_enabled(cfg: dict[str, Any]) -> bool:
+    """Return True when probe5 should calibrate the probe inside a ring trap."""
+    if not probe5_ring_calibration_enabled(cfg):
+        return False
+    ps = cfg.get("global", {}).get("parameter_sweep", {})
+    assisted_cal = ps.get("assisted_probe_calibration", {})
+    return bool(assisted_cal.get("enabled", False))
+
+
+def probe5_assisted_ring_calibration_enabled(cfg: dict[str, Any]) -> bool:
+    """Return True when probe5 should calibrate ring strength for a fixed probe."""
+    if not probe5_ring_calibration_enabled(cfg):
+        return False
+    ps = cfg.get("global", {}).get("parameter_sweep", {})
+    assisted_cal = ps.get("assisted_ring_calibration", {})
+    return bool(assisted_cal.get("enabled", False))
+
+
+def _fmt_label(value: Any) -> str:
+    text = str(value)
+    text = text.replace("-", "m").replace(".", "p")
+    return re.sub(r"[^A-Za-z0-9_]+", "_", text)
+
+
+def _p_expr(coefficient: float, symbol: str = "P") -> str:
+    coeff = f"{float(coefficient):.6g}"
+    return f"{coeff}{symbol}"
+
+
 def _apply_probe5_sweep_point(
     scenario: dict[str, Any],
     probe_laser_id: str,
-    ring_energy: float,
-    probe_energy: float,
+    ring_energy: Any,
+    probe_energy: Any,
     probe_delay: float,
 ) -> None:
     for ldef in scenario.get("lasers", [])[:4]:
-        ldef["power"] = float(ring_energy)
+        ldef["power"] = ring_energy
 
     found_probe = False
     for ldef in scenario.get("lasers", []):
         if str(ldef.get("id", "")) == probe_laser_id:
-            ldef["power"] = float(probe_energy)
+            ldef["power"] = probe_energy
             ldef["delay"] = float(probe_delay)
             found_probe = True
             break
@@ -172,13 +226,48 @@ def _apply_probe5_sweep_point(
         raise ValueError(f"probe5 laser id {probe_laser_id!r} not found")
 
 
+def _probe5_ring_energy_axis(
+    sweep_cfg: dict[str, Any],
+) -> list[tuple[Any, float]]:
+    ring_cal = sweep_cfg.get("ring_calibration", {})
+    if bool(ring_cal.get("enabled", False)):
+        if "ring_multiplier_values" in sweep_cfg:
+            reference = str(sweep_cfg.get("ring_multiplier_reference", "P_ring"))
+            return [
+                (_p_expr(float(multiplier), reference), float(multiplier))
+                for multiplier in sweep_cfg.get("ring_multiplier_values", [1.0])
+            ]
+        safe_fraction = float(ring_cal.get("safe_fraction", 0.75))
+        return [
+            (_p_expr(safe_fraction * float(scale), "P_ring"), float(scale))
+            for scale in sweep_cfg.get("ring_scale_values", [1.0])
+        ]
+
+    ring_energy_ref = float(sweep_cfg["ring_energy"])
+
+    if "ring_energy_values" in sweep_cfg:
+        return [
+            (float(value), float(value) / ring_energy_ref)
+            for value in sweep_cfg["ring_energy_values"]
+        ]
+
+    if "ring_scale_values" in sweep_cfg:
+        return [
+            (ring_energy_ref * float(scale), float(scale))
+            for scale in sweep_cfg["ring_scale_values"]
+        ]
+
+    return [(ring_energy_ref, 1.0)]
+
+
 def expand_probe5_sweep(
     cfg: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str], dict[str, Any]]:
-    """Expand a probe5 scenario over independent probe-delay and probe-energy axes.
+    """Expand a probe5 scenario over independent probe-delay/energy axes.
 
-    The four corner ring lasers are fixed at ``ring_energy`` and ``square_side``.
-    Only the fifth laser (identified by ``probe_laser_id``) varies across the sweep.
+    The four corner ring lasers sit at ``square_side`` and can be swept through
+    ``ring_scale_values`` or ``ring_energy_values``.  The fifth laser
+    (identified by ``probe_laser_id``) is the delayed center probe.
 
     Returns
     -------
@@ -191,12 +280,19 @@ def expand_probe5_sweep(
     sweep_cfg = global_cfg["parameter_sweep"]
     defaults = global_cfg.get("laser_defaults", {})
     power_definition = str(defaults.get("power_definition", "peak_amplitude"))
+    ring_calibrated = bool((sweep_cfg.get("ring_calibration") or {}).get("enabled", False))
 
     probe_laser_id = str(sweep_cfg.get("probe_laser_id", "probe"))
     square_side = float(sweep_cfg["square_side"])
-    ring_energy = float(sweep_cfg["ring_energy"])
+    ring_energy_ref = float(sweep_cfg.get("ring_energy", 1.0))
+    ring_energy_axis = _probe5_ring_energy_axis(sweep_cfg)
+    ring_axis_is_swept = (
+        "ring_scale_values" in sweep_cfg
+        or "ring_energy_values" in sweep_cfg
+        or "ring_multiplier_values" in sweep_cfg
+    )
     probe_delay_values = [float(v) for v in sweep_cfg["probe_delay_values"]]
-    probe_energy_values = [float(v) for v in sweep_cfg["probe_energy_values"]]
+    probe_energy_values = list(sweep_cfg["probe_energy_values"])
     sigma_time = float(defaults.get("sigma_time", 1.5))
     cutoff_sigma = float(defaults.get("cutoff_sigma", 3.0))
     sigma_space = float(defaults.get("sigma_space", 2.0))
@@ -212,41 +308,50 @@ def expand_probe5_sweep(
         pump_end_ps = (n_ring_pulses - 1) * pulse_sep + 2.0 * cutoff_sigma * sigma_time
 
         for probe_delay in probe_delay_values:
-            for probe_energy in probe_energy_values:
-                sc = copy.deepcopy(base)
-                _apply_square_side(sc, square_side)
-                _apply_timing_grid_point(sc, pulse_sep, sigma_time, cutoff_sigma)
-                _apply_probe5_sweep_point(
-                    sc, probe_laser_id, ring_energy, probe_energy, probe_delay
-                )
-                for ldef in sc.get("lasers", []):
-                    ldef["sigma_space"] = float(sigma_space)
+            for ring_energy, ring_scale in ring_energy_axis:
+                for probe_energy in probe_energy_values:
+                    sc = copy.deepcopy(base)
+                    _apply_square_side(sc, square_side)
+                    _apply_timing_grid_point(sc, pulse_sep, sigma_time, cutoff_sigma)
+                    _apply_probe5_sweep_point(
+                        sc, probe_laser_id, ring_energy, probe_energy, probe_delay
+                    )
+                    for ldef in sc.get("lasers", []):
+                        ldef["sigma_space"] = float(sigma_space)
 
-                a_str = _fmt_value(square_side)
-                ering_str = _fmt_value(ring_energy)
-                eprobe_str = _fmt_value(probe_energy)
-                d_str = _fmt_value(probe_delay)
-                sc["name"] = (
-                    f"{base_name}_a{a_str}_Ering{ering_str}"
-                    f"_Eprobe{eprobe_str}_d{d_str}"
-                )
+                    a_str = _fmt_value(square_side)
+                    ring_scale_str = _fmt_value(ring_scale)
+                    ering_str = _fmt_label(ring_energy)
+                    eprobe_str = _fmt_label(probe_energy)
+                    d_str = _fmt_value(probe_delay)
+                    ring_part = (
+                        f"_Rscale{ring_scale_str}_Ering{ering_str}"
+                        if ring_axis_is_swept
+                        else f"_Ering{ering_str}"
+                    )
+                    sc["name"] = (
+                        f"{base_name}_a{a_str}{ring_part}"
+                        f"_Eprobe{eprobe_str}_d{d_str}"
+                    )
 
-                sc["sweep"] = {
-                    "base_scenario": base_name,
-                    "mode": "probe5",
-                    "square_side": square_side,
-                    "ring_energy": ring_energy,
-                    "probe_energy": probe_energy,
-                    "probe_delay_ps": probe_delay,
-                    "pump_end_ps": pump_end_ps,
-                    "sigma_time": sigma_time,
-                    "sigma_space": sigma_space,
-                    "n_ring_pulses": n_ring_pulses,
-                    "probe_laser_id": probe_laser_id,
-                    "power_definition": power_definition,
-                    "power_label": _power_suffix_prefix(power_definition),
-                }
-                expanded_scenarios.append(sc)
+                    sc["sweep"] = {
+                        "base_scenario": base_name,
+                        "mode": "probe5",
+                        "square_side": square_side,
+                        "ring_energy": ring_energy,
+                        "ring_energy_reference": ring_energy_ref,
+                        "ring_scale": ring_scale,
+                        "probe_energy": probe_energy,
+                        "probe_delay_ps": probe_delay,
+                        "pump_end_ps": pump_end_ps,
+                        "sigma_time": sigma_time,
+                        "sigma_space": sigma_space,
+                        "n_ring_pulses": n_ring_pulses,
+                        "probe_laser_id": probe_laser_id,
+                        "power_definition": power_definition,
+                        "power_label": _power_suffix_prefix(power_definition),
+                    }
+                    expanded_scenarios.append(sc)
 
     expanded_cfg["scenarios"] = expanded_scenarios
     names = [sc["name"] for sc in expanded_scenarios]
@@ -264,6 +369,8 @@ def expand_probe5_sweep(
         "lx": float(grid.get("lx", 160.0)),
         "ly": float(grid.get("ly", 160.0)),
     }
+    if ring_calibrated:
+        threshold_stub = None
     return expanded_cfg, names, threshold_stub
 
 

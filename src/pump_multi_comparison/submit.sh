@@ -68,13 +68,18 @@ python3 -m pipeline.config.validator --config "$CONFIG" --slurm-env "$SLURM_ENV"
 }
 echo ""
 
-IS_SWEEP=$(python3 - "$CONFIG" <<'PYEOF'
+mapfile -t _MODE_FLAGS < <(python3 - "$CONFIG" <<'PYEOF'
 import sys, yaml
 cfg = yaml.safe_load(open(sys.argv[1]))
 ps = cfg.get("global", {}).get("parameter_sweep", {})
+cal = ps.get("mode") == "probe5" and (ps.get("ring_calibration") or {}).get("enabled", False)
 print("1" if ps.get("enabled") else "0")
+print("1" if cal else "0")
 PYEOF
 )
+IS_SWEEP="${_MODE_FLAGS[0]}"
+NEEDS_THRESHOLD="${_MODE_FLAGS[1]}"
+SKIP_THRESHOLD=$(( IS_SWEEP == 1 && NEEDS_THRESHOLD == 0 ))
 
 if [[ $IS_SWEEP -eq 0 ]]; then
     mapfile -t _PARSED < <(python3 - "$CONFIG" <<'PYEOF'
@@ -95,8 +100,20 @@ PYEOF
     echo "  Scenarios ($N_SCENARIOS):"
     for sc in "${SCENARIOS[@]}"; do echo "    - $sc"; done
 else
-    THRESHOLD_MINUTES=0
-    THRESHOLD_TIME_DERIVED="00:00:00"
+    if [[ $NEEDS_THRESHOLD -eq 1 ]]; then
+        THRESHOLD_MINUTES=$(python3 - "$CONFIG" <<'PYEOF'
+import sys, yaml
+cfg = yaml.safe_load(open(sys.argv[1]))
+print(cfg["global"]["threshold_search"]["max_runtime_minutes"])
+PYEOF
+        )
+        THRESHOLD_HOURS=$((THRESHOLD_MINUTES / 60))
+        THRESHOLD_REMAINDER_MINUTES=$((THRESHOLD_MINUTES % 60))
+        THRESHOLD_TIME_DERIVED=$(printf "%02d:%02d:00" "$THRESHOLD_HOURS" "$THRESHOLD_REMAINDER_MINUTES")
+    else
+        THRESHOLD_MINUTES=0
+        THRESHOLD_TIME_DERIVED="00:00:00"
+    fi
     N_SCENARIOS=$(python3 - "$CONFIG" <<'PYEOF'
 import sys
 from pipeline.config.loader import load_config
@@ -106,7 +123,11 @@ print(len(names))
 PYEOF
     )
     SCENARIOS=()
-    echo "  Mode      : parameter_sweep (threshold search will be skipped)"
+    if [[ $NEEDS_THRESHOLD -eq 1 ]]; then
+        echo "  Mode      : calibrated_parameter_sweep (threshold search required)"
+    else
+        echo "  Mode      : parameter_sweep (threshold search will be skipped)"
+    fi
     echo "  Expanded scenarios: $N_SCENARIOS"
 fi
 echo ""
@@ -143,7 +164,22 @@ for var in SLURM_ACCOUNT SLURM_PARTITION SLURM_MEM SLURM_GPUS SLURM_CPUS SLURM_T
     fi
 done
 
-THRESHOLD_TIME="${THRESHOLD_TIME:-$THRESHOLD_TIME_DERIVED}"
+_time_to_seconds() {
+    local h m s
+    IFS=: read -r h m s <<<"$1"
+    h="${h:-0}"
+    m="${m:-0}"
+    s="${s:-0}"
+    echo $((10#$h * 3600 + 10#$m * 60 + 10#$s))
+}
+
+if [[ -n "${THRESHOLD_TIME:-}" ]]; then
+    if [[ "$(_time_to_seconds "$THRESHOLD_TIME")" -lt "$(_time_to_seconds "$THRESHOLD_TIME_DERIVED")" ]]; then
+        THRESHOLD_TIME="$THRESHOLD_TIME_DERIVED"
+    fi
+else
+    THRESHOLD_TIME="$THRESHOLD_TIME_DERIVED"
+fi
 SCENARIO_TIME="${SCENARIO_TIME:-$SLURM_TIME}"
 
 RUNS_BASE_DIR="${RUNS_BASE_DIR:-$TETYDA_RUNS_BASE}"
@@ -267,7 +303,7 @@ else
     SCENARIO_ARRAY_SPEC=""
 fi
 
-if [[ $IS_SWEEP -eq 1 ]]; then
+if [[ $SKIP_THRESHOLD -eq 1 ]]; then
     THRESHOLD_JOB=""
     THRESHOLD_DEP_ID=""
     if [[ $DRY_RUN -eq 1 ]]; then
@@ -303,7 +339,7 @@ else
     THRESHOLD_DEP_ID="$(_dependency_id "$THRESHOLD_JOB")"
 fi
 
-if [[ $IS_SWEEP -eq 1 ]]; then
+if [[ $SKIP_THRESHOLD -eq 1 ]]; then
     if [[ $SCENARIO_ARRAY_ENABLED -eq 0 ]]; then
         SCENARIO_ARRAY_JOB=""
     elif [[ $DRY_RUN -eq 1 ]]; then
@@ -445,7 +481,7 @@ echo "========================================"
 if [[ $DRY_RUN -eq 1 ]]; then
     echo " Dry run complete."
     echo " Planned Slurm dependencies:"
-    if [[ $IS_SWEEP -eq 1 ]]; then
+    if [[ $SKIP_THRESHOLD -eq 1 ]]; then
         echo "   scenario array + last singleton -> finalize  (parameter_sweep; no threshold job)"
     else
         echo "   threshold_search -> scenario array + last singleton -> finalize"
@@ -455,7 +491,7 @@ elif [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
 else
     echo " Pipeline submitted."
     echo " Slurm dependencies will run stages in order:"
-    if [[ $IS_SWEEP -eq 1 ]]; then
+    if [[ $SKIP_THRESHOLD -eq 1 ]]; then
         echo "   scenario array + last singleton -> finalize  (parameter_sweep; no threshold job)"
     else
         echo "   threshold_search -> scenario array + last singleton -> finalize"
@@ -465,7 +501,7 @@ fi
 echo ""
 echo " Run dir : $RUN_DIR"
 if [[ $DRY_RUN -eq 0 ]]; then
-    if [[ $IS_SWEEP -eq 1 ]]; then
+    if [[ $SKIP_THRESHOLD -eq 1 ]]; then
         ALL_JOB_IDS="${SCENARIO_DEP_ID//:/,},$(_dependency_id "$FINALIZE_JOB")"
         echo " Logs    : $LOGS_DIR"
         if [[ -n "${SCENARIO_ARRAY_JOB:-}" ]]; then

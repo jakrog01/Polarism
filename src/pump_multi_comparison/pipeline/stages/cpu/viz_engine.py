@@ -138,6 +138,7 @@ def generate_field_png(
     extent: list[float],
     data_dir: str,
     results_dir: str,
+    clim: tuple[float, float] | None = None,
 ) -> None:
     """Generate a snapshot grid PNG with a scalar trace for *field_key*.
 
@@ -217,8 +218,11 @@ def generate_field_png(
     fig = plt.figure(figsize=(4.5 * n_cols, 4 * n_rows), constrained_layout=True)
     gs = GridSpec(n_rows, n_cols, figure=fig, height_ratios=height_ratios)
 
-    vmin = min(s.min() for s in snapshots)
-    vmax = max(s.max() for s in snapshots)
+    if clim is not None:
+        vmin, vmax = float(clim[0]), float(clim[1])
+    else:
+        vmin = min(s.min() for s in snapshots)
+        vmax = max(s.max() for s in snapshots)
     if vmax <= vmin:
         vmax = vmin + 1e-12
     norm = _make_norm(spec, vmin, vmax)

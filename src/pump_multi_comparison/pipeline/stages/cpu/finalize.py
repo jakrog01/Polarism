@@ -32,7 +32,7 @@ from pipeline.stages.cpu.viz_engine import (
 
 
 _PROBE5_CSV_COLUMNS = [
-    "scenario", "probe_delay_ps", "probe_energy", "ring_energy",
+    "scenario", "probe_delay_ps", "probe_energy", "ring_energy", "ring_scale",
     "square_side_um", "sigma_space", "pump_end_ps",
     "central_roi_peak_psi_sq", "central_roi_peak_emission",
     "central_roi_peak_nR", "t_peak_emission_ps",
@@ -59,6 +59,24 @@ def _load_fringe_json(run_dir: str, scenario_name: str) -> dict | None:
         return None
     with open(path) as f:
         return json.load(f)
+
+
+def _probe5_threshold_criterion(run_dir: str) -> float:
+    """Return the strict psi² criterion used for probe5 condensation labels."""
+    path = os.path.join(run_dir, "threshold_result.json")
+    if not os.path.isfile(path):
+        return _PROBE5_THRESHOLD_CRITERION
+    try:
+        with open(path) as f:
+            threshold = json.load(f)
+        return float(
+            (threshold.get("calibration") or {}).get(
+                "condensation_psi_sq_threshold",
+                _PROBE5_THRESHOLD_CRITERION,
+            )
+        )
+    except (TypeError, ValueError, OSError, json.JSONDecodeError):
+        return _PROBE5_THRESHOLD_CRITERION
 
 
 def _load_sidecar_roi_peaks(
@@ -245,6 +263,84 @@ def _generate_probe5_heatmap(
     plt.close(fig)
 
 
+def _unique_float_values(rows: list[dict], key: str) -> list[float]:
+    values: set[float] = set()
+    for row in rows:
+        value = row.get(key)
+        if value is None:
+            continue
+        try:
+            fvalue = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(fvalue):
+            values.add(fvalue)
+    return sorted(values)
+
+
+def _compact_float_label(value: float) -> str:
+    text = f"{float(value):.6g}"
+    return text.replace("-", "m").replace(".", "p")
+
+
+def _generate_probe5_ring_heatmap(
+    rows: list[dict],
+    results_dir: str,
+    metric: str,
+    filename: str,
+    title: str,
+) -> None:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+
+    x_key = "ring_scale"
+    x_values = _unique_float_values(rows, x_key)
+    x_label = "ring scale"
+    if not x_values:
+        x_key = "ring_energy"
+        x_values = _unique_float_values(rows, x_key)
+        x_label = "ring energy"
+
+    probe_energies = _unique_float_values(rows, "probe_energy")
+    if not x_values or not probe_energies:
+        return
+
+    z = np.full((len(probe_energies), len(x_values)), float("nan"))
+    x_idx = {x: i for i, x in enumerate(x_values)}
+    e_idx = {e: i for i, e in enumerate(probe_energies)}
+
+    for row in rows:
+        x = row.get(x_key)
+        e = row.get("probe_energy")
+        v = row.get(metric)
+        if x is None or e is None or v is None:
+            continue
+        try:
+            xf = float(x)
+            ef = float(e)
+            vf = float(v)
+        except (TypeError, ValueError):
+            continue
+        if xf in x_idx and ef in e_idx and np.isfinite(vf):
+            z[e_idx[ef], x_idx[xf]] = vf
+
+    fig, ax = plt.subplots(
+        figsize=(max(6, len(x_values) * 0.55), max(4, len(probe_energies) * 0.45))
+    )
+    im = ax.pcolormesh(x_values, probe_energies, z, shading="nearest", cmap="hot")
+    plt.colorbar(im, ax=ax, label=metric)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("probe energy")
+    ax.set_title(title)
+    fig.tight_layout()
+    plt.savefig(os.path.join(results_dir, filename), dpi=150)
+    plt.close(fig)
+
+
 def _generate_probe5_selected_cases(rows: list[dict], results_dir: str) -> None:
     above = [r for r in rows if r.get("crossed_threshold")]
     below = [
@@ -270,6 +366,28 @@ def _generate_probe5_selected_cases(rows: list[dict], results_dir: str) -> None:
             below, key=lambda r: float(r.get("central_roi_peak_psi_sq") or 0.0)
         )
 
+    probe_rows = [r for r in rows if float(r.get("probe_energy") or 0.0) > 0.0]
+    ring_only_rows = [r for r in rows if float(r.get("probe_energy") or 0.0) == 0.0]
+    above_probe = [r for r in probe_rows if r.get("crossed_threshold")]
+    below_probe = [
+        r for r in probe_rows
+        if not r.get("crossed_threshold")
+        and np.isfinite(float(r.get("central_roi_peak_psi_sq", float("nan"))))
+    ]
+    if above_probe:
+        cases["lowest_ring_above_threshold"] = min(
+            above_probe, key=lambda r: float(r.get("ring_energy") or float("inf"))
+        )
+    if below_probe:
+        cases["highest_ring_below_threshold"] = max(
+            below_probe, key=lambda r: float(r.get("ring_energy") or 0.0)
+        )
+    if ring_only_rows:
+        cases["ring_only_max_response"] = max(
+            ring_only_rows,
+            key=lambda r: float(r.get("central_roi_peak_psi_sq") or 0.0),
+        )
+
     atomic_write_json(
         os.path.join(results_dir, "selected_probe5_threshold_cases.json"), cases
     )
@@ -278,6 +396,7 @@ def _generate_probe5_selected_cases(rows: list[dict], results_dir: str) -> None:
 def _generate_probe5_summary(
     scenarios: list[str], run_dir: str, results_dir: str
 ) -> None:
+    threshold_criterion = _probe5_threshold_criterion(run_dir)
     rows: list[dict] = []
     for name in scenarios:
         meta = load_scenario_meta(run_dir, name)
@@ -299,6 +418,7 @@ def _generate_probe5_summary(
             "probe_delay_ps": probe_delay,
             "probe_energy": float(sweep.get("probe_energy", float("nan"))),
             "ring_energy": float(sweep.get("ring_energy", float("nan"))),
+            "ring_scale": float(sweep.get("ring_scale", float("nan"))),
             "square_side_um": float(sweep.get("square_side", float("nan"))),
             "sigma_space": float(sweep.get("sigma_space", float("nan"))),
             "pump_end_ps": float(sweep.get("pump_end_ps", float("nan"))),
@@ -317,7 +437,7 @@ def _generate_probe5_summary(
         }
         row["crossed_threshold"] = (
             np.isfinite(row["central_roi_peak_psi_sq"])
-            and row["central_roi_peak_psi_sq"] > _PROBE5_THRESHOLD_CRITERION
+            and row["central_roi_peak_psi_sq"] > threshold_criterion
         )
         rows.append(row)
 
@@ -334,20 +454,51 @@ def _generate_probe5_summary(
     atomic_write_json(json_path, rows)
 
     try:
-        _generate_probe5_heatmap(
-            rows,
-            results_dir,
-            "central_roi_peak_psi_sq",
-            "probe5_threshold_heatmap_psi_sq.png",
-            f"Probe5 central |ψ|² peak  (threshold={_PROBE5_THRESHOLD_CRITERION})",
-        )
-        _generate_probe5_heatmap(
-            rows,
-            results_dir,
-            "central_roi_peak_emission",
-            "probe5_threshold_heatmap_emission.png",
-            "Probe5 central emission peak",
-        )
+        ring_values = _unique_float_values(rows, "ring_energy")
+        delay_values = _unique_float_values(rows, "probe_delay_ps")
+        if len(ring_values) > 1:
+            for delay in delay_values:
+                delay_rows = [
+                    r for r in rows
+                    if abs(float(r.get("probe_delay_ps", float("nan"))) - delay) < 1e-9
+                ]
+                suffix = (
+                    f"_d{_compact_float_label(delay)}"
+                    if len(delay_values) > 1
+                    else ""
+                )
+                _generate_probe5_ring_heatmap(
+                    delay_rows,
+                    results_dir,
+                    "central_roi_peak_psi_sq",
+                    f"probe5_ring_sweep_heatmap_psi_sq{suffix}.png",
+                    (
+                        "Probe5 central |ψ|² peak vs ring strength"
+                        f"  (threshold={threshold_criterion})"
+                    ),
+                )
+                _generate_probe5_ring_heatmap(
+                    delay_rows,
+                    results_dir,
+                    "central_roi_peak_emission",
+                    f"probe5_ring_sweep_heatmap_emission{suffix}.png",
+                    "Probe5 central emission peak vs ring strength",
+                )
+        else:
+            _generate_probe5_heatmap(
+                rows,
+                results_dir,
+                "central_roi_peak_psi_sq",
+                "probe5_threshold_heatmap_psi_sq.png",
+                f"Probe5 central |ψ|² peak  (threshold={threshold_criterion})",
+            )
+            _generate_probe5_heatmap(
+                rows,
+                results_dir,
+                "central_roi_peak_emission",
+                "probe5_threshold_heatmap_emission.png",
+                "Probe5 central emission peak",
+            )
     except Exception as e:
         print(f"  WARNING: probe5 heatmap generation failed: {e}", file=sys.stderr)
 

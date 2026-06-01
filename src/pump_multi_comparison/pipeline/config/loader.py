@@ -27,6 +27,14 @@ _UNOPS: dict[type, Any] = {
     ast.UAdd: _op.pos,
     ast.USub: _op.neg,
 }
+_POWER_EXPR_RE = re.compile(
+    r"^\s*([0-9]*\.?[0-9]*)\s*"
+    r"(P(?:_(?:ring|probe|assisted|assisted_probe|probe_assisted|"
+    r"assisted_ring|ring_assisted))?"
+    r"|P(?:ring|probe|assisted|assistedprobe|probeassisted|"
+    r"assistedring|ringassisted))\s*$",
+    re.IGNORECASE,
+)
 
 
 def _eval_arith(node: ast.expr, namespace: dict[str, float]) -> float:
@@ -62,10 +70,18 @@ def load_config(path: str) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
-def resolve_power(expr: str | float | None, p_threshold: float) -> float:
+def resolve_power(
+    expr: str | float | None,
+    p_threshold: float,
+    refs: dict[str, float] | None = None,
+) -> float:
     """Resolve a power expression to a float.
 
     Supports numeric literals and fractional-P notation such as ``"0.6P"``.
+    Optional named references ``P_ring``, ``P_probe`` and
+    ``P_assisted_ring`` are used by probe5 calibration runs where the ring,
+    center-probe, and center-assisted ring thresholds are measured
+    independently.  Plain ``P`` remains the legacy threshold alias.
 
     Parameters
     ----------
@@ -73,6 +89,10 @@ def resolve_power(expr: str | float | None, p_threshold: float) -> float:
         Power value or expression.  ``None`` returns *p_threshold* unchanged.
     p_threshold : float
         Reference threshold power.
+    refs : dict, optional
+        Additional reference powers.  Recognised keys are ``P_ring``,
+        ``P_probe`` and ``P_assisted_ring``; ``*_threshold`` names are
+        accepted as threshold-result aliases.
 
     Returns
     -------
@@ -84,10 +104,43 @@ def resolve_power(expr: str | float | None, p_threshold: float) -> float:
     if isinstance(expr, (int, float)):
         return float(expr)
     if isinstance(expr, str):
-        m = re.match(r"^\s*([0-9]*\.?[0-9]*)\s*P\s*$", expr)
+        m = _POWER_EXPR_RE.match(expr)
         if m:
             coeff_str = m.group(1)
-            return (float(coeff_str) if coeff_str else 1.0) * p_threshold
+            coeff = float(coeff_str) if coeff_str else 1.0
+            symbol = m.group(2).lower().replace("_", "")
+            power_refs = refs or {}
+            if symbol == "p":
+                reference = p_threshold
+            elif symbol == "pring":
+                reference = power_refs.get(
+                    "P_ring",
+                    power_refs.get("P_ring_threshold", p_threshold),
+                )
+            elif symbol == "pprobe":
+                reference = power_refs.get(
+                    "P_probe",
+                    power_refs.get("P_probe_threshold", p_threshold),
+                )
+            elif symbol in {"passisted", "passistedprobe", "pprobeassisted"}:
+                reference = power_refs.get(
+                    "P_assisted_probe",
+                    power_refs.get(
+                        "P_assisted_probe_threshold",
+                        power_refs.get("P_probe_assisted_threshold", p_threshold),
+                    ),
+                )
+            elif symbol in {"passistedring", "pringassisted"}:
+                reference = power_refs.get(
+                    "P_assisted_ring",
+                    power_refs.get(
+                        "P_assisted_ring_threshold",
+                        power_refs.get("P_ring_assisted_threshold", p_threshold),
+                    ),
+                )
+            else:
+                raise ValueError(f"Unknown power reference {m.group(2)!r}")
+            return coeff * float(reference)
         return float(expr)
     raise ValueError(f"Invalid power expression: {expr!r}")
 

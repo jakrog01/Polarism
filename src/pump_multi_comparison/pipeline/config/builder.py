@@ -178,10 +178,11 @@ def _apply_power_modifiers(
     tags: list[str],
     modifiers: list[dict[str, Any]],
     p_th: float,
+    power_refs: dict[str, float] | None = None,
 ) -> float:
     for mod in modifiers:
         if laser_id in mod.get("ids", []) or any(t in tags for t in mod.get("tags", [])):
-            return resolve_power(mod.get("power"), p_th)
+            return resolve_power(mod.get("power"), p_th, power_refs)
     return base_power
 
 
@@ -237,6 +238,26 @@ def build_scenario_lasers(
     """
     defaults = get_laser_defaults({"global": global_cfg})
     p_th: float = threshold["P_threshold"]
+    power_refs = {
+        "P_ring": float(threshold.get("P_ring_threshold", p_th)),
+        "P_ring_threshold": float(threshold.get("P_ring_threshold", p_th)),
+        "P_probe": float(threshold.get("P_probe_threshold", p_th)),
+        "P_probe_threshold": float(threshold.get("P_probe_threshold", p_th)),
+        "P_assisted_probe": float(threshold.get("P_assisted_probe_threshold", p_th)),
+        "P_assisted_probe_threshold": float(
+            threshold.get("P_assisted_probe_threshold", p_th)
+        ),
+        "P_probe_assisted_threshold": float(
+            threshold.get("P_probe_assisted_threshold", p_th)
+        ),
+        "P_assisted_ring": float(threshold.get("P_assisted_ring_threshold", p_th)),
+        "P_assisted_ring_threshold": float(
+            threshold.get("P_assisted_ring_threshold", p_th)
+        ),
+        "P_ring_assisted_threshold": float(
+            threshold.get("P_ring_assisted_threshold", p_th)
+        ),
+    }
     th_sigma_time: float = threshold.get("sigma_time", 1.0)
     th_pulse_sep: float = threshold.get("pulse_separation", 10.0)
 
@@ -269,9 +290,11 @@ def build_scenario_lasers(
     lasers: list[Any] = []
     for i, ldef in enumerate(laser_defs):
         merged = {**defaults, **ldef}
-        base_power = resolve_power(merged.get("power"), p_th)
+        base_power = resolve_power(merged.get("power"), p_th, power_refs)
         tags: list[str] = ldef.get("tags") or []
-        power = _apply_power_modifiers(base_power, ids[i], tags, power_modifiers, p_th)
+        power = _apply_power_modifiers(
+            base_power, ids[i], tags, power_modifiers, p_th, power_refs
+        )
         sigma_time = float(merged.get("sigma_time", th_sigma_time))
         raw_sep = merged.get("pulse_separation", None)
         if raw_sep is None:

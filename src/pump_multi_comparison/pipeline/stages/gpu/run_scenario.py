@@ -12,6 +12,7 @@ Invoked by Slurm as:
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import shutil
@@ -86,6 +87,33 @@ def _make_scratch_dir(run_dir: str, scenario_name: str) -> str:
         )
 
     return run_dir
+
+
+def _effective_sweep_meta(
+    scenario: dict[str, Any],
+    lasers: list[Any],
+    laser_ids: list[str],
+) -> dict[str, Any] | None:
+    sweep = scenario.get("sweep")
+    if not isinstance(sweep, dict):
+        return sweep
+
+    out = copy.deepcopy(sweep)
+    if out.get("mode") != "probe5":
+        return out
+
+    ring_powers = [float(laser.P0) for laser in lasers[:4]]
+    if ring_powers:
+        out["ring_energy"] = ring_powers[0]
+        out["ring_energies"] = ring_powers
+
+    probe_laser_id = str(out.get("probe_laser_id", "probe"))
+    for i, laser_id in enumerate(laser_ids):
+        if laser_id == probe_laser_id and i < len(lasers):
+            out["probe_energy"] = float(lasers[i].P0)
+            break
+
+    return out
 
 
 def _compute_laser_centering(
@@ -230,13 +258,21 @@ def _render_png_artifacts(
     data_dir: str,
     scratch_results_dir: str,
     extent: list[float],
+    clim_overrides: dict[str, tuple[float, float]] | None = None,
 ) -> None:
     """Generate PNG snapshot panels from scratch-local HDF5."""
+    overrides = clim_overrides or {}
     for field_key in FIELD_SPECS:
         print(f"  PNG {field_key} ...", end="", flush=True)
+        clim = overrides.get(field_key)
         try:
             generate_field_png(
-                scenario_name, field_key, extent, data_dir, scratch_results_dir
+                scenario_name,
+                field_key,
+                extent,
+                data_dir,
+                scratch_results_dir,
+                clim=clim,
             )
             print(" done")
         except Exception as e:
@@ -455,7 +491,13 @@ def main() -> None:
     except Exception as e:
         print(f" WARNING: {e}", file=sys.stderr)
     if output_policy.render_snapshots:
-        _render_png_artifacts(scenario_name, scratch_dir, scratch_results_dir, extent)
+        _render_png_artifacts(
+            scenario_name,
+            scratch_dir,
+            scratch_results_dir,
+            extent,
+            clim_overrides=output_policy.animation_clim or None,
+        )
     if output_policy.render_animation:
         print("  animation ...", flush=True)
         try:
@@ -531,6 +573,7 @@ def main() -> None:
         for i, ld in enumerate(scenario.get("lasers", []))
     ]
     centering = _compute_laser_centering(sim_cfg, lasers, laser_ids)
+    sweep_meta = _effective_sweep_meta(scenario, lasers, laser_ids)
 
     first_laser_power_def = (
         getattr(lasers[0], "power_definition", "peak_amplitude") if lasers else "peak_amplitude"
@@ -550,7 +593,7 @@ def main() -> None:
         ),
         "n_lasers": len(lasers),
         "phase_offsets": phases,
-        "sweep": scenario.get("sweep"),
+        "sweep": sweep_meta,
         "grid": {
             "nx": int(sim_cfg.grid.nx),
             "ny": int(sim_cfg.grid.ny),

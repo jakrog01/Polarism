@@ -7,7 +7,11 @@ import os
 import yaml
 
 from pipeline.config.loader import load_config
-from pipeline.config.sweep import expand_parameter_sweep, parameter_sweep_enabled
+from pipeline.config.sweep import (
+    expand_parameter_sweep,
+    parameter_sweep_enabled,
+    probe5_ring_calibration_enabled,
+)
 from pipeline.manifest.io import atomic_write_json, init_manifest
 
 
@@ -24,7 +28,12 @@ def prepare_run(config_path: str, run_dir: str) -> tuple[list[str], str]:
     atomic_write_json(os.path.join(run_dir, "scenario_index.json"), scenario_names)
     init_manifest(run_dir, run_config_path, scenario_names)
 
-    mode = "parameter_sweep" if parameter_sweep_enabled(cfg) else "threshold_search"
+    if probe5_ring_calibration_enabled(cfg):
+        mode = "calibrated_parameter_sweep"
+    elif parameter_sweep_enabled(cfg):
+        mode = "parameter_sweep"
+    else:
+        mode = "threshold_search"
     if threshold_stub:
         atomic_write_json(os.path.join(run_dir, "threshold_result.json"), threshold_stub)
 
@@ -45,4 +54,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
