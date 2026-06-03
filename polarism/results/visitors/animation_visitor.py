@@ -10,7 +10,7 @@ Two usage modes
     ``data_location = "device"`` causes the manager to deliver backend-native
     arrays.
 
-**Direct mode** (pump_multi_comparison pipeline)
+**Direct mode** (polariton_hpc_pipeline pipeline)
     Call :meth:`record_frame` with a raw-fields dict.  ``panel_specs[i].source``
     is the key in that dict and ``transform`` is applied by this visitor.
 

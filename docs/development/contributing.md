@@ -5,7 +5,7 @@ Contributions are easiest to review when physics logic, runtime orchestration, a
 ## Repository conventions
 
 - Keep reusable simulation logic in `polarism/`.
-- Keep Slurm and campaign orchestration in `src/pump_multi_comparison/`.
+- Keep Slurm and campaign orchestration in `src/polariton_hpc_pipeline/`.
 - Do not mix physics kernels with scheduler-specific boilerplate unless the boundary is explicit.
 
 ## Code quality expectations

@@ -1,13 +1,13 @@
-"""Tests for pump_multi_comparison parameter sweep expansion."""
+"""Tests for polariton_hpc_pipeline parameter sweep expansion."""
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
 
-PUMP_MULTI_SRC = Path(__file__).resolve().parents[1] / "src" / "pump_multi_comparison"
-if str(PUMP_MULTI_SRC) not in sys.path:
-    sys.path.insert(0, str(PUMP_MULTI_SRC))
+PIPELINE_SRC = Path(__file__).resolve().parents[1] / "src" / "polariton_hpc_pipeline"
+if str(PIPELINE_SRC) not in sys.path:
+    sys.path.insert(0, str(PIPELINE_SRC))
 
 from pipeline.config.sweep import expand_parameter_sweep
 

@@ -7,7 +7,7 @@ and records only the peak condensate density
 traces.
 
 Use it when the study question is a threshold or one-dimensional response
-curve.  Use `pump_multi_comparison` when the run needs multi-scenario field
+curve.  Use `polariton_hpc_pipeline` when the run needs multi-scenario field
 plots, animations, ROI metrics, or cross-scenario visualization.
 
 ## Entry Point

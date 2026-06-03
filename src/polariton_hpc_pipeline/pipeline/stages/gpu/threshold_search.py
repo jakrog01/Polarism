@@ -43,13 +43,13 @@ from typing import Any
 import numpy as np
 
 from pipeline.config.builder import build_scenario_lasers
-from pipeline.config.sweep import (
-    _PULSE_LASER_TYPES,
-    probe5_assisted_ring_calibration_enabled,
-    probe5_assisted_probe_calibration_enabled,
-    probe5_probe_calibration_enabled,
+from pipeline.config.sweep_utils import PULSE_LASER_TYPES, resolve_laser_type
+from pipeline.experiments.probe5_trap_gate import (
+    build_probe5_calibration_scenarios,
     probe5_ring_calibration_enabled,
-    resolve_laser_type,
+    probe5_probe_calibration_enabled,
+    probe5_assisted_probe_calibration_enabled,
+    probe5_assisted_ring_calibration_enabled,
 )
 from pipeline.config.loader import (
     get_threshold_search_cfg,
@@ -356,188 +356,6 @@ def evaluate_threshold_scenario(
     )
 
 
-def _probe5_ring_calibration_scenario(cfg: dict[str, Any]) -> dict[str, Any] | None:
-    """Build the strict four-spot ring-only calibration scenario."""
-    if not probe5_ring_calibration_enabled(cfg):
-        return None
-
-    global_cfg = cfg["global"]
-    sweep_cfg = global_cfg.get("parameter_sweep", {})
-    probe_laser_id = str(sweep_cfg.get("probe_laser_id", "probe"))
-
-    candidates = [
-        sc for sc in cfg.get("scenarios", [])
-        if (sc.get("sweep") or {}).get("mode") == "probe5"
-    ]
-    source = None
-    for sc in candidates:
-        sweep = sc.get("sweep") or {}
-        try:
-            if (
-                float(sweep.get("ring_scale", -1.0)) == 1.0
-                and float(sweep.get("probe_energy", -1.0)) == 0.0
-            ):
-                source = sc
-                break
-        except (TypeError, ValueError):
-            continue
-    if source is None and candidates:
-        source = candidates[0]
-    if source is None:
-        return None
-
-    scenario = copy.deepcopy(source)
-    scenario["name"] = "probe5_ring_calibration"
-    for ldef in scenario.get("lasers", [])[:4]:
-        ldef["power"] = "P"
-    for ldef in scenario.get("lasers", []):
-        if str(ldef.get("id", "")) == probe_laser_id:
-            ldef["power"] = 0.0
-            ldef["n_pulses"] = 1
-    scenario["sweep"] = {
-        "mode": "probe5_ring_calibration",
-        "source_scenario": source.get("name", "probe5"),
-        "square_side": sweep_cfg.get("square_side"),
-        "probe_laser_id": probe_laser_id,
-    }
-    return scenario
-
-
-def _probe5_probe_calibration_scenario(cfg: dict[str, Any]) -> dict[str, Any] | None:
-    """Build the strict center-probe-only calibration scenario."""
-    if not probe5_probe_calibration_enabled(cfg):
-        return None
-
-    global_cfg = cfg["global"]
-    sweep_cfg = global_cfg.get("parameter_sweep", {})
-    probe_laser_id = str(sweep_cfg.get("probe_laser_id", "probe"))
-
-    candidates = [
-        sc for sc in cfg.get("scenarios", [])
-        if (sc.get("sweep") or {}).get("mode") == "probe5"
-    ]
-    source = None
-    for sc in candidates:
-        sweep = sc.get("sweep") or {}
-        try:
-            if float(sweep.get("ring_scale", -1.0)) == 0.0:
-                source = sc
-                break
-        except (TypeError, ValueError):
-            continue
-    if source is None and candidates:
-        source = candidates[0]
-    if source is None:
-        return None
-
-    scenario = copy.deepcopy(source)
-    scenario["name"] = "probe5_probe_calibration"
-    for ldef in scenario.get("lasers", [])[:4]:
-        ldef["power"] = 0.0
-    for ldef in scenario.get("lasers", []):
-        if str(ldef.get("id", "")) == probe_laser_id:
-            ldef["power"] = "P"
-            ldef["n_pulses"] = 1
-    scenario["sweep"] = {
-        "mode": "probe5_probe_calibration",
-        "source_scenario": source.get("name", "probe5"),
-        "square_side": sweep_cfg.get("square_side"),
-        "probe_laser_id": probe_laser_id,
-    }
-    return scenario
-
-
-def _probe5_assisted_probe_calibration_scenario(
-    cfg: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Build center-probe calibration inside a fixed subthreshold ring trap."""
-    if not probe5_assisted_probe_calibration_enabled(cfg):
-        return None
-
-    global_cfg = cfg["global"]
-    sweep_cfg = global_cfg.get("parameter_sweep", {})
-    probe_laser_id = str(sweep_cfg.get("probe_laser_id", "probe"))
-    ring_cal = sweep_cfg.get("ring_calibration") or {}
-    assisted_cal = sweep_cfg.get("assisted_probe_calibration") or {}
-    ring_fraction = float(
-        assisted_cal.get("ring_fraction", ring_cal.get("safe_fraction", 0.75))
-    )
-
-    candidates = [
-        sc for sc in cfg.get("scenarios", [])
-        if (sc.get("sweep") or {}).get("mode") == "probe5"
-    ]
-    source = None
-    for sc in candidates:
-        sweep = sc.get("sweep") or {}
-        try:
-            if float(sweep.get("ring_scale", -1.0)) == 1.0:
-                source = sc
-                break
-        except (TypeError, ValueError):
-            continue
-    if source is None and candidates:
-        source = candidates[0]
-    if source is None:
-        return None
-
-    scenario = copy.deepcopy(source)
-    scenario["name"] = "probe5_assisted_probe_calibration"
-    for ldef in scenario.get("lasers", [])[:4]:
-        ldef["power"] = f"{ring_fraction:.6g}P_ring"
-    for ldef in scenario.get("lasers", []):
-        if str(ldef.get("id", "")) == probe_laser_id:
-            ldef["power"] = "P"
-            ldef["n_pulses"] = 1
-    scenario["sweep"] = {
-        "mode": "probe5_assisted_probe_calibration",
-        "source_scenario": source.get("name", "probe5"),
-        "square_side": sweep_cfg.get("square_side"),
-        "probe_laser_id": probe_laser_id,
-        "ring_fraction": ring_fraction,
-    }
-    return scenario
-
-
-def _probe5_assisted_ring_calibration_scenario(
-    cfg: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Build ring-strength calibration with a fixed subthreshold center probe."""
-    if not probe5_assisted_ring_calibration_enabled(cfg):
-        return None
-
-    global_cfg = cfg["global"]
-    sweep_cfg = global_cfg.get("parameter_sweep", {})
-    probe_laser_id = str(sweep_cfg.get("probe_laser_id", "probe"))
-    assisted_cal = sweep_cfg.get("assisted_ring_calibration") or {}
-    probe_fraction = float(assisted_cal.get("probe_fraction", 0.75))
-
-    candidates = [
-        sc for sc in cfg.get("scenarios", [])
-        if (sc.get("sweep") or {}).get("mode") == "probe5"
-    ]
-    source = candidates[0] if candidates else None
-    if source is None:
-        return None
-
-    scenario = copy.deepcopy(source)
-    scenario["name"] = "probe5_assisted_ring_calibration"
-    for ldef in scenario.get("lasers", [])[:4]:
-        ldef["power"] = "P"
-    for ldef in scenario.get("lasers", []):
-        if str(ldef.get("id", "")) == probe_laser_id:
-            ldef["power"] = f"{probe_fraction:.6g}P_probe"
-            ldef["n_pulses"] = 1
-    scenario["sweep"] = {
-        "mode": "probe5_assisted_ring_calibration",
-        "source_scenario": source.get("name", "probe5"),
-        "square_side": sweep_cfg.get("square_side"),
-        "probe_laser_id": probe_laser_id,
-        "probe_fraction": probe_fraction,
-    }
-    return scenario
-
-
 def _run_search_loop(
     infra: _SearchInfra,
     power_values: list[float],
@@ -679,10 +497,11 @@ def main() -> None:
     g = cfg["global"]
     ts = get_threshold_search_cfg(cfg)
     defaults = g.get("laser_defaults", {})
-    ring_calibration_scenario = _probe5_ring_calibration_scenario(cfg)
-    probe_calibration_scenario = _probe5_probe_calibration_scenario(cfg)
-    assisted_probe_calibration_scenario = _probe5_assisted_probe_calibration_scenario(cfg)
-    assisted_ring_calibration_scenario = _probe5_assisted_ring_calibration_scenario(cfg)
+    _cal = build_probe5_calibration_scenarios(cfg)
+    ring_calibration_scenario = _cal["ring"]
+    probe_calibration_scenario = _cal["probe"]
+    assisted_probe_calibration_scenario = _cal["assisted_probe"]
+    assisted_ring_calibration_scenario = _cal["assisted_ring"]
     first_scenario: dict[str, Any] | None = (
         ring_calibration_scenario or (cfg.get("scenarios") or [None])[0]
     )
@@ -727,12 +546,12 @@ def main() -> None:
         print(f"  Max pulses     : {n_pulses}")
     non_pulse_types: list[str] = []
     default_laser_type = defaults.get("laser_type", "pulse-gaussian")
-    if default_laser_type not in _PULSE_LASER_TYPES:
+    if default_laser_type not in PULSE_LASER_TYPES:
         non_pulse_types.append(default_laser_type)
     if first_scenario is not None:
         for ldef in first_scenario.get("lasers", []):
             lt = resolve_laser_type(ldef, defaults)
-            if lt not in _PULSE_LASER_TYPES and lt not in non_pulse_types:
+            if lt not in PULSE_LASER_TYPES and lt not in non_pulse_types:
                 non_pulse_types.append(lt)
     if non_pulse_types:
         print(

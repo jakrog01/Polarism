@@ -1,6 +1,6 @@
-# `pump_multi_comparison` Pipeline
+# `polariton_hpc_pipeline` Pipeline
 
-`src/pump_multi_comparison/` is an example HPC workflow built on top of `polarism`. Its purpose is to automate a multi-scenario study on Slurm rather than provide new reusable package primitives.
+`src/polariton_hpc_pipeline/` is an example HPC workflow built on top of `polarism`. Its purpose is to automate a multi-scenario study on Slurm rather than provide new reusable package primitives.
 
 ## What it does
 
@@ -25,7 +25,7 @@ At a high level, the workflow is:
 The supported entry point is:
 
 ```bash
-bash src/pump_multi_comparison/submit.sh [--config config.yaml] [--runs-dir /path/to/runs] [--dry-run]
+bash src/polariton_hpc_pipeline/submit.sh [--config config.yaml] [--runs-dir /path/to/runs] [--dry-run]
 ```
 
 This wrapper owns the run-directory setup and stage polling logic on a Rysy login node. By default it writes runs under `TETYDA_RUNS_BASE`; use `--runs-dir` to override that. The legacy scripts under `legacy/` are kept for reference only and are not part of the main path.
@@ -163,7 +163,7 @@ Bad `animation_clim` entries produce a warning and are ignored.
 
 ## Scenario configuration
 
-The current `src/pump_multi_comparison/config.yaml` example is a GaAs/AlGaAs
+The current `src/polariton_hpc_pipeline/config.yaml` example is a GaAs/AlGaAs
 single-spot pulsed campaign for the `quadratic-double` reservoir model.  It is
 not a dimensionless toy preset: the interaction constants, lifetime scales,
 pump normalization, spot size, and solver choice are intended to be read
@@ -349,7 +349,7 @@ window.
 
 ### Square-4 spatiotemporal preflight
 
-`src/pump_multi_comparison/scenarios/config_spatiotemporal_square4.yaml` is the
+`src/polariton_hpc_pipeline/scenarios/config_spatiotemporal_square4.yaml` is the
 current square-4 preflight for the spiking-paper campaign.  It uses four
 synchronous pulsed Gaussian spots on the corners of a square, scans square side
 length from `8.0` to `32.0 um`, and evaluates pulse energies
@@ -358,7 +358,7 @@ length from `8.0` to `32.0 um`, and evaluates pulse energies
 Run it from a Rysy login node:
 
 ```bash
-cd ~/polaritonSNN/PolaritonSNN/src/pump_multi_comparison
+cd ~/polaritonSNN/PolaritonSNN/src/polariton_hpc_pipeline
 bash submit.sh --config scenarios/config_spatiotemporal_square4.yaml --dry-run
 bash submit.sh --config scenarios/config_spatiotemporal_square4.yaml
 ```
@@ -369,7 +369,7 @@ outputs are the scalar sweep heatmaps, ROI traces, and fringe summaries.
 
 ## Current artifact-diagnostics workflow
 
-Local validation campaigns are kept under `src/pump_multi_comparison/scenarios/`
+Local validation campaigns are kept under `src/polariton_hpc_pipeline/scenarios/`
 and ignored by Git.  One such local campaign,
 `scenarios/config_artifact_mitigation_validation.yaml`, diagnoses the diagonal
 X/star-like spatial pattern that can appear in `|psi|^2`.
@@ -384,7 +384,7 @@ The config does not change the physical GPE during time evolution. It compares:
 Run it from a Rysy login node:
 
 ```bash
-cd ~/polaritonSNN/PolaritonSNN/src/pump_multi_comparison
+cd ~/polaritonSNN/PolaritonSNN/src/polariton_hpc_pipeline
 bash submit.sh --config scenarios/config_artifact_mitigation_validation.yaml --dry-run
 bash submit.sh --config scenarios/config_artifact_mitigation_validation.yaml
 ```

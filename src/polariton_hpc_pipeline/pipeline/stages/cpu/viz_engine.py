@@ -426,7 +426,7 @@ def generate_summary(
         ax_sc.legend(fontsize=10, framealpha=0.9)
         ax_sc.grid(True, alpha=0.3)
 
-    fig.suptitle("Multi-Pump Comparison Summary", fontsize=14, fontweight="bold")
+    fig.suptitle("Polariton HPC Pipeline Summary", fontsize=14, fontweight="bold")
     out_path = os.path.join(results_dir, "summary.png")
     os.makedirs(results_dir, exist_ok=True)
     fig.savefig(out_path, dpi=PLOT_DPI)

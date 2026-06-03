@@ -94,7 +94,7 @@ The reusable storage module also exports append-only HDF5 helpers used by the ex
 | `compute_batch_size` | GPU-memory-aware batch-depth heuristic |
 | `create_hdf5_writer` | backend-selection factory for CPU vs GPU runs |
 
-These helpers are separate from the visitor-based `cfg.result` path. They are intended for workflows that stream explicit field snapshots, such as `src/pump_multi_comparison/`.
+These helpers are separate from the visitor-based `cfg.result` path. They are intended for workflows that stream explicit field snapshots, such as `src/polariton_hpc_pipeline/`.
 
 ## Why this abstraction matters
 

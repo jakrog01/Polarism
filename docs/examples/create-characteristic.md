@@ -114,5 +114,5 @@ kept in the map data and marked separately in the generated figures.
 Use this pipeline for coarse two-axis campaign design, for example choosing a
 reasonable pulse-energy and separation region before launching heavier
 multi-scenario runs.  If the physics question depends on field morphology,
-animations, ROI traces, or fringe metrics, use `pump_multi_comparison` after
+animations, ROI traces, or fringe metrics, use `polariton_hpc_pipeline` after
 the scalar map has narrowed the parameter range.

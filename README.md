@@ -11,7 +11,7 @@ The repository is organized around one clear boundary:
 - `src/` contains example applications and research workflows that use
   `polarism` as a library. These are not the core engine; they show how the
   engine is used for concrete studies, including the Slurm/Rysy
-  `pump_multi_comparison` pipeline.
+  `polariton_hpc_pipeline` pipeline.
 
 The full documentation site is in `docs/` and is configured by `mkdocs.yml`.
 
@@ -32,7 +32,7 @@ polarism/                     Physics engine and reusable Python package
 tests/                        CPU, compliance, and benchmark-style tests
 
 src/                          Example applications built on `polarism`
-  pump_multi_comparison/      Slurm-oriented Rysy parameter-sweep pipeline
+  polariton_hpc_pipeline/      Slurm-oriented Rysy parameter-sweep pipeline
   dot_response_fit/           Dot-response analysis workflow
   threshold_finder/           Threshold-search workflow
   create_characteristic/      2-D pulse-energy/separation characteristic maps
@@ -112,11 +112,11 @@ More examples are documented in
 
 ## Rysy / Slurm Pipeline
 
-The active HPC campaign example lives in `src/pump_multi_comparison/`.
+The active HPC campaign example lives in `src/polariton_hpc_pipeline/`.
 Submit from a Rysy login node:
 
 ```bash
-cd ~/polaritonSNN/PolaritonSNN/src/pump_multi_comparison
+cd ~/polaritonSNN/PolaritonSNN/src/polariton_hpc_pipeline
 bash submit.sh --config config.yaml --dry-run
 bash submit.sh --config config.yaml
 ```
@@ -133,9 +133,9 @@ This workflow snapshots the config into a timestamped run directory under
 inline, and copies lightweight artifacts back to persistent storage. The
 pipeline entry point and resource model are documented in:
 
-- [`src/pump_multi_comparison/README.md`](src/pump_multi_comparison/README.md)
-- [`src/pump_multi_comparison/cluster/README.md`](src/pump_multi_comparison/cluster/README.md)
-- [`src/pump_multi_comparison/scenarios/README.md`](src/pump_multi_comparison/scenarios/README.md)
+- [`src/polariton_hpc_pipeline/README.md`](src/polariton_hpc_pipeline/README.md)
+- [`src/polariton_hpc_pipeline/cluster/README.md`](src/polariton_hpc_pipeline/cluster/README.md)
+- [`src/polariton_hpc_pipeline/scenarios/README.md`](src/polariton_hpc_pipeline/scenarios/README.md)
 
 ## Current Production Conventions
 
@@ -198,7 +198,7 @@ Key entry points:
   the relevant `src/*/` pipeline and `cluster/` directories.
 - Do not commit large run outputs. Persistent Rysy outputs belong under the run
   base configured in `slurm.env`; local campaign YAMLs belong in
-  `src/pump_multi_comparison/scenarios/`.
+  `src/polariton_hpc_pipeline/scenarios/`.
 - Use `.venv/bin/python`, `.venv/bin/pytest`, and `.venv/bin/mkdocs` in this
   repository.
 

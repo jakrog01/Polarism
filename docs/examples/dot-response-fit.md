@@ -25,7 +25,7 @@ At a high level, the workflow is:
 6. run one full simulation job per image using the best `sigma_space`
 7. write per-image plots and a final summary
 
-This is intentionally different from `pump_multi_comparison`: the unit of work
+This is intentionally different from `polariton_hpc_pipeline`: the unit of work
 is an image case, and the fit score is an aggregate over the image batch.
 
 ## Entry Point
@@ -226,4 +226,4 @@ Use this pipeline when you want to evaluate whether one fitted pump spot size
 can reproduce the time-response shape across a batch of encoded MNIST images.
 
 If you only need generic multi-scenario Slurm orchestration, use
-`pump_multi_comparison` instead.
+`polariton_hpc_pipeline` instead.

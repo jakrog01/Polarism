@@ -41,7 +41,7 @@ def prepare_run(config_path: str, run_dir: str) -> tuple[list[str], str]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prepare pump_multi_comparison run dir")
+    parser = argparse.ArgumentParser(description="Prepare polariton_hpc_pipeline run dir")
     parser.add_argument("--config", required=True)
     parser.add_argument("--run-dir", required=True)
     args = parser.parse_args()

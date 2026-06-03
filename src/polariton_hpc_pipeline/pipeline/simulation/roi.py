@@ -1,4 +1,4 @@
-"""Circular ROI scalar metrics for pump-multi simulations."""
+"""Circular ROI scalar metrics for polariton HPC pipeline simulations."""
 from __future__ import annotations
 
 from dataclasses import dataclass

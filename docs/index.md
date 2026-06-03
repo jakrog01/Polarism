@@ -16,7 +16,7 @@ Polarism is a **Gross-Pitaevskii Equation solver** oriented toward fast 2-D driv
 The repository is split along clean responsibility boundaries:
 
 - `polarism/` contains the reusable simulation library: configuration dataclasses, solver implementations, result handling, and the `SimulationController` class.
-- `src/` contains example HPC-oriented workflows built on top of `polarism`, including `pump_multi_comparison`, `threshold_finder`, `create_characteristic`, and `dot_response_fit`. They are not the core package API and are best read as reference workflows.
+- `src/` contains example HPC-oriented workflows built on top of `polarism`, including `polariton_hpc_pipeline`, `threshold_finder`, `create_characteristic`, and `dot_response_fit`. They are not the core package API and are best read as reference workflows.
 - `tests/` contains correctness, compliance, and benchmark-style validation suites.
 - `docs/` and `mkdocs.yml` define the documentation site and generated API reference.
 

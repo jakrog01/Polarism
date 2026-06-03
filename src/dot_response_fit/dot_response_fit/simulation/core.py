@@ -1,7 +1,7 @@
 """Re-export of ``pipeline.simulation.core`` for backward compatibility.
 
 The dot-response-fit pipeline now delegates full spatial simulation to
-the shared kernel in ``src/pump_multi_comparison/pipeline/simulation/core.py``.
+the shared kernel in ``src/polariton_hpc_pipeline/pipeline/simulation/core.py``.
 This avoids maintaining two diverging copies of the simulation loop.
 
 HDF5 field naming follows ``pipeline.simulation.core``:

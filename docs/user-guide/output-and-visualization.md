@@ -73,7 +73,7 @@ The controller builds result nodes for quantities such as:
 
 ## Appendable HDF5 pipeline output
 
-The example pipeline in `src/pump_multi_comparison/` does not use `cfg.result.save_hdf5`. Instead, it writes scenario outputs through the appendable HDF5 utilities exported from `polarism.results.storage`.
+The example pipeline in `src/polariton_hpc_pipeline/` does not use `cfg.result.save_hdf5`. Instead, it writes scenario outputs through the appendable HDF5 utilities exported from `polarism.results.storage`.
 
 That path now behaves as follows:
 
@@ -86,7 +86,7 @@ This separation keeps the reusable storage implementation in `polarism.results.s
 
 ## Pipeline animations
 
-`src/pump_multi_comparison/` renders scenario movies from the scratch-local HDF5
+`src/polariton_hpc_pipeline/` renders scenario movies from the scratch-local HDF5
 file after the numerical simulation finishes.  When `output.render_animation:
 true`, each scenario job:
 
@@ -122,7 +122,7 @@ Malformed `animation_clim` entries are ignored with a warning.
 
 ## Pipeline outputs
 
-The Slurm pipeline in `src/pump_multi_comparison/` writes a richer run directory that includes:
+The Slurm pipeline in `src/polariton_hpc_pipeline/` writes a richer run directory that includes:
 
 - configuration snapshots
 - scenario metadata JSON files

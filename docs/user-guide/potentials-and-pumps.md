@@ -2,7 +2,7 @@
 
 Polarism separates the external potential, pump profile, and reservoir model so you can change one layer without rewriting the others.
 
-The `polarism` package owns the reusable physics components described on this page. The `src/pump_multi_comparison/` tree is an example workflow that assembles these components for batch studies on Slurm.
+The `polarism` package owns the reusable physics components described on this page. The `src/polariton_hpc_pipeline/` tree is an example workflow that assembles these components for batch studies on Slurm.
 
 ## Available potentials
 
@@ -120,7 +120,7 @@ delivered dose in long pulse trains or when comparing campaigns with different
 scalar output strides.
 
 **Migration note.** Old configs without `power_definition` default to `peak_amplitude` and are unaffected.
-All production configs in `src/pump_multi_comparison/` are updated to `pulse_energy`.
+All production configs in `src/polariton_hpc_pipeline/` are updated to `pulse_energy`.
 
 For a single pump, configure the values directly on `cfg.laser`:
 

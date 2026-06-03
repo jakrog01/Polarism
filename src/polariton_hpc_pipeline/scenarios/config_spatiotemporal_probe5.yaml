@@ -1,0 +1,171 @@
+global:
+  grid:
+    nx: 1024
+    ny: 1024
+    lx: 160.0
+    ly: 160.0
+    grid_type: periodic
+
+  physics:
+    hbar: 0.6582119514
+    m_eff: 0.32
+    gamma_C: 0.1
+    gamma_R: 0.15
+    gamma_I: 0.001
+    g_C: 0.00024
+    g_R: 0.0006
+    g_I: 0.0
+    R: 0.023
+    kappa: 0.05
+    init_eps: 0.001
+    init_mode: filtered_complex_gaussian
+    init_k_cutoff_um: 3.0
+    init_seed: 42
+    kinetic_relaxation_eta: 0.0
+    reservoir_diffusion_I: 0.0
+    reservoir_diffusion_R: 0.0
+
+  boundary_condition:
+    absorption: cap
+    profile_type: sin2
+    strength: 5.0
+    mask_width_percent: 0.2
+
+  reservoir:
+    reservoir_type: quadratic-double
+
+  solver:
+    total_time: 200.0
+    dt: 0.01
+    method: ifrk4-fft-cuda
+    laplacian: five-point
+
+  laser_defaults:
+    laser_type: pulse-gaussian
+    sigma_space: 2.0
+    sigma_time: 1.5
+    cutoff_sigma: 3.0
+    power_definition: pulse_energy
+
+  threshold_search:
+    # Stage 1 calibrates the references needed to keep the center probe fixed
+    # and subthreshold while only the four surrounding pumps vary:
+    #   P_ring           - four corner pumps only
+    #   P_probe          - center probe only
+    #   P_assisted_ring  - ring strength threshold with center fixed at
+    #                       0.80P_probe, measured in the center-D ROI
+    power_values: [100.0, 200.0, 300.0, 400.0, 500.0, 600.0, 700.0, 800.0,
+                   900.0, 1000.0, 1100.0, 1200.0, 1300.0, 1400.0, 1500.0,
+                   1600.0, 1700.0, 1800.0, 1900.0, 2000.0,
+                   2501.0, 3000.0, 3500.0, 4000.0, 4500.0, 5000.0,
+                   5500.0, 6000.0, 6500.0, 7000.0, 7500.0, 8000.0,
+                   8500.0, 9000.0, 9500.0, 10000.0]
+    sigma_time_values: [1.5]
+    pulse_separation_values: [10.0]
+    n_pulses: 9
+    condensation_fraction: 1.0
+    condensation_psi_sq_threshold: 0.01
+    min_check_time: 50.0
+    dt_multiplier: 2
+    max_runtime_minutes: 120
+
+  parameter_sweep:
+    enabled: true
+    mode: probe5
+    base_scenarios: [probe5]
+    probe_laser_id: probe
+    # Re-verified against the previous square4 run:
+    # square4_a16_E1600 condenses by itself, so it is invalid as a
+    # trap-only preparation.  square4_a27p2_E1600 stays globally below the
+    # |psi|^2=0.05 threshold while retaining the strongest large-separation
+    # subthreshold response.
+    square_side: 27.2
+    ring_calibration:
+      enabled: true
+      safe_fraction: 0.75
+    probe_calibration:
+      enabled: true
+    assisted_ring_calibration:
+      enabled: true
+      probe_fraction: 0.80
+      ring_guard_fraction: 0.95
+    ring_multiplier_reference: P_assisted_ring
+    ring_multiplier_values: [0.25, 0.35, 0.50, 0.60, 0.70,
+                             0.80, 0.90, 1.00, 1.10, 1.20,
+                             1.30]
+    pulse_separation: 10.0
+    sigma_time_values: [1.5]
+    sigma_space_values: [2.0]
+    # Ring train support ends at 89 ps; the center probe starts after a 6 ps
+    # quiet gap.  The center shot is fixed at 0.80P_probe and must remain
+    # subthreshold by itself.  The final movie sweep scans only the four ring
+    # pumps from 0.25P_assisted_ring to 1.30P_assisted_ring.
+    probe_delay_values: [95.0]
+    probe_energy_values: ["0.80P_probe"]
+
+output:
+  render_animation: true
+  render_snapshots: true
+  archive_raw_hdf5: false
+  field_record_stride: 100
+  scalar_record_stride: 10
+  render_downscale_factor: 2
+  # Fixed cross-scenario color limits from run 20260603_165451_80cc6fef:
+  # max psi_sq=15.32, max nA=169.65, max nI=37.63.  Keeping one scale across
+  # all movies/snapshots makes subthreshold responses visually stay dark.
+  animation_clim:
+    psi_sq: [0.0, 16.0]
+    nA: [0.0, 180.0]
+    nI: [0.0, 40.0]
+  fringe_analysis:
+    enabled: false
+  roi_metrics:
+    enabled: true
+    rois:
+      - id: center_D
+        shape: circle
+        x0: 0.0
+        y0: 0.0
+        radius: "D"
+
+scenarios:
+  - name: probe5
+    geometry: square4
+    potential:
+      potential_type: zero
+    lasers:
+      - id: bl
+        x0: -13.6
+        y0: -13.6
+        delay: 0.0
+        power: P
+        pulse_separation: 10.0
+        n_pulses: 9
+      - id: br
+        x0: 13.6
+        y0: -13.6
+        delay: 0.0
+        power: P
+        pulse_separation: 10.0
+        n_pulses: 9
+      - id: tl
+        x0: -13.6
+        y0: 13.6
+        delay: 0.0
+        power: P
+        pulse_separation: 10.0
+        n_pulses: 9
+      - id: tr
+        x0: 13.6
+        y0: 13.6
+        delay: 0.0
+        power: P
+        pulse_separation: 10.0
+        n_pulses: 9
+      - id: probe
+        x0: 0.0
+        y0: 0.0
+        delay: 95.0
+        power: "0.80P_probe"
+        pulse_separation: 10.0
+        n_pulses: 1

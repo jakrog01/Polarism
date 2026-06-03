@@ -34,12 +34,12 @@ Recommended workflow:
 
 ## Optional example HPC pipeline
 
-The repository also contains a Slurm-oriented example pipeline in `src/pump_multi_comparison/`. It is an application built on top of `polarism`, not part of the package itself. The intended entry point is the submission script inside that directory.
+The repository also contains a Slurm-oriented example pipeline in `src/polariton_hpc_pipeline/`. It is an application built on top of `polarism`, not part of the package itself. The intended entry point is the submission script inside that directory.
 
 Typical cluster workflow:
 
 ```bash
-cd src/pump_multi_comparison
+cd src/polariton_hpc_pipeline
 python -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
@@ -60,8 +60,8 @@ Check `module avail` on the target cluster before hard-coding those names.
 
 For the Slurm pipeline, make sure these files are set up before submission:
 
-- `src/pump_multi_comparison/config.yaml` for the experiment definition.
-- `src/pump_multi_comparison/slurm.env` for scheduler resources.
+- `src/polariton_hpc_pipeline/config.yaml` for the experiment definition.
+- `src/polariton_hpc_pipeline/slurm.env` for scheduler resources.
 - `lasers_setup.yaml` or another laser YAML referenced by the config.
 
 The pipeline creates a timestamped run directory with configuration snapshots, HDF5 outputs, metadata JSON files, and generated plots.

@@ -21,7 +21,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DOT_DIR="$SCRIPT_DIR"
-PUMP_DIR="$PROJECT_ROOT/src/pump_multi_comparison"
+HPC_PIPELINE_DIR="$PROJECT_ROOT/src/polariton_hpc_pipeline"
 
 CONFIG="${CONFIG:-$SCRIPT_DIR/config.yaml}"
 CONFIG="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
@@ -45,7 +45,7 @@ fi
 for venv_path in "$PROJECT_ROOT/.venv/bin/activate" "$PROJECT_ROOT/venv/bin/activate"; do
     [[ -f "$venv_path" ]] && { source "$venv_path" 2>/dev/null || true; break; }
 done
-export PYTHONPATH="${PROJECT_ROOT}:${DOT_DIR}:${PUMP_DIR}:${PYTHONPATH:-}"
+export PYTHONPATH="${PROJECT_ROOT}:${DOT_DIR}:${HPC_PIPELINE_DIR}:${PYTHONPATH:-}"
 
 HOSTNAME_SHORT="$(hostname -s 2>/dev/null || hostname)"
 if [[ "$HOSTNAME_SHORT" != rysy* ]]; then
@@ -271,7 +271,7 @@ else
         --job-name="drf_ref_${RUN_NAME}" \
         --output="${LOGS_DIR}/prepare_reference_%j.out" \
         --error="${LOGS_DIR}/prepare_reference_%j.err" \
-        "$PROJECT_ROOT/src/pump_multi_comparison/cluster/job_stage.sh" \
+        "$PROJECT_ROOT/src/polariton_hpc_pipeline/cluster/job_stage.sh" \
             python -m dot_response_fit.stages.cpu.prepare_reference \
                 --config "$RUN_DIR/config.yaml" \
                 --run-dir "$RUN_DIR")
@@ -299,7 +299,7 @@ else
         --job-name="drf_fit_${RUN_NAME}" \
         --output="${LOGS_DIR}/fit_%j.out" \
         --error="${LOGS_DIR}/fit_%j.err" \
-        "$PROJECT_ROOT/src/pump_multi_comparison/cluster/job_gpu.sh" \
+        "$PROJECT_ROOT/src/polariton_hpc_pipeline/cluster/job_gpu.sh" \
             python -m dot_response_fit.stages.gpu.fit_dot_size \
                 --run-dir "$RUN_DIR")
     echo "[2] fit_dot_size    -> Rysy job $FIT_JOB  (afterok:${PREPARE_REF_DEP_ID}, time=${FIT_TIME})"
@@ -341,7 +341,7 @@ else
         --job-name="drf_sc_${RUN_NAME}" \
         --output="${LOGS_DIR}/scenario_%A_%a.out" \
         --error="${LOGS_DIR}/scenario_%A_%a.err" \
-        "$PROJECT_ROOT/src/pump_multi_comparison/cluster/job_gpu.sh" \
+        "$PROJECT_ROOT/src/polariton_hpc_pipeline/cluster/job_gpu.sh" \
             python -m dot_response_fit.stages.gpu.run_scenario \
                 --run-dir "$RUN_DIR")
     echo "[3a] run_scenario array  -> Rysy job $SCENARIO_JOB  (afterok:${FIT_DEP_ID}, array=${IMAGE_ARRAY_SPEC}, time=${SCENARIO_TIME})"
@@ -366,7 +366,7 @@ else
         --job-name="drf_sc_last_${RUN_NAME}" \
         --output="${LOGS_DIR}/scenario_last_%j.out" \
         --error="${LOGS_DIR}/scenario_last_%j.err" \
-        "$PROJECT_ROOT/src/pump_multi_comparison/cluster/job_gpu.sh" \
+        "$PROJECT_ROOT/src/polariton_hpc_pipeline/cluster/job_gpu.sh" \
             python -m dot_response_fit.stages.gpu.run_scenario \
                 --run-dir "$RUN_DIR" \
                 --image-index "$IMAGE_LAST_INDEX")
@@ -398,7 +398,7 @@ else
         --job-name="drf_fin_${RUN_NAME}" \
         --output="${LOGS_DIR}/finalize_%j.out" \
         --error="${LOGS_DIR}/finalize_%j.err" \
-        "$PROJECT_ROOT/src/pump_multi_comparison/cluster/job_stage.sh" \
+        "$PROJECT_ROOT/src/polariton_hpc_pipeline/cluster/job_stage.sh" \
             python -m dot_response_fit.stages.cpu.finalize \
                 --run-dir "$RUN_DIR")
     echo "[4] finalize        -> Rysy job $FINALIZE_JOB  (afterok:${SCENARIO_DEP_ID})"

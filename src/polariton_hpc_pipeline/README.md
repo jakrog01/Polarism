@@ -1,4 +1,4 @@
-# pump_multi_comparison — Pipeline Architecture
+# polariton_hpc_pipeline — Pipeline Architecture
 
 ## Entry point
 
@@ -15,7 +15,7 @@ directory, and submits the full Rysy workflow as Slurm jobs connected with
 ## Directory layout
 
 ```
-pump_multi_comparison/
+polariton_hpc_pipeline/
 ├── submit.sh                     ← ENTRY POINT
 ├── config.yaml                   ← Tracked default example
 ├── scenarios/                    ← Local campaign configs; YAML files ignored by Git
@@ -278,7 +278,7 @@ has been checked.
 Run on Rysy:
 
 ```bash
-cd ~/polaritonSNN/PolaritonSNN/src/pump_multi_comparison
+cd ~/polaritonSNN/PolaritonSNN/src/polariton_hpc_pipeline
 bash submit.sh --config scenarios/config_qdouble_energy_relaxation_production_validation.yaml --dry-run
 bash submit.sh --config scenarios/config_qdouble_energy_relaxation_production_validation.yaml
 ```
@@ -342,7 +342,7 @@ Scenarios:
 Run on Rysy:
 
 ```bash
-cd ~/polaritonSNN/PolaritonSNN/src/pump_multi_comparison
+cd ~/polaritonSNN/PolaritonSNN/src/polariton_hpc_pipeline
 bash submit.sh --config scenarios/config_artifact_mitigation_validation.yaml --dry-run
 bash submit.sh --config scenarios/config_artifact_mitigation_validation.yaml
 ```

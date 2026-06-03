@@ -20,7 +20,7 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-PUMP_DIR="$SCRIPT_DIR"
+HPC_PIPELINE_DIR="$SCRIPT_DIR"
 CLUSTER_DIR="$SCRIPT_DIR/cluster"
 
 CONFIG="${CONFIG:-$SCRIPT_DIR/config.yaml}"
@@ -28,7 +28,7 @@ CONFIG="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
 SLURM_ENV="$PROJECT_ROOT/slurm.env"
 
 echo "========================================"
-echo " Polariton Multi-Pump Pipeline"
+echo " Polariton HPC Pipeline"
 echo " Rysy-only  |  inline render  |  run from a Rysy login node"
 echo "========================================"
 
@@ -45,7 +45,7 @@ fi
 for venv_path in "$PROJECT_ROOT/.venv/bin/activate" "$PROJECT_ROOT/venv/bin/activate"; do
     [[ -f "$venv_path" ]] && { source "$venv_path" 2>/dev/null || true; break; }
 done
-export PYTHONPATH="${PROJECT_ROOT}:${PUMP_DIR}:${PYTHONPATH:-}"
+export PYTHONPATH="${PROJECT_ROOT}:${HPC_PIPELINE_DIR}:${PYTHONPATH:-}"
 
 HOSTNAME_SHORT="$(hostname -s 2>/dev/null || hostname)"
 if [[ "$HOSTNAME_SHORT" != rysy* && $DRY_RUN -eq 0 ]]; then

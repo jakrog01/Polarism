@@ -76,7 +76,7 @@ else
     _THIS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     PROJECT_ROOT="$(cd "$_THIS/../.." && pwd)"
 fi
-PUMP_DIR="$PROJECT_ROOT/src/pump_multi_comparison"
+HPC_PIPELINE_DIR="$PROJECT_ROOT/src/polariton_hpc_pipeline"
 DOT_DIR="$PROJECT_ROOT/src/dot_response_fit"
 
 cd "$PROJECT_ROOT"
@@ -109,7 +109,7 @@ else
     exit 1
 fi
 
-export PYTHONPATH="${PROJECT_ROOT}:${PUMP_DIR}:${DOT_DIR}:${PYTHONPATH:-}"
+export PYTHONPATH="${PROJECT_ROOT}:${HPC_PIPELINE_DIR}:${DOT_DIR}:${PYTHONPATH:-}"
 export MPLCONFIGDIR="${MPLCONFIGDIR:-${TMPDIR:-/tmp}/matplotlib-${USER:-user}}"
 mkdir -p "$MPLCONFIGDIR" >/dev/null 2>&1 || true
 
@@ -136,5 +136,5 @@ if [[ -n "${SCRATCH:-}" ]]; then
     rm -f "$_probe"
 fi
 
-cd "$PUMP_DIR"
+cd "$HPC_PIPELINE_DIR"
 exec "$@"

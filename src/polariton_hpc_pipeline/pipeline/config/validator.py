@@ -19,22 +19,12 @@ import sys
 from typing import Any
 
 from pipeline.config.loader import build_timing_namespace, resolve_delay, resolve_power
-from pipeline.config.sweep import parameter_sweep_enabled, probe5_sweep_enabled, resolve_laser_type
+from pipeline.config.sweep import parameter_sweep_enabled
+from pipeline.config.sweep_utils import resolve_laser_type
+from pipeline.experiments.registry import get_experiment
 
 _BASE_TIMING_NAMES: frozenset[str] = frozenset(
     {"sigma_time", "pulse_separation", "cutoff_sigma"}
-)
-_PROBE_POWER_REF_RE = re.compile(
-    r"^\s*[0-9]*\.?[0-9]*\s*P_?probe\s*$",
-    re.IGNORECASE,
-)
-_ASSISTED_PROBE_POWER_REF_RE = re.compile(
-    r"^\s*[0-9]*\.?[0-9]*\s*P_?(?:assisted|assisted_?probe|probe_?assisted)\s*$",
-    re.IGNORECASE,
-)
-_ASSISTED_RING_POWER_REF_RE = re.compile(
-    r"^\s*[0-9]*\.?[0-9]*\s*P_?(?:assisted_?ring|ring_?assisted)\s*$",
-    re.IGNORECASE,
 )
 
 _GRID_KEYS: frozenset[str] = frozenset({"nx", "ny", "lx", "ly", "grid_type"})
@@ -205,7 +195,6 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
                     )
 
     sweep_enabled = parameter_sweep_enabled(cfg)
-    probe5_mode = probe5_sweep_enabled(cfg)
     ts = g.get("threshold_search", {})
     sweep_cfg = g.get("parameter_sweep", {})
     power_values: list = ts.get("power_values", [])
@@ -216,6 +205,7 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
     n_pulses = ts.get("n_pulses")
 
     if sweep_enabled:
+        experiment = get_experiment(cfg)
         power_values = sweep_cfg.get("power_values", [])
         pulse_sep_values = sweep_cfg.get("pulse_separation_values", [])
         sigma_time_values = sweep_cfg.get(
@@ -223,8 +213,8 @@ def validate_config(cfg: dict[str, Any]) -> list[str]:
             ts.get("sigma_time_values", [g.get("laser_defaults", {}).get("sigma_time", 1.0)]),
         )
         pulse_sep_formula = None
-        if probe5_mode:
-            errors.extend(_validate_probe5_sweep(sweep_cfg, laser_defaults, cfg))
+        if experiment.name != "generic":
+            errors.extend(experiment.validate(cfg))
         else:
             if not power_values:
                 errors.append("parameter_sweep.power_values is empty")
@@ -911,300 +901,6 @@ def _validate_sweep_timing_budget(
                     f"pulse_sep={ps:.3g} requires {required_time:.1f} ps but "
                     f"global.solver.total_time={total_time:.1f} ps"
                 )
-
-    return errors
-
-
-def _validate_probe5_sweep(
-    sweep_cfg: dict[str, Any],
-    defaults: dict[str, Any],
-    cfg: dict[str, Any],
-) -> list[str]:
-    """Validate the probe5-specific sweep section."""
-    errors: list[str] = []
-
-    probe_delay_values = sweep_cfg.get("probe_delay_values")
-    probe_energy_values = sweep_cfg.get("probe_energy_values")
-    ring_scale_values = sweep_cfg.get("ring_scale_values")
-    ring_multiplier_values = sweep_cfg.get("ring_multiplier_values")
-    ring_energy_values = sweep_cfg.get("ring_energy_values")
-    ring_calibration = sweep_cfg.get("ring_calibration") or {}
-    ring_calibration_enabled = bool(ring_calibration.get("enabled", False))
-    probe_calibration = sweep_cfg.get("probe_calibration") or {}
-    probe_calibration_enabled = bool(probe_calibration.get("enabled", False))
-    assisted_calibration = sweep_cfg.get("assisted_probe_calibration") or {}
-    assisted_calibration_enabled = bool(assisted_calibration.get("enabled", False))
-    assisted_ring_calibration = sweep_cfg.get("assisted_ring_calibration") or {}
-    assisted_ring_calibration_enabled = bool(
-        assisted_ring_calibration.get("enabled", False)
-    )
-    probe_laser_id = str(sweep_cfg.get("probe_laser_id", "probe"))
-
-    if "enabled" in probe_calibration and not isinstance(probe_calibration.get("enabled"), bool):
-        errors.append("parameter_sweep.probe_calibration.enabled must be boolean")
-    if "enabled" in assisted_calibration and not isinstance(
-        assisted_calibration.get("enabled"), bool
-    ):
-        errors.append("parameter_sweep.assisted_probe_calibration.enabled must be boolean")
-    if "enabled" in assisted_ring_calibration and not isinstance(
-        assisted_ring_calibration.get("enabled"), bool
-    ):
-        errors.append("parameter_sweep.assisted_ring_calibration.enabled must be boolean")
-
-    for name, vals in (("probe_delay_values", probe_delay_values),):
-        if vals is None:
-            errors.append(f"parameter_sweep.{name} is missing for probe5 mode")
-        elif not vals:
-            errors.append(f"parameter_sweep.{name} is empty for probe5 mode")
-        elif not all(isinstance(v, (int, float)) and float(v) > 0 for v in vals):
-            errors.append(f"parameter_sweep.{name} must all be positive numbers")
-
-    if probe_energy_values is None:
-        errors.append("parameter_sweep.probe_energy_values is missing for probe5 mode")
-    elif not probe_energy_values:
-        errors.append("parameter_sweep.probe_energy_values is empty for probe5 mode")
-    elif ring_calibration_enabled:
-        for value in probe_energy_values:
-            if not _valid_power_expr(value):
-                errors.append(
-                    "parameter_sweep.probe_energy_values must be non-negative numbers "
-                    "or P-relative expressions in calibrated probe5 mode"
-                )
-                break
-            try:
-                if resolve_power(value, 1.0) < 0:
-                    errors.append("parameter_sweep.probe_energy_values must be non-negative")
-                    break
-            except (TypeError, ValueError):
-                pass
-        if any(
-            isinstance(value, str) and _PROBE_POWER_REF_RE.match(value)
-            for value in probe_energy_values
-        ) and not probe_calibration_enabled:
-            errors.append(
-                "parameter_sweep.probe_energy_values uses P_probe, but "
-                "parameter_sweep.probe_calibration.enabled is not true"
-            )
-        if any(
-            isinstance(value, str) and _ASSISTED_PROBE_POWER_REF_RE.match(value)
-            for value in probe_energy_values
-        ) and not assisted_calibration_enabled:
-            errors.append(
-                "parameter_sweep.probe_energy_values uses P_assisted_probe, but "
-                "parameter_sweep.assisted_probe_calibration.enabled is not true"
-            )
-        if any(
-            isinstance(value, str) and _ASSISTED_RING_POWER_REF_RE.match(value)
-            for value in probe_energy_values
-        ):
-            errors.append(
-                "parameter_sweep.probe_energy_values must not use P_assisted_ring; "
-                "P_assisted_ring is a ring-strength reference, not a center-probe reference"
-            )
-    elif not all(
-        isinstance(v, (int, float)) and float(v) >= 0 for v in probe_energy_values
-    ):
-        errors.append("parameter_sweep.probe_energy_values must all be non-negative numbers")
-
-    ring_axis_count = sum(
-        axis is not None
-        for axis in (ring_scale_values, ring_multiplier_values, ring_energy_values)
-    )
-    if ring_axis_count > 1:
-        errors.append(
-            "parameter_sweep.ring_scale_values, ring_multiplier_values and "
-            "ring_energy_values are mutually exclusive"
-        )
-    if ring_scale_values is not None:
-        if not ring_scale_values:
-            errors.append("parameter_sweep.ring_scale_values is empty")
-        elif not all(
-            isinstance(v, (int, float)) and 0.0 <= float(v) <= 1.0
-            for v in ring_scale_values
-        ):
-            errors.append(
-                "parameter_sweep.ring_scale_values must all be in the range [0, 1]"
-            )
-    if ring_multiplier_values is not None:
-        if not ring_multiplier_values:
-            errors.append("parameter_sweep.ring_multiplier_values is empty")
-        elif not all(
-            isinstance(v, (int, float)) and math.isfinite(float(v)) and float(v) > 0.0
-            for v in ring_multiplier_values
-        ):
-            errors.append(
-                "parameter_sweep.ring_multiplier_values must all be positive finite numbers"
-            )
-        ring_ref = str(sweep_cfg.get("ring_multiplier_reference", "P_ring"))
-        ring_ref_norm = ring_ref.lower().replace("_", "")
-        if ring_ref_norm not in {"pring", "passistedring", "pringassisted"}:
-            errors.append(
-                "parameter_sweep.ring_multiplier_reference must be P_ring or "
-                "P_assisted_ring"
-            )
-        if ring_ref_norm in {"passistedring", "pringassisted"} and not (
-            assisted_ring_calibration_enabled and probe_calibration_enabled
-        ):
-            errors.append(
-                "parameter_sweep.ring_multiplier_reference=P_assisted_ring requires "
-                "both assisted_ring_calibration.enabled and probe_calibration.enabled"
-            )
-
-    for name in (("square_side",) if ring_calibration_enabled else ("square_side", "ring_energy")):
-        val = sweep_cfg.get(name)
-        if val is None:
-            errors.append(f"parameter_sweep.{name} is missing for probe5 mode")
-        elif not (isinstance(val, (int, float)) and float(val) > 0):
-            errors.append(f"parameter_sweep.{name}={val!r} must be a positive number")
-
-    if ring_calibration_enabled:
-        safe_fraction = ring_calibration.get("safe_fraction")
-        try:
-            sf = float(safe_fraction)
-            if not (0.0 < sf < 1.0):
-                errors.append(
-                    "parameter_sweep.ring_calibration.safe_fraction must be in (0, 1)"
-                )
-        except (TypeError, ValueError):
-            errors.append(
-                "parameter_sweep.ring_calibration.safe_fraction must be a number in (0, 1)"
-            )
-
-        if assisted_calibration_enabled:
-            ring_fraction = assisted_calibration.get("ring_fraction", safe_fraction)
-            try:
-                rf = float(ring_fraction)
-                if not (0.0 < rf < 1.0):
-                    errors.append(
-                        "parameter_sweep.assisted_probe_calibration.ring_fraction "
-                        "must be in (0, 1)"
-                    )
-            except (TypeError, ValueError):
-                errors.append(
-                    "parameter_sweep.assisted_probe_calibration.ring_fraction "
-                    "must be a number in (0, 1)"
-                )
-
-        if assisted_ring_calibration_enabled:
-            probe_fraction = assisted_ring_calibration.get("probe_fraction")
-            try:
-                pf = float(probe_fraction)
-                if not (0.0 < pf < 1.0):
-                    errors.append(
-                        "parameter_sweep.assisted_ring_calibration.probe_fraction "
-                        "must be in (0, 1)"
-                    )
-            except (TypeError, ValueError):
-                errors.append(
-                    "parameter_sweep.assisted_ring_calibration.probe_fraction "
-                    "must be a number in (0, 1)"
-                )
-            guard_fraction = assisted_ring_calibration.get("ring_guard_fraction", 0.95)
-            try:
-                gf = float(guard_fraction)
-                if not (0.0 < gf <= 1.0):
-                    errors.append(
-                        "parameter_sweep.assisted_ring_calibration.ring_guard_fraction "
-                        "must be in (0, 1]"
-                    )
-            except (TypeError, ValueError):
-                errors.append(
-                    "parameter_sweep.assisted_ring_calibration.ring_guard_fraction "
-                    "must be a number in (0, 1]"
-                )
-
-        ts = cfg.get("global", {}).get("threshold_search", {})
-        for key in ("power_values", "sigma_time_values", "pulse_separation_values"):
-            values = ts.get(key)
-            if not values:
-                errors.append(f"threshold_search.{key} is required for calibrated probe5 mode")
-        for key in ("max_runtime_minutes", "condensation_fraction"):
-            if key not in ts:
-                errors.append(f"threshold_search.{key} is required for calibrated probe5 mode")
-
-    ring_energy_ref = sweep_cfg.get("ring_energy")
-    if ring_energy_values is not None:
-        if not ring_energy_values:
-            errors.append("parameter_sweep.ring_energy_values is empty")
-        elif not all(
-            isinstance(v, (int, float)) and float(v) > 0
-            for v in ring_energy_values
-        ):
-            errors.append("parameter_sweep.ring_energy_values must all be positive numbers")
-        elif isinstance(ring_energy_ref, (int, float)) and any(
-            float(v) > float(ring_energy_ref) for v in ring_energy_values
-        ):
-            errors.append(
-                "parameter_sweep.ring_energy_values must not exceed ring_energy; "
-                "treat ring_energy as the verified subthreshold cap"
-            )
-
-    base_scenario_filter = sweep_cfg.get("base_scenarios")
-    if base_scenario_filter:
-        selected = {str(n) for n in base_scenario_filter} if isinstance(base_scenario_filter, list) else {str(base_scenario_filter)}
-        for sc in cfg.get("scenarios", []):
-            if sc.get("name") in selected:
-                laser_ids = [
-                    str(ld.get("id", f"laser_{i}"))
-                    for i, ld in enumerate(sc.get("lasers", []))
-                ]
-                if probe_laser_id not in laser_ids:
-                    errors.append(
-                        f"probe5 probe_laser_id='{probe_laser_id}' not found in scenario "
-                        f"'{sc['name']}' (available: {laser_ids})"
-                    )
-                if len(laser_ids) < 5:
-                    errors.append(
-                        f"probe5 scenario '{sc['name']}' must have at least 5 lasers "
-                        f"(4 ring + 1 probe), found {len(laser_ids)}"
-                    )
-                if probe_laser_id in laser_ids[:4]:
-                    errors.append(
-                        f"probe5 scenario '{sc['name']}' has probe_laser_id="
-                        f"'{probe_laser_id}' inside the first four lasers. "
-                        "The first four lasers must be the square ring because "
-                        "square-side expansion moves lasers[:4]."
-                    )
-
-    cutoff_sigma = float(defaults.get("cutoff_sigma", 3.0))
-    sigma_time = float(defaults.get("sigma_time", 1.5))
-    pulse_sep = sweep_cfg.get("pulse_separation")
-    solver = cfg.get("global", {}).get("solver", {})
-    total_time = solver.get("total_time")
-
-    if probe_delay_values and isinstance(total_time, (int, float)):
-        max_delay = float(max(float(v) for v in probe_delay_values))
-        probe_end = max_delay + 2.0 * cutoff_sigma * sigma_time
-        if probe_end >= float(total_time):
-            errors.append(
-                f"probe5 max probe_delay={max_delay} + probe pulse support "
-                f"2*{cutoff_sigma}*{sigma_time}={2*cutoff_sigma*sigma_time:.1f} ps = "
-                f"{probe_end:.1f} ps >= global.solver.total_time={total_time}. "
-                "Increase total_time."
-            )
-
-    if (
-        probe_delay_values
-        and pulse_sep is not None
-        and isinstance(pulse_sep, (int, float))
-    ):
-        n_ring_pulses = 9
-        for sc in cfg.get("scenarios", []):
-            base_filter = sweep_cfg.get("base_scenarios", [])
-            if sc.get("name") in (base_filter if isinstance(base_filter, list) else []):
-                ring_laser = (sc.get("lasers") or [{}])[0]
-                n_ring_pulses = int(ring_laser.get("n_pulses", 9))
-                break
-        pump_end = (n_ring_pulses - 1) * float(pulse_sep) + 2.0 * cutoff_sigma * sigma_time
-        min_delay = float(min(float(v) for v in probe_delay_values))
-        min_safe_delay = pump_end + 1.0
-        if min_delay < min_safe_delay:
-            errors.append(
-                f"probe5 min probe_delay={min_delay} ps < estimated ring pump_end + 1 ps="
-                f"{min_safe_delay:.1f} ps. Ring pump_end="
-                f"{pump_end:.1f} ps (({n_ring_pulses}-1)*{pulse_sep}+2*{cutoff_sigma}*{sigma_time}). "
-                "Probe must start after the ring train has fully ended."
-            )
 
     return errors
 

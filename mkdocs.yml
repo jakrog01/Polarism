@@ -19,7 +19,7 @@ nav:
       - Output and Visualization: user-guide/output-and-visualization.md
   - Examples:
       - examples/index.md
-      - pump_multi_comparison Pipeline: examples/pump-multi-comparison.md
+      - Polariton HPC Pipeline: examples/polariton-hpc-pipeline.md
       - threshold_finder Pipeline: examples/threshold-finder.md
       - create_characteristic Pipeline: examples/create-characteristic.md
       - dot_response_fit Pipeline: examples/dot-response-fit.md
