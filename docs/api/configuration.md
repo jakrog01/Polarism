@@ -177,11 +177,6 @@ The `physics` block stores the scalar coefficients entering the condensate and r
 
 These values are model parameters, not high-level feature flags, so they should be changed with physical units and stability constraints in mind.
 
-Its
-`g_C`, `g_R`, and `R` values are scaled from a GaAs exciton-interaction estimate
-with `N_QW = 4` and exciton fraction `|X|^2 = 0.40`; they should not be treated
-as generic defaults for other materials.
-
 Initial-condition options:
 
 | Field | Meaning | Main options |
