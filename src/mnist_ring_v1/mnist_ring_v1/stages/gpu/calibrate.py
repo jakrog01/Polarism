@@ -211,6 +211,8 @@ def main() -> None:
     ring_rot = float(enc_cfg["ring_rotation_rad"])
     sigma_space = float(enc_cfg["sigma_space_um"])
     sigma_time = float(enc_cfg["sigma_time_ps"])
+    sigma_time_ring = float(enc_cfg.get("sigma_time_ring_ps", sigma_time))
+    sigma_time_trigger = float(enc_cfg.get("sigma_time_trigger_ps", sigma_time))
     cutoff = float(enc_cfg["cutoff_sigma"])
     power_def = str(enc_cfg["power_definition"])
 
@@ -246,7 +248,8 @@ def main() -> None:
                 trigger_delay=total_time + 100.0,
                 trigger_power=0.0,
                 sigma_space_um=sigma_space,
-                sigma_time_ps=sigma_time,
+                sigma_time_ring_ps=sigma_time_ring,
+                sigma_time_trigger_ps=sigma_time_trigger,
                 cutoff_sigma=cutoff,
                 power_definition=power_def,
                 grid_X=grid.X,
@@ -275,7 +278,8 @@ def main() -> None:
                 trigger_delay=trig_delay_val,
                 trigger_power=p,
                 sigma_space_um=sigma_space,
-                sigma_time_ps=sigma_time,
+                sigma_time_ring_ps=sigma_time_ring,
+                sigma_time_trigger_ps=sigma_time_trigger,
                 cutoff_sigma=cutoff,
                 power_definition=power_def,
                 grid_X=grid.X,
@@ -316,7 +320,8 @@ def main() -> None:
                 trigger_delay=trig_delay_val,
                 trigger_power=assist_trig,
                 sigma_space_um=sigma_space,
-                sigma_time_ps=sigma_time,
+                sigma_time_ring_ps=sigma_time_ring,
+                sigma_time_trigger_ps=sigma_time_trigger,
                 cutoff_sigma=cutoff,
                 power_definition=power_def,
                 grid_X=grid.X,
@@ -401,7 +406,8 @@ def main() -> None:
                     trigger_delay=total_time + 100.0,
                     trigger_power=0.0,
                     sigma_space_um=sigma_space,
-                    sigma_time_ps=sigma_time,
+                    sigma_time_ring_ps=sigma_time_ring,
+                sigma_time_trigger_ps=sigma_time_trigger,
                     cutoff_sigma=cutoff,
                     power_definition=power_def,
                     grid_X=grid.X,

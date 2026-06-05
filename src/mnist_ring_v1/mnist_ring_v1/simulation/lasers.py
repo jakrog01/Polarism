@@ -18,7 +18,8 @@ def build_ring_trigger_lasers(
     trigger_delay: float,
     trigger_power: float,
     sigma_space_um: float,
-    sigma_time_ps: float,
+    sigma_time_ring_ps: float,
+    sigma_time_trigger_ps: float,
     cutoff_sigma: float,
     power_definition: str,
     grid_X: Any,
@@ -40,8 +41,14 @@ def build_ring_trigger_lasers(
         Delay for the central trigger in ps.
     trigger_power
         Pulse energy for the trigger.
-    sigma_space_um, sigma_time_ps, cutoff_sigma
-        Gaussian spot parameters.
+    sigma_space_um
+        Gaussian spatial width in μm (shared by ring and trigger).
+    sigma_time_ring_ps
+        Temporal Gaussian width for ring spots in ps.
+    sigma_time_trigger_ps
+        Temporal Gaussian width for the central trigger in ps.
+    cutoff_sigma
+        Pulse cutoff in units of sigma_time.
     power_definition
         'pulse_energy' or 'peak_amplitude'.
     grid_X, grid_Y
@@ -65,7 +72,7 @@ def build_ring_trigger_lasers(
             x0=float(ring_xs[i]),
             y0=float(ring_ys[i]),
             sigma_space=sigma_space_um,
-            sigma_time=sigma_time_ps,
+            sigma_time=sigma_time_ring_ps,
             pulse_separation=200.0,
             cutoff_sigma=cutoff_sigma,
             delay=float(ring_delays[i]),
@@ -82,7 +89,7 @@ def build_ring_trigger_lasers(
         x0=0.0,
         y0=0.0,
         sigma_space=sigma_space_um,
-        sigma_time=sigma_time_ps,
+        sigma_time=sigma_time_trigger_ps,
         pulse_separation=200.0,
         cutoff_sigma=cutoff_sigma,
         delay=trigger_delay,
