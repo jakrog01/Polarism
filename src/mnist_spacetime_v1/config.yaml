@@ -1,0 +1,87 @@
+architecture:
+  kind: dynamic_hologram
+  roi_radius_um: 3.0
+  include_feature_rois: true
+  geometry:
+    feature_rings:
+      - radius_um: 18.0
+        n_spots: 8
+        rotation_deg: 0.0
+      - radius_um: 30.0
+        n_spots: 8
+        rotation_deg: 22.5
+  pump:
+    sigma_space_um: 1.2
+    sigma_time_ps: 1.5
+    cutoff_sigma: 3.0
+    power_definition: pulse_energy
+    feature_energy_scale_values: [600.0]
+  timing:
+    read_delay_values_ps: [20.0, 35.0]
+  readout_probe:
+    energy_values: [1800.0, 2600.0]
+    variants:
+      - id: center
+        x0: 0.0
+        y0: 0.0
+        sigma_space_um: 1.2
+  output_rois:
+    radius_um: 42.0
+    angles_deg: [0, 45, 90, 135, 180, 225, 270, 315]
+  patterns:
+    - name: blank
+      description: no written reservoir hologram; read probe only
+      weights: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    - name: right_lobe
+      description: right-biased reservoir write pattern
+      weights: [1.00, 0.70, 0.20, 0.00, 0.00, 0.00, 0.20, 0.70,
+                0.85, 0.95, 0.45, 0.05, 0.00, 0.00, 0.05, 0.45]
+    - name: vertical_bar
+      description: two opposite lobes aligned with y direction
+      weights: [0.10, 0.45, 1.00, 0.45, 0.10, 0.45, 1.00, 0.45,
+                0.05, 0.35, 0.90, 0.65, 0.05, 0.35, 0.90, 0.65]
+    - name: diagonal_pair
+      description: diagonal coincidence-like write pattern
+      weights: [0.90, 0.75, 0.15, 0.00, 0.00, 0.15, 0.75, 0.90,
+                0.20, 0.85, 0.80, 0.10, 0.00, 0.00, 0.10, 0.80]
+
+global:
+  physics:
+    hbar: 0.6582119514
+    m_eff: 0.32
+    gamma_C: 0.1
+    gamma_R: 0.15
+    gamma_I: 0.001
+    g_C: 0.00024
+    g_R: 0.0006
+    g_I: 0.0
+    R: 0.023
+    kappa: 0.05
+    kinetic_relaxation_eta: 1.0e-5
+    init_mode: filtered_complex_gaussian
+    init_k_cutoff_um: 3.0
+    init_seed: 42
+    init_eps: 1.0e-3
+  grid:
+    nx: 1024
+    ny: 1024
+    lx: 160.0
+    ly: 160.0
+    grid_type: periodic
+  boundary_condition:
+    absorption: cap
+    profile_type: sin2
+    strength: 5.0
+    mask_width_percent: 0.2
+  reservoir:
+    reservoir_type: quadratic-double
+  solver:
+    method: rk4-cuda
+    laplacian: isotropic-9pt
+    dt: 0.01
+    total_time: 150.0
+
+output:
+  scalar_stride_steps: 100
+  save_final_downsampled_fields: true
+  field_downsample: 8
