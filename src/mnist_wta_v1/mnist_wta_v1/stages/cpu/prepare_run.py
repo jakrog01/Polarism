@@ -179,6 +179,61 @@ def main() -> None:
     ]
     print(f"  total: {n_total}, batches: {n_batches} (batch_size={batch_size})")
 
+    print("\n[4b/6] Score sanity guard ...")
+    all_raw = np.array([e["raw_scores_per_class"] for e in dataset_entries], dtype=np.float64)
+    all_norm = np.array([e["norm_scores_per_class"] for e in dataset_entries], dtype=np.float64)
+
+    raw_finite = bool(np.isfinite(all_raw).all())
+    raw_max_abs = float(np.abs(all_raw[np.isfinite(all_raw)]).max()) if raw_finite else float("inf")
+    raw_std = float(all_raw[np.isfinite(all_raw)].std()) if raw_finite else 0.0
+    n_unique_norm = int(len(np.unique(all_norm.round(8), axis=0)))
+
+    score_diag = {
+        "score_model_backend": score_model.get("backend", "unknown"),
+        "score_train_accuracy": round(score_model["train_accuracy"], 4),
+        "score_raw_max_abs": round(raw_max_abs, 4) if np.isfinite(raw_max_abs) else None,
+        "score_raw_std": round(raw_std, 6),
+        "score_norm_unique_rows": n_unique_norm,
+        "score_guard_passed": False,
+    }
+
+    guard_errors: list[str] = []
+    if not raw_finite:
+        guard_errors.append("raw_scores contain non-finite values (NaN/Inf)")
+    if raw_max_abs > 1e6:
+        guard_errors.append(f"raw_scores max_abs={raw_max_abs:.2e} > 1e6 (likely overflow)")
+    if raw_std < 1e-8:
+        guard_errors.append(f"raw_scores std={raw_std:.2e} < 1e-8 (all identical)")
+    if n_unique_norm <= 1:
+        guard_errors.append(
+            f"norm_scores_per_class has only {n_unique_norm} unique row(s) — "
+            "all images would receive identical power patterns"
+        )
+
+    for line in [
+        f"  backend          : {score_diag['score_model_backend']}",
+        f"  train_accuracy   : {score_diag['score_train_accuracy']:.4f}",
+        f"  raw_max_abs      : {raw_max_abs:.3e}",
+        f"  raw_std          : {raw_std:.3e}",
+        f"  norm unique rows : {n_unique_norm} / {n_total}",
+    ]:
+        print(line)
+
+    if guard_errors:
+        print("\n  SCORE GUARD FAILED:", file=sys.stderr)
+        for err in guard_errors:
+            print(f"    - {err}", file=sys.stderr)
+        print(
+            "\n  Likely cause: too few training images for stable Ridge fit.\n"
+            "  Fix: increase --pilot-train-per-class to >= 20.\n"
+            "  Aborting — GPU jobs will not start.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    score_diag["score_guard_passed"] = True
+    print("  Score guard      : PASSED")
+
     if args.dry_run:
         print("\n[DRY RUN] Would write:")
         print(f"  {run_dir}/manifest.json")
@@ -190,6 +245,7 @@ def main() -> None:
         if baseline_acc is not None:
             print(f"  Baseline (Ridge on PCA-{n_components}): {baseline_acc:.4f}")
         print(f"  Slurm tasks: {n_batches}")
+        print(f"  Score guard: PASSED  (norm unique rows={n_unique_norm}/{n_total})")
         sys.exit(0)
 
     print("\n[5/6] Writing run directory ...")
@@ -224,6 +280,7 @@ def main() -> None:
         "batch_size": batch_size,
         "baseline_ridge_accuracy": baseline_acc,
         "ring_radius_um": ring_r,
+        **score_diag,
         "prepare_complete": True,
         "gpu_complete": False,
         "finalize_complete": False,

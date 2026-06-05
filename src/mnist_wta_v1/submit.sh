@@ -204,6 +204,33 @@ _rysy_sbatch_cpu() {
 }
 _dependency_id() { printf "%s" "${1%%;*}"; }
 
+_wait_rysy() {
+    local job_id="$1" label="$2"
+    echo "  Polling for $label (job $job_id) ..."
+    while squeue -j "$job_id" --noheader 2>/dev/null | grep -q .; do sleep 60; done
+    local states
+    states=$(sacct -j "$job_id" --format=State --noheader --parsable2 2>/dev/null \
+        | grep -v '^$' | sort -u | tr '\n' ' ' | xargs)
+    echo "  $label states: $states"
+    if echo "$states" | grep -qE '(FAILED|CANCELLED|TIMEOUT|NODE_FAIL|OUT_OF_MEMORY)'; then
+        echo "ERROR: $label failed. States: $states" >&2
+        return 1
+    fi
+    if ! echo "$states" | grep -q 'COMPLETED'; then
+        echo "ERROR: $label did not complete. States: $states" >&2
+        return 1
+    fi
+}
+
+_print_slurm_diagnostics() {
+    local jobs_csv="$1"
+    echo " Status  : sacct -j ${jobs_csv} \\"
+    echo "           --format=JobID,JobName%35,State,ExitCode,Elapsed,Timelimit,NodeList,ReqTRES%50,AllocTRES%70,MaxRSS"
+    echo " Queue   : squeue -j ${jobs_csv} -o \"%.18i %.9P %.35j %.8T %.10M %.10l %.6D %R\""
+    echo " Starts  : squeue --start -j ${jobs_csv}"
+    echo " Failures: grep -RniE \"error|exception|traceback|cuda|cupy|oom|timeout|killed|scratch|nvme|no space|permission|failed|SCORE GUARD\" \"$LOGS_DIR\" | tail -300"
+}
+
 echo "[0] prepare_run ..."
 PREPARE_JOB=$(_rysy_sbatch_cpu \
     --job-name=wta_prepare \
@@ -283,14 +310,24 @@ echo "  [3] finalize -> $FIN_JOB  (${_FIN_DEP})"
 echo ""
 echo "========================================================"
 echo " All jobs submitted."
-echo "  Run dir : $RUN_DIR"
-echo "  Logs    : $LOGS_DIR"
-echo " Results  : $RUN_DIR/results_summary_wta.json"
+echo "  Run dir   : $RUN_DIR"
+echo "  Logs      : $LOGS_DIR"
+echo "  N batches : $N_BATCHES  (LAST=$BATCH_LAST_INDEX)"
+echo ""
+_ALL_JOBS="${PREPARE_DEP},${CALIB_DEP}"
+if [[ $ARRAY_ENABLED -eq 1 ]]; then
+    _ALL_JOBS="${_ALL_JOBS},$(_dependency_id "$ARRAY_JOB")"
+fi
+_ALL_JOBS="${_ALL_JOBS},$(_dependency_id "$LAST_JOB"),$(_dependency_id "$FIN_JOB")"
+_print_slurm_diagnostics "$_ALL_JOBS"
+echo ""
+echo " Results   : $RUN_DIR/results_summary_wta.json"
+echo " Plots     : $RUN_DIR/plots/"
 echo "========================================================"
 
 if [[ $WAIT_FOR_COMPLETION -eq 1 ]]; then
     echo ""
     echo " [--wait] Polling finalize job $FIN_JOB ..."
-    while squeue -j "$FIN_JOB" --noheader 2>/dev/null | grep -q .; do sleep 60; done
+    _wait_rysy "$(_dependency_id "$FIN_JOB")" "finalize" || exit 1
     echo " Run complete: $RUN_DIR/results_summary_wta.json"
 fi

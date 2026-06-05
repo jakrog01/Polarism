@@ -9,14 +9,25 @@ def _fit_ridge_numpy(
     y_train: np.ndarray,
     alpha: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Numpy fallback: one-vs-rest Ridge via normal equations. Returns (W, b, classes)."""
+    """Numpy fallback: one-vs-rest Ridge via normal equations. Returns (W, b, classes).
+
+    The intercept is not regularized: reg[-1,-1] = 0 so only alpha * I_n_feat
+    is added to the feature-feature block.  Crucially the (X_b.T @ X_b)[-1,-1]
+    diagonal element (= n_samples) is preserved, which keeps the matrix
+    non-singular even when X_scaled is StandardScaled (mean=0).
+
+    Bug that was here before: `A[-1,-1] = 0.0` zeroed the *entire* diagonal
+    element, including the X_b.T@X_b contribution.  After StandardScaling the
+    off-diagonal cross-terms sum(X_sc[:,j]) ≈ 0, so the last row of A became
+    near-zero → singular → b ~ 1e29.
+    """
     classes = np.unique(y_train)
-    n_classes = len(classes)
     n_feat = X_scaled.shape[1]
     X_b = np.hstack([X_scaled, np.ones((len(X_scaled), 1))])
     Y_oh = (y_train[:, None] == classes[None, :]).astype(np.float64) * 2.0 - 1.0
-    A = X_b.T @ X_b + alpha * np.eye(n_feat + 1)
-    A[-1, -1] = 0.0
+    reg = np.eye(n_feat + 1)
+    reg[-1, -1] = 0.0
+    A = X_b.T @ X_b + alpha * reg
     W_b = np.linalg.solve(A, X_b.T @ Y_oh)
     W = W_b[:-1].T
     b = W_b[-1]
@@ -53,6 +64,7 @@ def fit_score_model(
     scaler_std = np.where(X_train.std(axis=0) > 1e-8, X_train.std(axis=0), 1.0)
     X_scaled = (X_train - scaler_mean) / scaler_std
 
+    backend = "numpy_fallback"
     try:
         from sklearn.linear_model import RidgeClassifier
         clf = RidgeClassifier(alpha=alpha)
@@ -60,6 +72,7 @@ def fit_score_model(
         W = clf.coef_.astype(np.float64)
         b = clf.intercept_.astype(np.float64)
         classes = clf.classes_.astype(np.int64)
+        backend = "sklearn"
     except ImportError:
         W, b, classes = _fit_ridge_numpy(X_scaled, y_train, alpha)
 
@@ -74,6 +87,7 @@ def fit_score_model(
         "scaler_std": scaler_std.astype(np.float64),
         "classes": classes.astype(np.int64),
         "train_accuracy": train_acc,
+        "backend": backend,
     }
 
 
