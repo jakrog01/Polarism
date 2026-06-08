@@ -19,6 +19,7 @@ nav:
       - Output and Visualization: user-guide/output-and-visualization.md
   - Examples:
       - examples/index.md
+      - Example Results: examples/example-results.md
       - Polariton HPC Pipeline: examples/polariton-hpc-pipeline.md
       - threshold_finder Pipeline: examples/threshold-finder.md
       - create_characteristic Pipeline: examples/create-characteristic.md

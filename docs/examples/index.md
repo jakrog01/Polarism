@@ -10,6 +10,7 @@ This section documents the example applications that live in `src/`. These are n
 
 ## Current examples
 
+- [Example Results](example-results.md): short movies from a five-spot network showing suppressed and activated central condensation
 - [polariton_hpc_pipeline](polariton-hpc-pipeline.md): a Slurm-oriented pipeline for threshold search, scenario sweeps, per-scenario visualization, and final aggregation
 - [threshold_finder](threshold-finder.md): a scalar GPU sweep for estimating a condensation threshold or scanning pulse separation without retaining field data
 - [create_characteristic](create-characteristic.md): a two-dimensional map of peak condensate density over pulse energy and pulse separation

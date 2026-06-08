@@ -79,3 +79,37 @@
 [data-md-color-scheme="slate"] .about-logo-dark {
   display: block !important;
 }
+
+.example-results-stack {
+  display: grid;
+  gap: 1.2rem;
+  margin-top: 1.2rem;
+}
+
+.example-result-card {
+  background: var(--md-code-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.example-result-card h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.75rem;
+}
+
+.example-result-video {
+  background: #000;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 6px;
+  display: block;
+  height: auto;
+  width: 100%;
+}
+
+.example-result-meta {
+  color: var(--md-default-fg-color--light);
+  font-size: 0.82rem;
+  font-weight: 700;
+  margin: 0.7rem 0 0.25rem;
+}

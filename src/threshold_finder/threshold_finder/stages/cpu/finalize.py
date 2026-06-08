@@ -21,6 +21,7 @@ from typing import Any
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 import numpy as np
 
 from threshold_finder.manifest.io import atomic_write_json, set_manifest_field
@@ -63,13 +64,11 @@ def _write_plot(results: list[dict[str, Any]], out_path: str) -> None:
     ok_psi = [r["psi_sq_max"] for r in results if r["status"] == "ok"]
     div_P = [r.get(axis_key, r["P"]) for r in results if r["status"] == "diverged"]
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(8, 5), facecolor="#F5F5F5")
+    ax.set_facecolor("#F5F5F5")
 
     if ok_P:
-        ax.plot(ok_P, ok_psi, "b-o", markersize=4, linewidth=1.5, label="ok")
-        positive = [v for v in ok_psi if v > 0.0]
-        if positive:
-            ax.set_yscale("log")
+        ax.plot(ok_P, ok_psi, "b-o", markersize=4, linewidth=1.5)
 
     if div_P:
         y_div = max(ok_psi) if ok_psi else 1.0
@@ -80,21 +79,12 @@ def _write_plot(results: list[dict[str, Any]], out_path: str) -> None:
             color="red",
             s=60,
             zorder=5,
-            label=f"diverged ({len(div_P)})",
         )
 
-    ax.set_xlabel(axis_label)
-    ax.set_ylabel(r"$\max |\psi|^2$")
-    ax.set_title(rf"$\psi_\mathrm{{max}}^2$ vs {axis_label}")
-    ax.axhline(
-        CONDENSATION_PSI_SQ_THRESHOLD,
-        color="crimson",
-        linestyle="--",
-        linewidth=1.0,
-        label=r"$|\psi|^2_{max}=5\times10^{-2}$",
-    )
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=5))
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
+    ax.tick_params(axis="both", which="major", labelsize=18, length=7, width=1.2)
+    ax.grid(True, alpha=0.25)
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
