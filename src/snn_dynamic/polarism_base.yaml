@@ -1,0 +1,62 @@
+physics:
+  hbar: 0.6582119514
+  m_eff: 0.32
+  gamma_C: 0.1
+  gamma_R: 0.15
+  gamma_I: 0.001
+  g_C: 0.00024
+  g_R: 0.0006
+  g_I: 0.0
+  R: 0.023
+  kappa: 0.05
+  kinetic_relaxation_eta: 1.0e-5
+  init_mode: filtered_complex_gaussian
+  init_k_cutoff_um: 3.0
+  init_seed: 42
+  init_eps: 1.0e-3
+grid:
+  nx: 1024
+  ny: 1024
+  lx: 160.0
+  ly: 160.0
+  grid_type: periodic
+boundary_condition:
+  absorption: cap
+  profile_type: sin2
+  strength: 5.0
+  mask_width_percent: 0.2
+potential:
+  expose_results: false
+  potential_type: zero
+laser:
+  expose_results: false
+  mode: single
+  laser_type: pulse-gaussian
+  P0: 0.0
+  Pmax: 0.0
+  x0: 0.0
+  y0: 0.0
+  sigma_space: 2.0
+  sigma_time: 1.5
+  pulse_separation: 10.0
+  n_pulses: 10
+  cutoff_sigma: 3.0
+  power_definition: pulse_energy
+reservoir:
+  expose_results: false
+  reservoir_type: quadratic-double
+solver:
+  method: ifrk4-fft-cuda
+  laplacian: five-point
+  dt: 0.01
+  total_time: 200.0
+  precision: double
+result:
+  real_time_view: false
+  save_results: false
+  save_hdf5: false
+  save_json: false
+  save_npy: false
+compute_engine:
+  use_gpu: true
+  gpu_device: 0
