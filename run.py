@@ -6,7 +6,8 @@ import tyro
 import polarism as ps
 from polarism.compute_engine import compute_engine
 
-def main():
+
+def main() -> None:
     """Run the command-line entry point."""
     cfg = tyro.cli(ps.Config)
     compute_engine.configure(cfg.compute_engine)
