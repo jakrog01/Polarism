@@ -61,6 +61,8 @@ class IPRK4Solver(AbstractSolver):
 
         self._exp_L_half = self.xp.exp(self._L * (dt / 2))
         self._exp_L_full = self.xp.exp(self._L * dt)
+        self._exp_L_neg_half = self.xp.exp(-self._L * (dt / 2))
+        self._exp_L_neg_full = self.xp.exp(-self._L * dt)
         self._hbar_over_2m = hbar / (2.0 * m_eff)
 
         self._dctn = None
@@ -111,7 +113,7 @@ class IPRK4Solver(AbstractSolver):
             return result
         return self.xp.fft.ifft2(psi_k)
 
-    def _nonlinear_rhs(self, psi, nR, nI, potential):
+    def _nonlinear_rhs(self, psi, nR, nI, potential, psi_k=None):
         """Compute the nonlinear right-hand side."""
         hbar = self.config.physics.hbar
         g_C = self.config.physics.g_C
@@ -126,7 +128,9 @@ class IPRK4Solver(AbstractSolver):
         rhs = (-1j / hbar) * eff_energy * psi + gain_loss * psi
 
         if self._eta != 0.0:
-            lap_psi = self._inverse(-self._L_eig * self._forward(psi))
+            if psi_k is None:
+                psi_k = self._forward(psi)
+            lap_psi = self._inverse(-self._L_eig * psi_k)
             rhs = rhs + self._eta * nR * self._hbar_over_2m * lap_psi
 
         return rhs
@@ -148,7 +152,7 @@ class IPRK4Solver(AbstractSolver):
         psi0_k = self._forward(psi0)
         nR_0 = reservoir.get_active_density(res0)
         nI_0 = reservoir.get_inactive_density(res0)
-        N1 = self._nonlinear_rhs(psi0, nR_0, nI_0, potential)
+        N1 = self._nonlinear_rhs(psi0, nR_0, nI_0, potential, psi0_k)
         N1_k = self._forward(N1)
         k1_u = N1_k
         k1_res = reservoir.get_derivatives(psi0, pump, res0)
@@ -159,10 +163,9 @@ class IPRK4Solver(AbstractSolver):
         res_mid = tuple(r + 0.5 * dt * k for r, k in zip(res0, k1_res))
         nR_mid = reservoir.get_active_density(res_mid)
         nI_mid = reservoir.get_inactive_density(res_mid)
-        N2 = self._nonlinear_rhs(psi_mid, nR_mid, nI_mid, potential)
+        N2 = self._nonlinear_rhs(psi_mid, nR_mid, nI_mid, potential, psi_mid_k)
         N2_k = self._forward(N2)
-        exp_L_neg_half = 1.0 / self._exp_L_half
-        k2_u = exp_L_neg_half * N2_k
+        k2_u = self._exp_L_neg_half * N2_k
         k2_res = reservoir.get_derivatives(psi_mid, pump, res_mid)
 
         u_mid2 = psi0_k + (dt / 2) * k2_u
@@ -171,9 +174,9 @@ class IPRK4Solver(AbstractSolver):
         res_mid2 = tuple(r + 0.5 * dt * k for r, k in zip(res0, k2_res))
         nR_mid2 = reservoir.get_active_density(res_mid2)
         nI_mid2 = reservoir.get_inactive_density(res_mid2)
-        N3 = self._nonlinear_rhs(psi_mid2, nR_mid2, nI_mid2, potential)
+        N3 = self._nonlinear_rhs(psi_mid2, nR_mid2, nI_mid2, potential, psi_mid2_k)
         N3_k = self._forward(N3)
-        k3_u = exp_L_neg_half * N3_k
+        k3_u = self._exp_L_neg_half * N3_k
         k3_res = reservoir.get_derivatives(psi_mid2, pump, res_mid2)
 
         u_end = psi0_k + dt * k3_u
@@ -182,10 +185,9 @@ class IPRK4Solver(AbstractSolver):
         res_end = tuple(r + dt * k for r, k in zip(res0, k3_res))
         nR_end = reservoir.get_active_density(res_end)
         nI_end = reservoir.get_inactive_density(res_end)
-        N4 = self._nonlinear_rhs(psi_end, nR_end, nI_end, potential)
+        N4 = self._nonlinear_rhs(psi_end, nR_end, nI_end, potential, psi_end_k)
         N4_k = self._forward(N4)
-        exp_L_neg_full = 1.0 / self._exp_L_full
-        k4_u = exp_L_neg_full * N4_k
+        k4_u = self._exp_L_neg_full * N4_k
         k4_res = reservoir.get_derivatives(psi_end, pump, res_end)
 
         u_new = psi0_k + (dt / 6.0) * (k1_u + 2 * k2_u + 2 * k3_u + k4_u)
@@ -198,4 +200,4 @@ class IPRK4Solver(AbstractSolver):
             r0 + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
             for r0, k1, k2, k3, k4 in zip(res0, k1_res, k2_res, k3_res, k4_res)
         )
-        reservoir.set_state(res_new)
+        reservoir.set_state(tuple(self.xp.maximum(x, 0) for x in res_new))
