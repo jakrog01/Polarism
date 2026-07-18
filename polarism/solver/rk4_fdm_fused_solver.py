@@ -54,9 +54,9 @@ class RK4FDMFusedSolver(AbstractSolver):
         self._k3_psi = _empty
         self._k4_psi = _empty
         self._tmp_psi = _empty
+        self._psi_next = _empty
 
         self._fused_rhs = None
-        self._fused_combine = None
         self._setup_fused_kernels()
 
     def _setup_fused_kernels(self):
@@ -88,13 +88,7 @@ class RK4FDMFusedSolver(AbstractSolver):
                 + eta * n_active * hbar_over_2m * lap
             )
 
-        @xp.fuse()
-        def fused_combine_rk4(psi0, k1, k2, k3, k4, dt_over_6):
-            """Combine RK4 stages in one fused kernel."""
-            return psi0 + dt_over_6 * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-
         self._fused_rhs = fused_rhs
-        self._fused_combine = fused_combine_rk4
 
     def _ensure_buffers(self, psi):
         """Allocate work buffers for the current field shape."""
@@ -109,6 +103,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         self._k3_psi = xp.empty(shape, dtype=dtype)
         self._k4_psi = xp.empty(shape, dtype=dtype)
         self._tmp_psi = xp.empty(shape, dtype=dtype)
+        self._psi_next = xp.empty(shape, dtype=dtype)
         self._buf_initialized = True
 
     def _laplacian(self, psi, out) -> None:
@@ -196,6 +191,19 @@ class RK4FDMFusedSolver(AbstractSolver):
                 + self._kinetic_relaxation_eta * n_active * self._hbar_over_2m * self._lap
             )
 
+    def _combine_rk4_into(self, psi0, dt_over_6) -> None:
+        """Write the RK4 stage combination into the reusable output buffer."""
+        self.xp.add(
+            psi0,
+            dt_over_6 * (
+                self._k1_psi
+                + 2.0 * self._k2_psi
+                + 2.0 * self._k3_psi
+                + self._k4_psi
+            ),
+            out=self._psi_next,
+        )
+
     def step(
         self,
         potential: Union[np.ndarray, cp.ndarray],
@@ -204,7 +212,12 @@ class RK4FDMFusedSolver(AbstractSolver):
         boundary_condition: BoundaryCondition,
         state: SimulationState,
     ) -> None:
-        """Advance the solver by one time step."""
+        """Advance the solver by one time step.
+
+        Note: ``state.psi`` is rebound to an internal buffer that is overwritten
+        on the next call. Consumers that need to persist ``psi`` across steps
+        must copy it.
+        """
         dt = self._dt
         psi0 = state.psi
         self._ensure_buffers(psi0)
@@ -241,14 +254,8 @@ class RK4FDMFusedSolver(AbstractSolver):
         k4_res = reservoir.get_derivatives(self._tmp_psi, pump, res4)
 
         dt6 = dt / 6.0
-        if self._fused_combine is not None:
-            state.psi = self._fused_combine(
-                psi0, self._k1_psi, self._k2_psi, self._k3_psi, self._k4_psi, dt6
-            )
-        else:
-            state.psi = psi0 + dt6 * (
-                self._k1_psi + 2.0 * self._k2_psi + 2.0 * self._k3_psi + self._k4_psi
-            )
+        self._combine_rk4_into(psi0, dt6)
+        state.psi = self._psi_next
 
         state.psi = boundary_condition.after_step_action(state.psi)
 

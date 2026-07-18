@@ -6,9 +6,25 @@
 bash submit.sh [--config config.yaml] [--runs-dir /path/to/runs] [--dry-run] [--wait]
 ```
 
-This is the only supported entry point. It validates config, creates a run
+This is the production entry point. It validates config, creates a run
 directory, and submits the full Rysy workflow as Slurm jobs connected with
 `afterok` dependencies. Legacy paths are in `legacy/`.
+
+Prepared run directories can also be executed locally across multiple GPUs:
+
+```bash
+python -m pipeline.config.prepare_run --config config.yaml --run-dir /path/to/run
+python -m pipeline.stages.gpu.run_scenarios_local --run-dir /path/to/run --gpu-ids 0,1,2,3
+python -m pipeline.stages.cpu.finalize --run-dir /path/to/run
+```
+
+The local GPU pool also reads optional run-config values:
+
+```yaml
+parallel:
+  gpu_ids: [0, 1, 2, 3]
+  scenarios_per_node: 4
+```
 
 ---
 
@@ -61,6 +77,11 @@ submit.sh  (Rysy login node)
     ├── sbatch scenario array  --dependency=afterok:<threshold_job>  --array=0-(N-1)%K
     │       each task: simulate on NVMe scratch -> render inline -> copy back artifacts
     └── sbatch finalize        --dependency=afterok:<scenario_array_job>
+
+local prepared run
+    │
+    ├── run_scenarios_local    one worker per configured GPU
+    └── finalize
 ```
 
 - `submit.sh` is asynchronous by default: once all jobs are accepted by Slurm,

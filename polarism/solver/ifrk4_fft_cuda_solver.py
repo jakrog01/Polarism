@@ -88,6 +88,7 @@ class IFRK4FFTCudaSolver(AbstractSolver):
         res_state: tuple,
         potential: Union[np.ndarray, cp.ndarray],
         reservoir: AbstractReservoir,
+        psi_k: Union[np.ndarray, cp.ndarray] | None = None,
     ) -> Union[np.ndarray, cp.ndarray]:
         """Evaluate the nonlinear GPE right-hand side in real space."""
         xp = self.xp
@@ -100,7 +101,9 @@ class IFRK4FFTCudaSolver(AbstractSolver):
         rhs = (-1j / self._hbar) * eff_energy * psi + gain_loss * psi
 
         if self._eta != 0.0:
-            lap_psi = xp.fft.ifft2(self._minus_k_squared * xp.fft.fft2(psi))
+            if psi_k is None:
+                psi_k = xp.fft.fft2(psi)
+            lap_psi = xp.fft.ifft2(self._minus_k_squared * psi_k)
             rhs = rhs + self._eta * n_active * self._hbar_over_2m * lap_psi
 
         return rhs
@@ -125,28 +128,28 @@ class IFRK4FFTCudaSolver(AbstractSolver):
         res0 = reservoir.get_state()
         psi0_k = xp.fft.fft2(psi0)
 
-        N1 = self._rhs_psi(psi0, res0, potential, reservoir)
+        N1 = self._rhs_psi(psi0, res0, potential, reservoir, psi0_k)
         k1_psi = xp.fft.fft2(N1)
         k1_res = reservoir.get_derivatives(psi0, pump, res0)
 
         psi2_k = self._exp_L_half * (psi0_k + 0.5 * dt * k1_psi)
         psi2 = xp.fft.ifft2(psi2_k)
         res2 = tuple(r + 0.5 * dt * k for r, k in zip(res0, k1_res))
-        N2 = self._rhs_psi(psi2, res2, potential, reservoir)
+        N2 = self._rhs_psi(psi2, res2, potential, reservoir, psi2_k)
         k2_psi = self._exp_L_neg_half * xp.fft.fft2(N2)
         k2_res = reservoir.get_derivatives(psi2, pump, res2)
 
         psi3_k = self._exp_L_half * (psi0_k + 0.5 * dt * k2_psi)
         psi3 = xp.fft.ifft2(psi3_k)
         res3 = tuple(r + 0.5 * dt * k for r, k in zip(res0, k2_res))
-        N3 = self._rhs_psi(psi3, res3, potential, reservoir)
+        N3 = self._rhs_psi(psi3, res3, potential, reservoir, psi3_k)
         k3_psi = self._exp_L_neg_half * xp.fft.fft2(N3)
         k3_res = reservoir.get_derivatives(psi3, pump, res3)
 
         psi4_k = self._exp_L_full * (psi0_k + dt * k3_psi)
         psi4 = xp.fft.ifft2(psi4_k)
         res4 = tuple(r + dt * k for r, k in zip(res0, k3_res))
-        N4 = self._rhs_psi(psi4, res4, potential, reservoir)
+        N4 = self._rhs_psi(psi4, res4, potential, reservoir, psi4_k)
         k4_psi = self._exp_L_neg_full * xp.fft.fft2(N4)
         k4_res = reservoir.get_derivatives(psi4, pump, res4)
 
