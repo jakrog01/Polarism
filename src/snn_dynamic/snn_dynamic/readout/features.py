@@ -7,6 +7,7 @@ import numpy as np
 
 from snn_dynamic.config.loader import ReadoutConfig
 from snn_dynamic.simulation.resources import SharedSimResources
+from snn_dynamic.simulation.runner_batched import simulate_batch
 from snn_dynamic.simulation.runner import simulate_one_image
 
 
@@ -77,6 +78,41 @@ def collect_features(
         raise ValueError(
             "readout.feature_mode must be one of 'raw', 'summary', or 'both', "
             f"got {readout.feature_mode!r}"
+        )
+    if readout.batch_size > 1:
+        traces = simulate_batch(
+            resources,
+            p,
+            readout.warmup_ps,
+            readout.stride_steps,
+            readout.record_reservoir,
+            readout.batch_size,
+        )
+        feature0 = _build_feature_vector(
+            traces.psi[0],
+            traces.n_active[0] if traces.n_active is not None else None,
+            traces.n_inactive[0] if traces.n_inactive is not None else None,
+            traces.times_ps,
+            readout.feature_mode,
+        )
+        features = np.empty((p.shape[0], feature0.size), dtype=np.float64)
+        features[0] = feature0
+        for i in range(1, p.shape[0]):
+            features[i] = _build_feature_vector(
+                traces.psi[i],
+                traces.n_active[i] if traces.n_active is not None else None,
+                traces.n_inactive[i] if traces.n_inactive is not None else None,
+                traces.times_ps,
+                readout.feature_mode,
+            )
+        return FeatureBundle(
+            features=features,
+            labels=y,
+            traces_psi=traces.psi,
+            traces_n_active=traces.n_active,
+            traces_n_inactive=traces.n_inactive,
+            trace_times_ps=traces.times_ps,
+            feature_shape=(feature0.size,),
         )
     first = simulate_one_image(
         resources,

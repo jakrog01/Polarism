@@ -56,7 +56,7 @@ class AbstractReservoir(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_derivatives(self, psi, pump, state: tuple) -> tuple:
+    def get_derivatives(self, psi, pump, state: tuple, rho=None) -> tuple:
         """Return the reservoir time derivatives."""
         raise NotImplementedError
 

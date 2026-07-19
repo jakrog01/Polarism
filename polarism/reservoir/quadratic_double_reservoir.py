@@ -35,6 +35,9 @@ if TYPE_CHECKING:
     import numpy as np
 
 
+_QDOUBLE_RHS_KERNELS: dict[tuple[str, int], object] = {}
+
+
 class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
     """Two-reservoir model with quadratic inactive→active transfer."""
 
@@ -115,16 +118,47 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
         state: tuple[
             Union["np.ndarray", "cp.ndarray"], Union["np.ndarray", "cp.ndarray"]
         ],
+        rho: Union["np.ndarray", "cp.ndarray"] | None = None,
     ) -> tuple[
         Union["np.ndarray", "cp.ndarray"], Union["np.ndarray", "cp.ndarray"]
     ]:
         """Return time derivatives ``(dnR, dnI)``."""
         nR, nI = state
-        abs_psi2 = self.xp.abs(psi) ** 2
-        transfer = self.kappa * nI ** 2
+        abs_psi2 = rho if rho is not None else psi.real * psi.real + psi.imag * psi.imag
 
-        dnR = transfer - self.gamma_R * nR - self.R * nR * abs_psi2
-        dnI = Pxy - transfer - self.gamma_I * nI
+        if nR.shape[-2:] != psi.shape[-2:] or nI.shape[-2:] != psi.shape[-2:]:
+            raise ValueError(
+                "reservoir state and psi must share trailing grid shape, "
+                f"got nR={nR.shape}, nI={nI.shape}, psi={psi.shape}"
+            )
+        if Pxy.shape[-2:] != psi.shape[-2:]:
+            raise ValueError(
+                "pump and psi must share trailing grid shape, "
+                f"got pump={Pxy.shape}, psi={psi.shape}"
+            )
+
+        kernel = self._get_qdouble_rhs_kernel()
+        if kernel is None:
+            transfer = self.kappa * nI * nI
+            dnR = transfer - self.gamma_R * nR - self.R * nR * abs_psi2
+            dnI = Pxy - transfer - self.gamma_I * nI
+        else:
+            if abs_psi2.dtype != self.nR.dtype:
+                raise TypeError(
+                    "rho and reservoir dtypes must match for qdouble_rhs, "
+                    f"got rho={abs_psi2.dtype}, reservoir={self.nR.dtype}"
+                )
+            dnR, dnI = kernel(
+                nR,
+                nI,
+                abs_psi2,
+                Pxy,
+                self.kappa,
+                self.gamma_R,
+                self.gamma_I,
+                self.R,
+            )
+
         if self.reservoir_diffusion_R != 0.0:
             dnR = dnR + self.reservoir_diffusion_R * real_laplacian(
                 nR, self.xp, self.dx, self.dy, self.grid_type
@@ -135,6 +169,28 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
             )
 
         return (dnR, dnI)
+
+    def _get_qdouble_rhs_kernel(self):
+        if getattr(self.xp, "__name__", "") != "cupy":
+            return None
+        dtype_name = self.nR.dtype.name
+        device_id = int(self.xp.cuda.runtime.getDevice())
+        cache_key = (dtype_name, device_id)
+        kernel = _QDOUBLE_RHS_KERNELS.get(cache_key)
+        if kernel is not None:
+            return kernel
+        kernel = self.xp.ElementwiseKernel(
+            "T nR, T nI, T rho, T Pxy, T kappa, T gammaR, T gammaI, T R",
+            "T dnR, T dnI",
+            """
+            T transfer = kappa * nI * nI;
+            dnR = transfer - gammaR * nR - R * nR * rho;
+            dnI = Pxy - transfer - gammaI * nI;
+            """,
+            f"qdouble_rhs_{dtype_name}",
+        )
+        _QDOUBLE_RHS_KERNELS[cache_key] = kernel
+        return kernel
 
     def step(
         self,

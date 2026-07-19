@@ -102,6 +102,11 @@ def simulate_one_image(
     n_channels = int(resources.readout_masks.shape[0])
     p_device = xp.asarray(p, dtype=xp.float64)
     spatial_pump = xp.tensordot(p_device, resources.envelopes_stack, axes=1)
+    pump_zero = xp.zeros_like(spatial_pump)
+    factors_host = _pulse_time_factors(n_steps, float(cfg.solver.dt), resources.pulse_scalars)
+    factors_device = xp.asarray(factors_host, dtype=xp.float64)
+    nonzero_factors = factors_host != 0.0
+    use_zero_branch = bool(np.any(~nonzero_factors))
     traces_psi = xp.empty((n_out, n_channels), dtype=xp.float64)
     traces_n_active = (
         xp.empty((n_out, n_channels), dtype=xp.float64) if record_reservoir else None
@@ -112,10 +117,14 @@ def simulate_one_image(
     times_ps = np.empty(n_out, dtype=np.float64)
     out_idx = 0
     for step in range(n_steps):
-        t = float(step) * float(cfg.solver.dt)
-        pump_t = _pulse_time_factor(t, resources.pulse_scalars) * spatial_pump
+        pump_t = (
+            factors_device[step] * spatial_pump
+            if not use_zero_branch or nonzero_factors[step]
+            else pump_zero
+        )
         resources.solver.step(resources.potential, pump_t, reservoir, resources.bc, state)
         if step >= warmup_step and (step - warmup_step) % stride_steps == 0:
+            state.materialize_psi(xp)
             psi = state.psi
             rho = psi.real * psi.real + psi.imag * psi.imag
             traces_psi[out_idx] = xp.tensordot(resources.readout_masks, rho, axes=2)
@@ -160,6 +169,17 @@ def _pulse_time_factor(t: float, pulse_scalars: PulseScalars) -> float:
     return float(
         np.exp(-0.5 * (dt_local / pulse_scalars.sigma_time) ** 2)
         / pulse_scalars.temporal_integral
+    )
+
+
+def _pulse_time_factors(
+    n_steps: int,
+    dt: float,
+    pulse_scalars: PulseScalars,
+) -> np.ndarray:
+    return np.asarray(
+        [_pulse_time_factor(float(step) * dt, pulse_scalars) for step in range(n_steps)],
+        dtype=np.float64,
     )
 
 

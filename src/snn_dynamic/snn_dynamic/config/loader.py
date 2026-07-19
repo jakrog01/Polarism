@@ -118,6 +118,8 @@ class ReadoutConfig:
         Whether active and inactive reservoir traces are recorded.
     feature_mode
         Feature construction mode: ``"raw"``, ``"summary"``, or ``"both"``.
+    batch_size
+        Number of samples simulated together on the same GPU grid.
     """
 
     warmup_ps: float
@@ -125,6 +127,7 @@ class ReadoutConfig:
     mask_radius_um: float
     record_reservoir: bool
     feature_mode: str
+    batch_size: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,7 +289,10 @@ def _make_dataclass(cls: type[T], values: dict[str, Any]) -> T:
         raise ValueError(
             f"Unknown keys for {cls.__name__}: {sorted(unknown)}"
         )
-    return cls(**values)
+    item = cls(**values)
+    if isinstance(item, ReadoutConfig) and item.batch_size <= 0:
+        raise ValueError(f"ReadoutConfig.batch_size must be positive, got {item.batch_size}")
+    return item
 
 
 def _resolve_path(base: Path, raw_path: str) -> Path:

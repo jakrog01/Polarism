@@ -23,6 +23,7 @@ readout:
   mask_radius_um: 3.0
   record_reservoir: true
   feature_mode: summary
+  batch_size: 32
 classifier:
   test_fraction: 0.20
   C: 1.0

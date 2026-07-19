@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 @register_absorption("no-absorption")
 class NoAbsorptionStrategy(AbsorptionStrategy):
     """Leave the field unchanged at the boundary."""
+    after_step_is_noop = True
+
     def __init__(
         self,
         grid: SimulationGrid2D | None,

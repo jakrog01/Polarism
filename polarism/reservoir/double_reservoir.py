@@ -89,10 +89,11 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         psi: Union[np.ndarray, cp.ndarray],
         Pxy: Union[np.ndarray, cp.ndarray],
         state: tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]],
+        rho: Union[np.ndarray, cp.ndarray] | None = None,
     ) -> tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]]:
         """Return the reservoir time derivatives."""
         nA, nI = state
-        abs_psi2 = self.xp.abs(psi) ** 2
+        abs_psi2 = rho if rho is not None else psi.real * psi.real + psi.imag * psi.imag
 
         dnI = Pxy - (self.gamma_I + self.R_IA) * nI + self.R_AI * nA
         dnA = self.R_IA * nI - (self.gamma_A + self.R_AI + self.R * abs_psi2) * nA

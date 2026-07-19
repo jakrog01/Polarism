@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
 class AbsorptionStrategy(ABC):
     """Define the interface for boundary absorption."""
+    after_step_is_noop: bool = False
+
     @abstractmethod
     def __init__(self):
         """Set up the absorption strategy."""

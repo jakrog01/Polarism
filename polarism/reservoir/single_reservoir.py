@@ -65,10 +65,11 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         psi: Union[np.ndarray, cp.ndarray],
         Pxy: Union[np.ndarray, cp.ndarray],
         state: tuple[Union[np.ndarray, cp.ndarray]],
+        rho: Union[np.ndarray, cp.ndarray] | None = None,
     ) -> tuple[Union[np.ndarray, cp.ndarray]]:
         """Return the reservoir time derivatives."""
         nR = state[0]
-        abs_psi2 = self.xp.abs(psi) ** 2
+        abs_psi2 = rho if rho is not None else psi.real * psi.real + psi.imag * psi.imag
         dnR = Pxy - (self.gamma_r + self.R * abs_psi2) * nR
         if self.reservoir_diffusion_R != 0.0:
             dnR = dnR + self.reservoir_diffusion_R * real_laplacian(
