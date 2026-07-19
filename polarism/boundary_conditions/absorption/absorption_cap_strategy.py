@@ -20,6 +20,8 @@ from polarism.grid.simulation_grid_2d import SimulationGrid2D
 @register_absorption("cap")
 class AbsorptionCapStrategy(AbsorptionStrategy):
     """Apply boundary absorption with a complex cap."""
+    after_step_is_noop = True
+
     grid: SimulationGrid2D
     absorption_cfg: BoundaryConditionParameters
     physics_constants: PhysicsConstants
