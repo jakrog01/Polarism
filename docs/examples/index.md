@@ -15,6 +15,7 @@ This section documents the example applications that live in `src/`. These are n
 - [threshold_finder](threshold-finder.md): a scalar GPU sweep for estimating a condensation threshold or scanning pulse separation without retaining field data
 - [create_characteristic](create-characteristic.md): a two-dimensional map of peak condensate density over pulse energy and pulse separation
 - [dot_response_fit](dot-response-fit.md): a Slurm-oriented MNIST batch workflow for fitting the Gaussian pump spot size against time-only ODE reference traces
+- [mnist_digits_polariton_snn_dynamic](mnist-digits-polariton-snn-dynamic.md): a dynamic MNIST SNN workflow with a CPU-side pitch/sigma discretization gate and optional pump-allocation profiling
 
 ## Relationship to the package
 

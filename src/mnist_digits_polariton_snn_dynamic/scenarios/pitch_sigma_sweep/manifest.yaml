@@ -1,0 +1,28 @@
+campaign_name: pitch_sigma_sweep
+description: |
+  Sweep pitch/sigma_space testujacy spatial mixing hypoverification.
+baseline_scenario_id: pitch12_sigma2_baseline
+stages:
+  calibrate:
+    kind: gpu
+    time_env: SNN_MIX_CAL_TIME
+    output: calibration.json
+  run:
+    kind: gpu
+    time_env: SNN_MIX_FULL_TIME
+    calibrated_power: true
+    depends_on:
+      - calibrate
+  finalize:
+    kind: cpu
+    time_env: FINALIZE_TIME
+    output: ablation_report.json
+scenarios:
+  - id: pitch12_sigma2_baseline
+    config: pitch12_sigma2_baseline.yaml
+  - id: pitch08_sigma1_33
+    config: pitch08_sigma1_33.yaml
+  - id: pitch06_sigma1_00
+    config: pitch06_sigma1_00.yaml
+  - id: pitch04_sigma0_67
+    config: pitch04_sigma0_67.yaml

@@ -1,0 +1,12 @@
+{"dependency": "none", "job_id": "DRYRUN_pitch12_sigma2_baseline_calibrate", "scenario_id": "pitch12_sigma2_baseline", "stage": "calibrate", "wall_time": "24:00:00"}
+{"dependency": "afterok:DRYRUN_pitch12_sigma2_baseline_calibrate", "job_id": "DRYRUN_pitch12_sigma2_baseline_run", "scenario_id": "pitch12_sigma2_baseline", "stage": "run", "wall_time": "48:00:00"}
+{"dependency": "afterok:DRYRUN_pitch12_sigma2_baseline_run", "job_id": "DRYRUN_pitch12_sigma2_baseline_finalize", "scenario_id": "pitch12_sigma2_baseline", "stage": "finalize", "wall_time": "00:10:00"}
+{"dependency": "afterok:DRYRUN_pitch12_sigma2_baseline_finalize", "job_id": "DRYRUN_pitch08_sigma1_33_calibrate", "scenario_id": "pitch08_sigma1_33", "stage": "calibrate", "wall_time": "24:00:00"}
+{"dependency": "afterok:DRYRUN_pitch08_sigma1_33_calibrate", "job_id": "DRYRUN_pitch08_sigma1_33_run", "scenario_id": "pitch08_sigma1_33", "stage": "run", "wall_time": "48:00:00"}
+{"dependency": "afterok:DRYRUN_pitch08_sigma1_33_run", "job_id": "DRYRUN_pitch08_sigma1_33_finalize", "scenario_id": "pitch08_sigma1_33", "stage": "finalize", "wall_time": "00:10:00"}
+{"dependency": "afterok:DRYRUN_pitch08_sigma1_33_finalize", "job_id": "DRYRUN_pitch06_sigma1_00_calibrate", "scenario_id": "pitch06_sigma1_00", "stage": "calibrate", "wall_time": "24:00:00"}
+{"dependency": "afterok:DRYRUN_pitch06_sigma1_00_calibrate", "job_id": "DRYRUN_pitch06_sigma1_00_run", "scenario_id": "pitch06_sigma1_00", "stage": "run", "wall_time": "48:00:00"}
+{"dependency": "afterok:DRYRUN_pitch06_sigma1_00_run", "job_id": "DRYRUN_pitch06_sigma1_00_finalize", "scenario_id": "pitch06_sigma1_00", "stage": "finalize", "wall_time": "00:10:00"}
+{"dependency": "afterok:DRYRUN_pitch06_sigma1_00_finalize", "job_id": "DRYRUN_pitch04_sigma0_67_calibrate", "scenario_id": "pitch04_sigma0_67", "stage": "calibrate", "wall_time": "24:00:00"}
+{"dependency": "afterok:DRYRUN_pitch04_sigma0_67_calibrate", "job_id": "DRYRUN_pitch04_sigma0_67_run", "scenario_id": "pitch04_sigma0_67", "stage": "run", "wall_time": "48:00:00"}
+{"dependency": "afterok:DRYRUN_pitch04_sigma0_67_run", "job_id": "DRYRUN_pitch04_sigma0_67_finalize", "scenario_id": "pitch04_sigma0_67", "stage": "finalize", "wall_time": "00:10:00"}

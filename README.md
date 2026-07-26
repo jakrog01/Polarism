@@ -36,6 +36,8 @@ src/                          Example applications built on `polarism`
   dot_response_fit/           Dot-response analysis workflow
   threshold_finder/           Threshold-search workflow
   create_characteristic/      2-D pulse-energy/separation characteristic maps
+  mnist_digits_polariton_snn_dynamic/
+                               Dynamic MNIST SNN workflow with pitch/sigma sweep
 
 docs/                         MkDocs Material documentation site
 run.py                        Tyro CLI over the public `polarism.Config`
@@ -136,6 +138,26 @@ pipeline entry point and resource model are documented in:
 - [`src/polariton_hpc_pipeline/README.md`](src/polariton_hpc_pipeline/README.md)
 - [`src/polariton_hpc_pipeline/cluster/README.md`](src/polariton_hpc_pipeline/cluster/README.md)
 - [`src/polariton_hpc_pipeline/scenarios/README.md`](src/polariton_hpc_pipeline/scenarios/README.md)
+
+## Dynamic MNIST SNN Workflow
+
+The dynamic MNIST workflow lives in
+[`src/mnist_digits_polariton_snn_dynamic/`](src/mnist_digits_polariton_snn_dynamic/).
+It maps downsampled MNIST digits onto a 7x7 lattice of pulsed Gaussian pumps and
+records dynamic readout traces for classification.
+
+Before submitting the pitch/sigma campaign, run the CPU-side discretization
+gate:
+
+```bash
+.venv/bin/python src/mnist_digits_polariton_snn_dynamic/scripts/check_pitch_sigma_discretization.py
+```
+
+The current `pitch_sigma_sweep` scenarios pass the `1.0e-4` relative-error
+threshold against the analytic Gaussian spatial integral; the worst measured
+lattice error is `3.18e-16`. The review report and optional pump-allocation
+profile are documented in
+[`src/mnist_digits_polariton_snn_dynamic/scripts/review_findings_report.md`](src/mnist_digits_polariton_snn_dynamic/scripts/review_findings_report.md).
 
 ## Current Production Conventions
 

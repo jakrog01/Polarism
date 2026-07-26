@@ -15,10 +15,9 @@ def main() -> None:
     if len(sys.argv) >= 3 and sys.argv[1] == "--snn-config":
         root = Path(__file__).resolve().parent
         sys.path[:0] = [
-            str(root / "src" / "snn_dynamic"),
-            str(root / "src" / "mnist_common"),
+            str(root / "src" / "mnist_digits_polariton_snn_dynamic"),
         ]
-        from snn_dynamic.pipeline import main as snn_main
+        from mnist_digits_polariton_snn_dynamic.pipeline import main as snn_main
 
         sys.argv = [sys.argv[0], "--config", sys.argv[2], *sys.argv[3:]]
         snn_main()

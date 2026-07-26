@@ -4,6 +4,7 @@
 __pycache__/
 simulation_results/
 test_results/
+scripts/
 data/
 slurm.env
 *.md

@@ -24,6 +24,7 @@ nav:
       - threshold_finder Pipeline: examples/threshold-finder.md
       - create_characteristic Pipeline: examples/create-characteristic.md
       - dot_response_fit Pipeline: examples/dot-response-fit.md
+      - mnist_digits_polariton_snn_dynamic Pipeline: examples/mnist-digits-polariton-snn-dynamic.md
   - API Reference:
       - Overview: api/overview.md
       - Option Matrix: api/option-matrix.md

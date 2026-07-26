@@ -1,0 +1,39 @@
+# scenario: pitch08_sigma1_33
+# rationale: tighter spacing while preserving pitch/sigma = 6
+# expected_duration_min: 90
+# delta_vs_baseline: pitch 12->8, sigma 2.0->1.3333333333333333, mask_r 3.0->2.0
+polarism_config_path: "../../polarism_base.yaml"
+data:
+  path: "~/mnist/mnist.npz"
+  n_samples: 1000
+  seed: 0
+geometry:
+  type: grid_lattice
+  n_side: 7
+  center_x_um: 0.0
+  center_y_um: 0.0
+  pitch_um: 8.0
+  sigma_space_um: 1.3333333333333333
+pulse:
+  sigma_time: 1.5
+  pulse_separation: 10.0
+  n_pulses: 10
+  cutoff_sigma: 3.0
+  power_definition: pulse_energy
+encoding:
+  type: linear_pixel
+  n_side: 7
+  power_min: 0.0
+  power_max: 3000.0
+readout:
+  warmup_ps: 0.0
+  stride_steps: 10
+  mask_radius_um: 2.0
+  record_reservoir: true
+  feature_mode: summary
+  batch_size: 32
+classifier:
+  test_fraction: 0.20
+  C: 1.0
+  max_iter: 2000
+output_dir: "simulation_results/mnist_digits_polariton_snn_dynamic/pitch08_sigma1_33"
