@@ -4,10 +4,12 @@
 __pycache__/
 simulation_results/
 test_results/
+artifacts/
 scripts/
 data/
 *.md
 !README.md
+!FINDINGS.md
 !gitignore
 !docs/
 !docs/*.md
