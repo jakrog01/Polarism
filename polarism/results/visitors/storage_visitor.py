@@ -30,7 +30,9 @@ class StorageVisitor(ResultVisitor):
         self.storages = []
 
         if self.cfg.result.save_hdf5:
-            self.storages.append(HDF5Storage(self.output_dir, self.batch_size))
+            self.storages.append(
+                HDF5Storage(self.output_dir, self.batch_size, config=self.cfg)
+            )
 
         if self.cfg.result.save_json:
             self.storages.append(JSONStorage(self.output_dir, self.batch_size))

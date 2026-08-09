@@ -789,6 +789,7 @@ def _run_benchmark_case(
         lasers_yaml=lasers_yaml,
         solver_name=solver_name,
         total_time=float(t_ref[-1]),
+        use_gpu=compute_engine.use_gpu,
     )
     apply_potential_config(cfg, case.name)
 

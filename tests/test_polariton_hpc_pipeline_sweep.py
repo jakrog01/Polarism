@@ -89,3 +89,15 @@ def test_sweep_label_treats_p_relative_power_modifier_as_reference_power() -> No
     scenario = expanded["scenarios"][0]
     assert scenario["sweep"]["power"] == 100.0
     assert scenario["lasers"][0]["power"] == 60.0
+
+
+def test_sweep_expands_all_requested_axes() -> None:
+    cfg = _base_cfg("P")
+    sweep = cfg["global"]["parameter_sweep"]
+    sweep["power_values"] = [1.0, 2.0, 3.0]
+    sweep["sigma_time_values"] = [1.0, 2.0]
+    sweep["pulse_separation_values"] = [3.0, 4.0, 5.0, 6.0]
+    sweep["sigma_space_values"] = [2.0]
+    expanded, names, _ = expand_parameter_sweep(cfg)
+    assert len(expanded["scenarios"]) == 24 and len(set(names)) == 24
+    assert all("sweep" in scenario for scenario in expanded["scenarios"])

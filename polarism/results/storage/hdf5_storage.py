@@ -1,7 +1,10 @@
 """HDF5 result storage."""
 from __future__ import annotations
 
+import json
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
+from typing import Any
 
 import h5py
 import numpy as np
@@ -15,12 +18,23 @@ class HDF5Storage(BaseStorage):
     h5_file: h5py.File
     h5_datasets: dict[str, h5py.Dataset]
 
-    def __init__(self, output_dir: Path, batch_size: int):
+    def __init__(
+        self,
+        output_dir: Path,
+        batch_size: int,
+        config: Any | None = None,
+    ):
         """Open the HDF5 output file."""
         super().__init__(output_dir, batch_size)
         self.h5_path = self.output_dir / "results.h5"
         self.h5_file = h5py.File(self.h5_path, "w")
         self.h5_datasets = {}
+        if config is not None:
+            config_group = self.h5_file.create_group("config")
+            config_group.attrs["json"] = json.dumps(
+                asdict(config) if is_dataclass(config) else config,
+                sort_keys=True,
+            )
 
     def dump_batch(self) -> None:
         """Write the current batch to HDF5."""

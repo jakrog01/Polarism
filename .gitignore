@@ -4,11 +4,13 @@
 __pycache__/
 simulation_results/
 test_results/
+artifacts/
 scripts/
 data/
 slurm.env
 *.md
 !README.md
+!FINDINGS.md
 !gitignore
 !docs/
 !docs/*.md

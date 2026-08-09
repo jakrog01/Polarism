@@ -5,6 +5,10 @@ import math
 import warnings
 from typing import TYPE_CHECKING
 
+from polarism.boundary_conditions.absorption.absorption_registry import (
+    available_boundary_conditions,
+)
+
 if TYPE_CHECKING:
     from polarism.config.simulation_parameters import Config
 
@@ -117,10 +121,10 @@ def _validate_boundary(cfg: Config) -> None:
             f"boundary_condition.mask_width_percent must be in [0, 0.5], "
             f"got {bc.mask_width_percent}"
         )
-    if bc.absorption not in {"no-absorption", "mask", "cap"}:
+    if bc.absorption not in available_boundary_conditions:
         raise ConfigValidationError(
             f"boundary_condition.absorption='{bc.absorption}' is not recognised. "
-            "Valid values: 'no-absorption', 'mask', 'cap'."
+            f"Valid values: {sorted(available_boundary_conditions)}."
         )
     if bc.absorption != "no-absorption" and bc.profile_type not in _VALID_PROFILE_TYPES:
         raise ConfigValidationError(

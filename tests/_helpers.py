@@ -136,13 +136,18 @@ def make_physics_linear(**overrides):
     return SimpleNamespace(**base)
 
 
-def make_config(dt: float, physics, grid_type: str = "periodic"):
+def make_config(
+    dt: float,
+    physics,
+    grid_type: str = "periodic",
+    reservoir_type: str = "single",
+):
     """Build a small config stub for tests."""
     return SimpleNamespace(
         solver=SimpleNamespace(dt=float(dt)),
         physics=physics,
         grid=SimpleNamespace(grid_type=grid_type),
-        reservoir=SimpleNamespace(reservoir_type="single"),
+        reservoir=SimpleNamespace(reservoir_type=reservoir_type),
     )
 
 
