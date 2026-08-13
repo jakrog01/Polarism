@@ -82,7 +82,7 @@ coefficient so that the corrective action is unambiguous.
 | --- | --- | --- |
 | `mode` | single or multi-pump setup | `single`, `multiple` |
 | `config_file` | YAML file for multi-pump setups | path string |
-| `laser_type` | pump-profile selection | `uniform`, `continuous-gaussian`, `continuous-exp`, `pulse-gaussian` |
+| `laser_type` | pump-profile selection | `uniform`, `continuous-gaussian`, `continuous-exp`, `continuous-exp-length`, `pulse-gaussian` |
 | `P0`, `Pmax` | pump strength parameters; for `pulse-gaussian`, their physical meaning is set by `power_definition` | floats |
 | `power_definition` | interpretation of `P0`, `Pmax`, and per-laser `power` for `pulse-gaussian` | `peak_amplitude`, `pulse_energy` |
 | `x0`, `y0` | pump center | floats |

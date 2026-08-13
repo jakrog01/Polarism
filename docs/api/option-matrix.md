@@ -31,6 +31,7 @@ This page collects the main configuration choices in one place. It is meant as a
 | `uniform` | the pump should be spatially homogeneous | simplest driven case |
 | `continuous-gaussian` | you want a localized continuous spot | common default for a single focused pump |
 | `continuous-exp` | you want a localized pump with longer radial tails than a Gaussian | matches the current implementation exactly |
+| `continuous-exp-length` | you want an exponential pump whose `sigma_space` is the 1/e radial decay length | preferred for new length-consistent configurations |
 | `pulse-gaussian` | you want repeated pulsed excitation with Gaussian spot shape | supports per-pulse strength ramping from `P0` up to `Pmax`; choose `power_definition` carefully |
 
 For pulsed Gaussian studies:

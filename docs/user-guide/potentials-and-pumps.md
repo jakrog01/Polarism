@@ -33,6 +33,7 @@ The laser registry currently includes:
 - `uniform`
 - `continuous-gaussian`
 - `continuous-exp`
+- `continuous-exp-length`
 - `pulse-gaussian`
 
 All pump profiles follow the same high-level structure used by the shared `AbstractLaser` interface:
@@ -58,9 +59,13 @@ pulse peak occurs at \(t = t_{\mathrm{delay}} + \phi\) rather than exactly at
 | `uniform` | Spatially constant continuous pump | \(S(x, y) = 1,\; A(t) = P_0,\; T(t) = 1\) |
 | `continuous-gaussian` | Continuous Gaussian spot centered at \((x_0, y_0)\) | \(S(x, y) = \exp[-((x-x_0)^2 + (y-y_0)^2)/(2 \sigma_{\mathrm{space}}^2)]\) |
 | `continuous-exp` | Continuous radially decaying pump with exponential tail | \(S(x, y) = \exp[-r / w^2],\; r = \sqrt{(x-x_0)^2 + (y-y_0)^2},\; w = \texttt{sigma\_space}\) |
+| `continuous-exp-length` | Continuous radially decaying pump with a length-consistent exponential tail | \(S(x, y) = \exp[-r / \sigma_{\mathrm{space}}],\; r = \sqrt{(x-x_0)^2 + (y-y_0)^2}\) |
 | `pulse-gaussian` | Repeated Gaussian pulses with Gaussian spot and stepwise strength ramp up to `Pmax` | \(S(x, y) = \exp[-((x-x_0)^2 + (y-y_0)^2)/(2 \sigma_{\mathrm{space}}^2)]\) and \(T(t) = \exp[-(t-(\phi+n\Delta t))^2/(2 \sigma_{\mathrm{time}}^2)]\) near each pulse center \(\phi+n\Delta t\), where \(\phi = \texttt{cutoff\_sigma} \cdot \sigma_{\mathrm{time}}\) |
 
-`continuous-exp` follows the current implementation exactly, including the `\exp(-r / w^2)` spatial form.
+`continuous-exp` is retained for Phoenix and published-scan reproducibility,
+including its legacy `\exp(-r / w^2)` spatial form. New configurations should
+use `continuous-exp-length` when `sigma_space` is intended to be the 1/e radial
+decay length.
 
 For `pulse-gaussian`, the base strength of each pulse ramps from `P0` (first pulse)
 toward `Pmax`. The first pulse peaks at `delay + cutoff_sigma * sigma_time`;

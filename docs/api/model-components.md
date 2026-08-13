@@ -56,6 +56,7 @@ Pump profiles share the `AbstractLaser` contract:
 | `uniform` | homogeneous continuous pump |
 | `continuous-gaussian` | localized Gaussian continuous pump |
 | `continuous-exp` | localized continuous pump with exponential radial decay |
+| `continuous-exp-length` | localized continuous pump with a length-consistent exponential radial decay |
 | `pulse-gaussian` | repeated Gaussian pulses with Gaussian spatial profile; the first peak is phase-shifted after `delay`, and per-pulse strength ramps from `P0` toward `Pmax` |
 
 For `pulse-gaussian`, the `power_definition` field decides what that strength
@@ -64,6 +65,11 @@ source density at the Gaussian centre.  `pulse_energy` normalizes the spatial
 and temporal envelopes so that `P0` is the integrated dose of one pulse over the
 simulation domain and pulse duration.  The latter is the appropriate choice when
 comparing different spot sizes.
+
+`continuous-exp` is retained as the legacy, Phoenix-compatible profile
+`exp(-r / sigma_space**2)`. New configurations requiring `sigma_space` to be
+the 1/e radial decay length should use `continuous-exp-length`, which evaluates
+`exp(-r / sigma_space)`.
 
 ### Laser composition modes
 
