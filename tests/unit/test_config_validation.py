@@ -41,8 +41,71 @@ def test_solver_compatibility_errors_and_warnings() -> None:
         check_solver_compatibility(cfg)
     cfg.physics.kinetic_relaxation_eta = 0.0
     cfg.reservoir.reservoir_type = "quadratic-double"
-    with pytest.warns(UserWarning, match="O\\(dt\\) coupling"):
+    with pytest.warns(UserWarning, match="Lie splitting"):
         check_solver_compatibility(cfg)
+
+
+def test_split_step_fft_quadratic_double_warns_lie_splitting() -> None:
+    cfg = small_config(
+        solver__method="split-step-fft",
+        grid__grid_type="periodic",
+        reservoir__reservoir_type="quadratic-double",
+    )
+    with pytest.warns(UserWarning, match="Lie splitting"):
+        check_solver_compatibility(cfg)
+
+
+def test_etd_rk2_quadratic_double_is_silent() -> None:
+    cfg = small_config(
+        solver__method="etd-rk2",
+        grid__grid_type="periodic",
+        reservoir__reservoir_type="quadratic-double",
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        check_solver_compatibility(cfg)
+    assert not [warning for warning in caught if "coupling" in str(warning.message).lower()]
+
+
+@pytest.mark.parametrize(
+    ("use_gpu", "cuda_available", "warning_match"),
+    [
+        (True, False, "no CUDA device is available"),
+        (False, True, "compute_engine.use_gpu=False"),
+    ],
+)
+def test_gpu_solver_compatibility_warning_causes(
+    monkeypatch: pytest.MonkeyPatch,
+    use_gpu: bool,
+    cuda_available: bool,
+    warning_match: str,
+) -> None:
+    cfg = small_config(solver__method="ifrk4-fft-cuda")
+    cfg.compute_engine.use_gpu = use_gpu
+    monkeypatch.setattr(
+        "polarism.solver.solver_compatibility.has_cuda_device", lambda: cuda_available
+    )
+    with pytest.warns(UserWarning, match=warning_match):
+        check_solver_compatibility(cfg)
+
+
+@pytest.mark.parametrize("use_gpu,cuda_available", [(True, True), (False, False)])
+def test_gpu_solver_compatibility_silent_when_configuration_matches_device(
+    monkeypatch: pytest.MonkeyPatch, use_gpu: bool, cuda_available: bool
+) -> None:
+    """Keep CPU benchmark halves silent when a GPU host is intentionally unused.
+
+    This prevents `compute_engine.use_gpu=False` benchmark configurations from cluttering logs.
+    """
+    cfg = small_config(solver__method="ifrk4-fft-cuda")
+    cfg.compute_engine.use_gpu = use_gpu
+    monkeypatch.setattr(
+        "polarism.solver.solver_compatibility.has_cuda_device", lambda: cuda_available
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        check_solver_compatibility(cfg)
+    assert not caught
 
 
 def test_iprk4_supports_kinetic_relaxation() -> None:

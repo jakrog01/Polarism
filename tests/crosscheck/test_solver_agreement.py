@@ -9,6 +9,7 @@ from tests.unit.conftest import small_config
 
 TOL_STAGE_COUPLED = 1e-3  # Stage-coupled solver agreement threshold.
 TOL_SPLIT_COUPLED = 5e-2  # Split-coupled solver agreement threshold.
+TOL_DIAGNOSTIC_SPLIT_COUPLED = 2e-1
 
 
 def _metrics(solver: str, dt: float, reservoir: str):
@@ -40,9 +41,8 @@ def _metrics(solver: str, dt: float, reservoir: str):
 @pytest.mark.parametrize("reservoir", ["single", "double", "quadratic-double"])
 def test_solver_end_state_agreement(solver: str, reservoir: str) -> None:
     compute_engine.xp = np
-    if reservoir == "quadratic-double" and solver in {"split-step-fft", "etd-rk2"}:
-        pytest.skip("split-coupled + quadratic-double diagnostic only, see _SOLVER_CAPABILITIES.reservoir_types_quantitative")
     reference = np.array(_metrics("rk4-fdm", 5e-3, reservoir))
     actual = np.array(_metrics(solver, 2.5e-3 if solver in {"split-step-fft", "etd-rk2"} else 5e-3, reservoir))
-    tolerance = TOL_SPLIT_COUPLED if solver in {"split-step-fft", "etd-rk2"} else TOL_STAGE_COUPLED
+    diagnostic = reservoir == "quadratic-double" and solver in {"split-step-fft", "etd-rk2"}
+    tolerance = TOL_DIAGNOSTIC_SPLIT_COUPLED if diagnostic else TOL_SPLIT_COUPLED if solver in {"split-step-fft", "etd-rk2"} else TOL_STAGE_COUPLED
     assert np.max(np.abs(actual - reference) / np.maximum(np.abs(reference), 1e-30)) < tolerance

@@ -5,11 +5,13 @@ __pycache__/
 simulation_results/
 test_results/
 artifacts/
-scripts/
+scripts/*
+!scripts/analyse_convergence.py
 data/
 *.md
 !README.md
 !FINDINGS.md
+!FOLLOWUP_EXP_PUMP_DECISION.md
 !gitignore
 !docs/
 !docs/*.md
