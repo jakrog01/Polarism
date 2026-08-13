@@ -4,7 +4,8 @@ import pytest
 
 from polarism.boundary_conditions.absorption.absorption_registry import available_boundary_conditions, register_absorption
 from polarism.boundary_conditions.absorption.create_absorption_strategy import create_absorption_strategy
-from polarism.config.simulation_parameters import BoundaryConditionParameters, LaserParameters, PotentialParameters
+from polarism.config.simulation_parameters import BoundaryConditionParameters, LaserParameters, PhysicsConstants, PotentialParameters, ReservoirParameters
+from polarism.reservoir.create_reservoir import create_reservoir
 from polarism.laser.laser_factory import LaserFactory
 from polarism.laser.laser_registy import available_lasers, register_laser
 from polarism.potential.create_potential import create_potential
@@ -51,6 +52,10 @@ def test_registry_decorators_register_and_cleanup(monkeypatch) -> None:
         monkeypatch.delitem(registry, "dummy_registry")
 
 
-@pytest.mark.skip(reason="create_reservoir uses hardcoded dispatch, no registry to test")
-def test_reservoir_registry_is_explicitly_out_of_scope() -> None:
-    pass
+def test_reservoir_factory_supports_builtin_models() -> None:
+    """Create each built-in reservoir through the public factory."""
+    g = grid()
+    physics = PhysicsConstants()
+    for name in ("single", "double", "quadratic-double"):
+        reservoir = create_reservoir(ReservoirParameters(reservoir_type=name), physics, g)
+        assert reservoir.get_reservoir_density().shape == (g.ny, g.nx)

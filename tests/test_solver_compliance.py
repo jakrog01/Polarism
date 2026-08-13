@@ -250,9 +250,6 @@ def test_double_reservoir_matches_single(solver_cls):
 )
 def test_fdm_solvers_bitwise_close(solver_cls):
     """Test that fdm solvers bitwise close."""
-    if solver_cls is RK4FDMSolver:
-        pytest.skip("reference solver")
-
     grid_cfg = GridCfg(nx=64, ny=64, lx=200.0, ly=200.0, grid_type="periodic")
     physics = make_physics_default()
     dt = 0.01
