@@ -52,6 +52,15 @@ The default pytest selection excludes slow and compliance-marked suites. See
 [`docs/development/testing-and-ci.md`](docs/development/testing-and-ci.md) for
 the heavier validation commands.
 
+For the complete CPU/GPU validation, including the Phoenix reference matrix:
+
+```bash
+.venv/bin/pytest -q -m '' --use-gpu --tb=short \
+  --junitxml=artifacts/reports/full_verification.xml
+```
+
+Run this command as a single process with exclusive access to the GPU.
+
 ## Minimal API Example
 
 ```python

@@ -9,6 +9,7 @@ The repository has multiple pytest layers, and they serve different purposes. Th
 | `pytest` | Default CPU-oriented regression suite |
 | `pytest -m compliance` | Solver-to-solver agreement and compatibility checks |
 | `pytest -m slow --use-gpu` | Long-running Phoenix benchmark workflow |
+| `pytest -q -m '' --use-gpu --junitxml=artifacts/reports/full_verification.xml` | Complete CPU and GPU verification, including Phoenix |
 
 The default `pyproject.toml` configuration excludes `slow` and `compliance` markers from a plain `pytest` run.
 
@@ -36,6 +37,32 @@ pytest -m slow --use-gpu
 ```
 
 Run the slow suite only on a machine where the runtime and available data make sense.
+
+## Complete verification run
+
+Use the following command for a full verification pass:
+
+```bash
+.venv/bin/pytest -q -m '' --use-gpu --tb=short \
+  --junitxml=artifacts/reports/full_verification.xml
+```
+
+`-m ''` overrides the normal development selection and includes every marker:
+unit, integration, reference, compliance, slow, and GPU. The command executes
+the complete Phoenix matrix as well as the CPU/GPU agreement checks. Do not run
+a second pytest process at the same time: Phoenix needs exclusive use of the
+GPU for meaningful timing and reproducible comparisons.
+
+The JUnit XML is the primary machine-readable execution record. After a
+successful run, generate the Polish-language tables and figures with:
+
+```bash
+.venv/bin/python -m scripts.generate_verification_evidence
+.venv/bin/python -m scripts.generate_verification_artifacts
+```
+
+All outputs under `artifacts/` are local generated data and must not be
+committed.
 
 ## What the tests cover
 

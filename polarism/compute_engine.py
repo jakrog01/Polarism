@@ -15,6 +15,16 @@ except ImportError:
     CUPY_AVAILABLE = False
 
 
+def has_cuda_device() -> bool:
+    """Return whether CuPy can reach at least one CUDA device."""
+    if not CUPY_AVAILABLE:
+        return False
+    try:
+        return cp.cuda.runtime.getDeviceCount() > 0
+    except Exception:
+        return False
+
+
 class ComputeEngine:
     """Track the active NumPy or CuPy backend."""
     xp: Any
@@ -32,11 +42,20 @@ class ComputeEngine:
         self.config = config
         if self.config.use_gpu:
             if CUPY_AVAILABLE:
-                self.xp = cp
-                self.use_gpu = True
+                if has_cuda_device():
+                    self.xp = cp
+                    self.use_gpu = True
+                else:
+                    sys.stderr.write(
+                        "ComputeEngineParameters.use_gpu=True was requested but no CUDA "
+                        "device is available; falling back to CPU (NumPy).\n"
+                    )
+                    self.xp = np
+                    self.use_gpu = False
             else:
                 sys.stderr.write(
-                    "CuPy is not installed. Falling back to CPU computation.\n"
+                    "ComputeEngineParameters.use_gpu=True was requested but CuPy is not "
+                    "installed; falling back to CPU (NumPy).\n"
                 )
                 self.xp = np
                 self.use_gpu = False
