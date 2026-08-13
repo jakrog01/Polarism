@@ -13,6 +13,8 @@ import tempfile
 from datetime import datetime
 from typing import Any
 
+from polarism.env_metadata import attach_environment
+
 MANIFEST_FILE = "manifest.json"
 POWER_INDEX_FILE = "power_index.json"
 
@@ -54,13 +56,13 @@ def create_run_dir(base_dir: str, config_path: str) -> str:
 
 def init_manifest(run_dir: str, config_path: str, n_powers: int) -> None:
     """Write the initial manifest for a new sweep run."""
-    data: dict[str, Any] = {
+    data: dict[str, Any] = attach_environment({
         "run_dir": run_dir,
         "config_path": config_path,
         "n_powers": n_powers,
         "sweep_complete": False,
         "finalize_complete": False,
-    }
+    })
     atomic_write_json(os.path.join(run_dir, MANIFEST_FILE), data)
 
 
@@ -76,7 +78,7 @@ def set_manifest_field(run_dir: str, key: str, value: Any) -> None:
     atomic_write_json(path, data)
 
 
-def load_power_index(run_dir: str) -> list[float]:
+def load_power_index(run_dir: str) -> list[Any]:
     """Return the ordered list of power values from *power_index.json*."""
     path = os.path.join(run_dir, POWER_INDEX_FILE)
     with open(path) as f:

@@ -28,8 +28,9 @@ def use_gpu(request):
 def configure_backend(request, use_gpu):
     """Configure the compute backend for a test."""
     is_benchmark = "phoenix_benchmark" in str(request.fspath)
+    is_gpu_test = request.node.get_closest_marker("gpu") is not None
 
-    if use_gpu and is_benchmark:
+    if use_gpu and (is_benchmark or is_gpu_test):
         engine_cfg = ComputeEngineParameters(use_gpu=True)
         compute_engine.configure(engine_cfg)
     else:

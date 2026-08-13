@@ -9,6 +9,7 @@ import pytest
 
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import ComputeEngineParameters
+from polarism.env_metadata import collect_env_metadata, write_hardware_tex
 from polarism.simulation_controller import SimulationController
 from tests.unit.conftest import small_config
 
@@ -27,5 +28,10 @@ def test_ifrk4_gpu_speedup_artifact() -> None:
             start = time.perf_counter(); SimulationController(cfg).run(); times.append(time.perf_counter() - start)
         entries.append({"nx": nx, "cpu_time_s": times[0], "gpu_time_s": times[1]})
     Path("artifacts/benchmark").mkdir(parents=True, exist_ok=True)
-    Path("artifacts/benchmark/gpu_speedup.json").write_text(json.dumps(entries))
+    benchmark_dir = Path("artifacts/benchmark")
+    benchmark_dir.mkdir(parents=True, exist_ok=True)
+    Path("artifacts/benchmark/gpu_speedup.json").write_text(
+        json.dumps({"environment": collect_env_metadata(), "entries": entries})
+    )
+    write_hardware_tex(benchmark_dir / "hardware.tex")
     assert entries[-1]["gpu_time_s"] < entries[-1]["cpu_time_s"]

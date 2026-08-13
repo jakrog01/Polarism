@@ -50,6 +50,7 @@ from pipeline.stages.cpu.viz_engine import (
 )
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import ComputeEngineParameters
+from polarism.env_metadata import attach_environment
 from polarism.grid.create_grid import create_grid
 
 
@@ -652,7 +653,7 @@ def main() -> None:
             "copyback_seconds": round(copyback_seconds, 2),
         },
     }
-    atomic_write_json(scenario_meta_path(run_dir, scenario_name), meta)
+    atomic_write_json(scenario_meta_path(run_dir, scenario_name), attach_environment(meta))
     print(f"  Metadata: {scenario_meta_path(run_dir, scenario_name)}")
     print(f"\n  Scenario '{scenario_name}' complete. t_cond={t_cond}")
 

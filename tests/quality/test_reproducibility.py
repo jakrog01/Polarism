@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from polarism.compute_engine import compute_engine
+from polarism.env_metadata import attach_environment
 from polarism.simulation_controller import SimulationController
 from tests.unit.conftest import small_config
 
@@ -25,3 +26,15 @@ def test_hdf5_persists_configuration_metadata(tmp_path) -> None:
     with h5py.File(controller.storage_visitor.output_dir / "results.h5") as result:
         assert "config" in result
         assert "json" in result["config"].attrs
+
+
+def test_environment_metadata_has_stable_keys() -> None:
+    environment = attach_environment({})["environment"]
+    expected = {
+        "cpu_model", "cpu_core_count", "gpu_device_name", "gpu_total_memory_bytes",
+        "cuda_runtime_version", "cupy_version", "numpy_version", "python_version",
+        "os_release", "git_commit",
+    }
+    assert set(environment) == expected
+    for key in ("python_version", "numpy_version", "os_release"):
+        assert environment[key]

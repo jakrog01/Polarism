@@ -25,6 +25,8 @@ import tempfile
 from datetime import datetime
 from typing import Any
 
+from polarism.env_metadata import attach_environment
+
 MANIFEST_FILE = "manifest.json"
 SCENARIO_INDEX_FILE = "scenario_index.json"
 
@@ -81,14 +83,14 @@ def init_manifest(
     scenarios: list[str],
 ) -> None:
     """Create the initial manifest for a new run."""
-    data: dict[str, Any] = {
+    data: dict[str, Any] = attach_environment({
         "run_dir": run_dir,
         "config_path": config_path,
         "scenarios": scenarios,
         "target_response_complete": False,
         "fit_complete": False,
         "finalize_complete": False,
-    }
+    })
     atomic_write_json(os.path.join(run_dir, MANIFEST_FILE), data)
 
 
