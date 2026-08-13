@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
+import math
+from numbers import Integral, Real
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -147,6 +149,60 @@ class ReadoutConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class FieldSnapshotConfig:
+    """Optional full-field snapshot capture settings."""
+
+    enabled: bool = False
+    sample_indices: tuple[int, ...] = ()
+    times_ps: tuple[float, ...] = ()
+    downsample_factor: int = 1
+    include_pump: bool = False
+
+    def __post_init__(self) -> None:
+        sample_indices = tuple(self.sample_indices)
+        times_ps = tuple(self.times_ps)
+        if not isinstance(self.enabled, bool):
+            raise ValueError("FieldSnapshotConfig.enabled must be a bool")
+        if not isinstance(self.include_pump, bool):
+            raise ValueError("FieldSnapshotConfig.include_pump must be a bool")
+        if not isinstance(self.downsample_factor, Integral) or isinstance(
+            self.downsample_factor, bool
+        ):
+            raise ValueError("FieldSnapshotConfig.downsample_factor must be an integer")
+        if any(
+            not isinstance(index, Integral) or isinstance(index, bool)
+            for index in sample_indices
+        ):
+            raise ValueError("FieldSnapshotConfig.sample_indices must contain integers")
+        if any(
+            not isinstance(time_ps, Real) or isinstance(time_ps, bool)
+            for time_ps in times_ps
+        ):
+            raise ValueError("FieldSnapshotConfig.times_ps must contain floats")
+        normalized_indices = tuple(int(index) for index in sample_indices)
+        normalized_times = tuple(float(time_ps) for time_ps in times_ps)
+        if self.enabled:
+            if not normalized_indices:
+                raise ValueError("field_snapshots.enabled requires at least one sample index")
+            if any(index < 0 for index in normalized_indices):
+                raise ValueError("field_snapshots.sample_indices must be nonnegative")
+            if not normalized_times:
+                raise ValueError("field_snapshots.enabled requires at least one time")
+            if any(
+                not math.isfinite(time_ps) or time_ps < 0.0
+                for time_ps in normalized_times
+            ):
+                raise ValueError("field_snapshots.times_ps must be finite and nonnegative")
+            if any(right <= left for left, right in zip(normalized_times, normalized_times[1:])):
+                raise ValueError("field_snapshots.times_ps must be strictly increasing")
+            if int(self.downsample_factor) < 1:
+                raise ValueError("field_snapshots.downsample_factor must be at least one")
+        object.__setattr__(self, "sample_indices", normalized_indices)
+        object.__setattr__(self, "times_ps", normalized_times)
+        object.__setattr__(self, "downsample_factor", int(self.downsample_factor))
+
+
+@dataclass(frozen=True, slots=True)
 class ClassifierConfig:
     """Logistic-regression readout hyperparameters.
 
@@ -187,6 +243,7 @@ class SNNDynamicConfig:
     readout: ReadoutConfig
     classifier: ClassifierConfig
     output_dir: str
+    field_snapshots: FieldSnapshotConfig = FieldSnapshotConfig()
 
 
 _TOP_LEVEL_KEYS: frozenset[str] = frozenset(
@@ -199,6 +256,7 @@ _TOP_LEVEL_KEYS: frozenset[str] = frozenset(
         "readout",
         "classifier",
         "output_dir",
+        "field_snapshots",
     }
 )
 
@@ -247,6 +305,10 @@ def load_snn_dynamic_config(path: str) -> SNNDynamicConfig:
         readout=_make_dataclass(ReadoutConfig, raw["readout"]),
         classifier=_make_dataclass(ClassifierConfig, raw["classifier"]),
         output_dir=str(Path(str(raw["output_dir"])).expanduser()),
+        field_snapshots=_make_dataclass(
+            FieldSnapshotConfig,
+            raw.get("field_snapshots", {}),
+        ),
     )
 
 

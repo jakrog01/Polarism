@@ -5,10 +5,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from mnist_digits_polariton_snn_dynamic.config.loader import ReadoutConfig
+from mnist_digits_polariton_snn_dynamic.config.loader import FieldSnapshotConfig, ReadoutConfig
 from mnist_digits_polariton_snn_dynamic.simulation.resources import SharedSimResources
 from mnist_digits_polariton_snn_dynamic.simulation.runner_batched import simulate_batch
-from mnist_digits_polariton_snn_dynamic.simulation.runner import simulate_one_image
+from mnist_digits_polariton_snn_dynamic.simulation.runner import (
+    SimulationTraces,
+    simulate_one_image,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +43,18 @@ class FeatureBundle:
     traces_n_inactive: np.ndarray | None
     trace_times_ps: np.ndarray
     feature_shape: tuple[int, ...]
+    field_snapshots: FieldSnapshotBundle | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FieldSnapshotBundle:
+    """Full-field snapshot arrays aligned with source samples."""
+
+    rho: np.ndarray
+    sample_indices: np.ndarray
+    times_ps: np.ndarray
+    labels: np.ndarray
+    pumps: np.ndarray | None = None
 
 
 def collect_features(
@@ -47,6 +62,7 @@ def collect_features(
     powers: np.ndarray,
     labels: np.ndarray,
     readout: ReadoutConfig,
+    field_snapshots: FieldSnapshotConfig | None = None,
 ) -> FeatureBundle:
     """Collect dynamic trace features for each sample.
 
@@ -79,6 +95,14 @@ def collect_features(
             "readout.feature_mode must be one of 'raw', 'summary', or 'both', "
             f"got {readout.feature_mode!r}"
         )
+    snapshot_cfg = field_snapshots or FieldSnapshotConfig()
+    snapshot_steps = _field_snapshot_steps(resources, snapshot_cfg)
+    selected_indices = set(snapshot_cfg.sample_indices) if snapshot_cfg.enabled else set()
+    if any(index >= p.shape[0] for index in selected_indices):
+        raise ValueError(
+            "field_snapshots.sample_indices must refer to collected samples, "
+            f"got {sorted(selected_indices)} for {p.shape[0]} samples"
+        )
     if readout.batch_size > 1:
         traces = simulate_batch(
             resources,
@@ -87,6 +111,7 @@ def collect_features(
             readout.stride_steps,
             readout.record_reservoir,
             readout.batch_size,
+            field_snapshots_enabled=snapshot_cfg.enabled,
         )
         feature0 = _build_feature_vector(
             traces.psi[0],
@@ -120,6 +145,9 @@ def collect_features(
         readout.warmup_ps,
         readout.stride_steps,
         readout.record_reservoir,
+        field_snapshot_steps=snapshot_steps if 0 in selected_indices else None,
+        downsample_factor=snapshot_cfg.downsample_factor,
+        include_snapshot_pump=snapshot_cfg.include_pump,
     )
     traces_psi = np.empty((p.shape[0], *first.psi.shape), dtype=np.float64)
     traces_psi[0] = first.psi
@@ -146,6 +174,21 @@ def collect_features(
     )
     features = np.empty((p.shape[0], feature0.size), dtype=np.float64)
     features[0] = feature0
+    snapshot_rho: list[np.ndarray] = []
+    snapshot_sample_indices: list[np.ndarray] = []
+    snapshot_times: list[np.ndarray] = []
+    snapshot_labels: list[np.ndarray] = []
+    snapshot_pumps: list[np.ndarray] | None = [] if snapshot_cfg.include_pump else None
+    _append_field_snapshots(
+        snapshot_rho,
+        snapshot_sample_indices,
+        snapshot_times,
+        snapshot_labels,
+        snapshot_pumps,
+        first,
+        0,
+        int(y[0]),
+    )
     for i in range(p.shape[0]):
         if i == 0:
             continue
@@ -155,6 +198,9 @@ def collect_features(
             readout.warmup_ps,
             readout.stride_steps,
             readout.record_reservoir,
+            field_snapshot_steps=snapshot_steps if i in selected_indices else None,
+            downsample_factor=snapshot_cfg.downsample_factor,
+            include_snapshot_pump=snapshot_cfg.include_pump,
         )
         traces_psi[i] = traces.psi
         if traces_n_active is not None and traces.n_active is not None:
@@ -168,6 +214,23 @@ def collect_features(
             traces.times_ps,
             readout.feature_mode,
         )
+        _append_field_snapshots(
+            snapshot_rho,
+            snapshot_sample_indices,
+            snapshot_times,
+            snapshot_labels,
+            snapshot_pumps,
+            traces,
+            i,
+            int(y[i]),
+        )
+    snapshot_bundle = _make_field_snapshot_bundle(
+        snapshot_rho,
+        snapshot_sample_indices,
+        snapshot_times,
+        snapshot_labels,
+        snapshot_pumps,
+    )
     return FeatureBundle(
         features=features,
         labels=y,
@@ -176,6 +239,73 @@ def collect_features(
         traces_n_inactive=traces_n_inactive,
         trace_times_ps=first.times_ps,
         feature_shape=(feature0.size,),
+        field_snapshots=snapshot_bundle,
+    )
+
+
+def _field_snapshot_steps(
+    resources: SharedSimResources,
+    snapshot_cfg: FieldSnapshotConfig,
+) -> np.ndarray | None:
+    if not snapshot_cfg.enabled:
+        return None
+    steps = np.round(
+        np.asarray(snapshot_cfg.times_ps, dtype=np.float64)
+        / float(resources.cfg.solver.dt)
+    ).astype(np.int64)
+    n_steps = int(resources.cfg.solver.total_time / resources.cfg.solver.dt)
+    if np.any(steps >= n_steps):
+        raise ValueError(
+            "field_snapshots.times_ps must map to solver steps inside the simulation"
+        )
+    if np.unique(steps).size != steps.size:
+        raise ValueError("field_snapshots.times_ps must map to distinct solver steps")
+    return steps
+
+
+def _append_field_snapshots(
+    rho_parts: list[np.ndarray],
+    sample_index_parts: list[np.ndarray],
+    time_parts: list[np.ndarray],
+    label_parts: list[np.ndarray],
+    pump_parts: list[np.ndarray] | None,
+    traces: SimulationTraces,
+    sample_index: int,
+    label: int,
+) -> None:
+    if traces.field_snapshots is None or traces.field_snapshot_times_ps is None:
+        return
+    frame_count = int(traces.field_snapshots.shape[0])
+    rho_parts.append(np.asarray(traces.field_snapshots, dtype=np.float64))
+    sample_index_parts.append(np.full(frame_count, sample_index, dtype=np.int64))
+    time_parts.append(np.asarray(traces.field_snapshot_times_ps, dtype=np.float64))
+    label_parts.append(np.full(frame_count, label, dtype=np.int64))
+    if pump_parts is not None:
+        if traces.field_snapshot_pumps is None:
+            raise RuntimeError("field snapshot pump frames were not captured")
+        pump_parts.append(np.asarray(traces.field_snapshot_pumps, dtype=np.float64))
+
+
+def _make_field_snapshot_bundle(
+    rho_parts: list[np.ndarray],
+    sample_index_parts: list[np.ndarray],
+    time_parts: list[np.ndarray],
+    label_parts: list[np.ndarray],
+    pump_parts: list[np.ndarray] | None,
+) -> FieldSnapshotBundle | None:
+    if not rho_parts:
+        return None
+    pumps = (
+        np.concatenate(pump_parts, axis=0).astype(np.float64, copy=False)
+        if pump_parts is not None
+        else None
+    )
+    return FieldSnapshotBundle(
+        rho=np.concatenate(rho_parts, axis=0).astype(np.float64, copy=False),
+        sample_indices=np.concatenate(sample_index_parts, axis=0).astype(np.int64, copy=False),
+        times_ps=np.concatenate(time_parts, axis=0).astype(np.float64, copy=False),
+        labels=np.concatenate(label_parts, axis=0).astype(np.int64, copy=False),
+        pumps=pumps,
     )
 
 

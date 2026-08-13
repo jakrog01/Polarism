@@ -128,6 +128,105 @@ def plot_per_class_confusion_rows(
     plt.close(fig)
 
 
+def plot_field_snapshots_grid(
+    rho: np.ndarray,
+    times_ps: np.ndarray,
+    sample_indices: np.ndarray,
+    labels: np.ndarray,
+    x_um: np.ndarray,
+    y_um: np.ndarray,
+    out_path: str | Path,
+    lattice_positions_um: np.ndarray | None = None,
+) -> None:
+    """Plot full-field density snapshots by time and source sample.
+
+    Parameters
+    ----------
+    rho
+        Float64 density frames with shape ``(M, Ny, Nx)``.
+    times_ps, sample_indices, labels
+        Per-frame metadata vectors with shape ``(M,)``.
+    x_um, y_um
+        Spatial coordinate vectors for the frame axes.
+    out_path
+        Destination PNG path.
+    lattice_positions_um
+        Optional pump-center positions with shape ``(n_spots, 2)``.
+    """
+    frames = np.asarray(rho, dtype=np.float64)
+    times = np.asarray(times_ps, dtype=np.float64)
+    samples = np.asarray(sample_indices, dtype=np.int64)
+    frame_labels = np.asarray(labels, dtype=np.int64)
+    x = np.asarray(x_um, dtype=np.float64)
+    y = np.asarray(y_um, dtype=np.float64)
+    if frames.ndim != 3 or frames.shape[0] == 0:
+        raise ValueError(f"rho must have non-empty shape (M, Ny, Nx), got {frames.shape}")
+    if times.shape != (frames.shape[0],) or samples.shape != (frames.shape[0],):
+        raise ValueError("times_ps and sample_indices must align with rho frames")
+    if frame_labels.shape != (frames.shape[0],):
+        raise ValueError("labels must align with rho frames")
+    if x.shape != (frames.shape[2],) or y.shape != (frames.shape[1],):
+        raise ValueError("x_um and y_um must align with rho spatial dimensions")
+    positions = None
+    if lattice_positions_um is not None:
+        positions = np.asarray(lattice_positions_um, dtype=np.float64)
+        if positions.ndim != 2 or positions.shape[1] != 2:
+            raise ValueError("lattice_positions_um must have shape (n_spots, 2)")
+    unique_times = np.unique(times)
+    unique_samples = np.unique(samples)
+    vmax = float(np.percentile(frames, 99.5))
+    if not np.isfinite(vmax) or vmax <= 0.0:
+        vmax = float(np.max(frames)) if frames.size else 1.0
+    if vmax <= 0.0:
+        vmax = 1.0
+    fig, axes = plt.subplots(
+        unique_times.size,
+        unique_samples.size,
+        figsize=(4.0 * unique_samples.size, 3.6 * unique_times.size),
+        constrained_layout=True,
+        squeeze=False,
+    )
+    image = None
+    extent = [float(x[0]), float(x[-1]), float(y[0]), float(y[-1])]
+    for row, time_ps in enumerate(unique_times):
+        for col, sample_index in enumerate(unique_samples):
+            ax = axes[row, col]
+            matches = np.flatnonzero((times == time_ps) & (samples == sample_index))
+            if matches.size != 1:
+                raise ValueError(
+                    "Each field-snapshot time and sample pair must occur exactly once"
+                )
+            frame_index = int(matches[0])
+            image = ax.imshow(
+                frames[frame_index],
+                extent=extent,
+                origin="lower",
+                cmap="magma",
+                vmin=0.0,
+                vmax=vmax,
+                aspect="equal",
+            )
+            if positions is not None:
+                ax.scatter(
+                    positions[:, 0],
+                    positions[:, 1],
+                    s=18.0,
+                    facecolors="none",
+                    edgecolors="white",
+                    alpha=0.4,
+                )
+            ax.set_title(f"sample={sample_index}, label={frame_labels[frame_index]}, t={time_ps:g} ps")
+            if col == 0:
+                ax.set_ylabel("y [um]")
+            if row == unique_times.size - 1:
+                ax.set_xlabel("x [um]")
+    if image is None:
+        raise RuntimeError("No field snapshots available for plotting")
+    fig.colorbar(image, ax=axes.ravel().tolist(), label="|psi|^2 [a.u.]")
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def _draw_matrix(
     ax: plt.Axes,
     matrix: np.ndarray,

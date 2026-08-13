@@ -14,6 +14,8 @@ from typing import Any
 
 import numpy as np
 
+from polarism.compute_engine import compute_engine
+
 from mnist_digits_polariton_snn_dynamic.config.loader import (
     build_encoder,
     build_geometry,
@@ -23,7 +25,10 @@ from mnist_digits_polariton_snn_dynamic.config.loader import (
 from mnist_digits_polariton_snn_dynamic.encoding.downsample import load_and_downsample
 from mnist_digits_polariton_snn_dynamic.io.atomic import atomic_write_json
 from mnist_digits_polariton_snn_dynamic.readout.classifier import ClassificationReport, train_and_evaluate
-from mnist_digits_polariton_snn_dynamic.readout.features import collect_features
+from mnist_digits_polariton_snn_dynamic.readout.features import (
+    FieldSnapshotBundle,
+    collect_features,
+)
 from mnist_digits_polariton_snn_dynamic.readout.reporting import (
     plot_confusion_aggregate,
     plot_per_class_confusion_rows,
@@ -103,6 +108,7 @@ def run_pipeline(
         powers,
         labels,
         readout=snn_cfg.readout,
+        field_snapshots=snn_cfg.field_snapshots,
     )
     report = train_and_evaluate(
         bundle,
@@ -124,6 +130,7 @@ def run_pipeline(
                 float(power_max_override) if power_max_override is not None else None
             ),
         },
+        dataclasses.asdict(snn_cfg.field_snapshots),
     )
     _atomic_write_npy(out_dir / "features.npy", bundle.features)
     _atomic_write_npy(out_dir / "labels.npy", bundle.labels)
@@ -135,6 +142,13 @@ def run_pipeline(
     if bundle.traces_n_inactive is not None:
         _atomic_write_npy(out_dir / "traces_nI.npy", bundle.traces_n_inactive)
     _atomic_write_npy(out_dir / "trace_times_ps.npy", bundle.trace_times_ps)
+    if bundle.field_snapshots is not None:
+        _atomic_write_field_snapshots(
+            out_dir / "field_snapshots.npz",
+            bundle.field_snapshots,
+            resources,
+            snn_cfg.field_snapshots.downsample_factor,
+        )
     atomic_write_json(str(out_dir / "report.json"), dataclasses.asdict(report))
     plot_confusion_aggregate(
         report.confusion_test,
@@ -186,12 +200,51 @@ def _atomic_write_npy(path: Path, array: np.ndarray) -> None:
         raise
 
 
+def _atomic_write_field_snapshots(
+    path: Path,
+    snapshots: FieldSnapshotBundle,
+    resources: SharedSimResources,
+    downsample_factor: int,
+) -> None:
+    x_um = np.asarray(
+        compute_engine.to_cpu(resources.grid.X[0, ::downsample_factor]),
+        dtype=np.float64,
+    )
+    y_um = np.asarray(
+        compute_engine.to_cpu(resources.grid.Y[::downsample_factor, 0]),
+        dtype=np.float64,
+    )
+    arrays: dict[str, np.ndarray] = {
+        "rho": np.asarray(snapshots.rho, dtype=np.float64),
+        "sample_indices": np.asarray(snapshots.sample_indices, dtype=np.int64),
+        "times_ps": np.asarray(snapshots.times_ps, dtype=np.float64),
+        "x_um": x_um,
+        "y_um": y_um,
+        "labels": np.asarray(snapshots.labels, dtype=np.int64),
+    }
+    if snapshots.pumps is not None:
+        arrays["pump"] = np.asarray(snapshots.pumps, dtype=np.float64)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp.npz")
+    os.close(fd)
+    tmp_path = Path(tmp)
+    try:
+        np.savez_compressed(tmp_path, **arrays)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+
+
 def _build_metadata(
     config_path: str,
     polarism_config_path: str,
     geometry: dict[str, Any],
     encoder: dict[str, Any],
     readout: dict[str, Any],
+    field_snapshots: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -202,6 +255,7 @@ def _build_metadata(
         "geometry": geometry,
         "encoder": encoder,
         "readout": readout,
+        "field_snapshots": field_snapshots,
         "git_sha": _git_sha(),
     }
 

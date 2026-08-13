@@ -27,12 +27,23 @@ class SimulationTraces:
         Inactive reservoir traces with shape ``(T_out, n_spots + 1)``, or ``None``.
     times_ps
         Recorded sample times in picoseconds with shape ``(T_out,)``.
+    field_snapshots
+        Optional full-field condensate density frames with shape
+        ``(n_snapshots, Ny, Nx)``.
+    field_snapshot_times_ps
+        Optional full-field snapshot times in picoseconds with shape
+        ``(n_snapshots,)``.
+    field_snapshot_pumps
+        Optional full-field pump frames with shape ``(n_snapshots, Ny, Nx)``.
     """
 
     psi: np.ndarray
     n_active: np.ndarray | None
     n_inactive: np.ndarray | None
     times_ps: np.ndarray
+    field_snapshots: np.ndarray | None = None
+    field_snapshot_times_ps: np.ndarray | None = None
+    field_snapshot_pumps: np.ndarray | None = None
 
 
 def simulate_one_image(
@@ -41,6 +52,9 @@ def simulate_one_image(
     warmup_ps: float,
     stride_steps: int,
     record_reservoir: bool,
+    field_snapshot_steps: np.ndarray | None = None,
+    downsample_factor: int = 1,
+    include_snapshot_pump: bool = False,
 ) -> SimulationTraces:
     """Simulate one encoded image and return dynamic readout traces.
 
@@ -57,6 +71,12 @@ def simulate_one_image(
         Step interval between recorded trace frames.
     record_reservoir
         Whether reservoir density traces are recorded.
+    field_snapshot_steps
+        Optional int64 solver-step indices at which full-field density is captured.
+    downsample_factor
+        Spatial sampling stride applied to captured full-field arrays.
+    include_snapshot_pump
+        Whether full-field pump frames are captured alongside density frames.
 
     Returns
     -------
@@ -96,6 +116,10 @@ def simulate_one_image(
     n_steps = int(cfg.solver.total_time / cfg.solver.dt)
     if stride_steps <= 0:
         raise ValueError(f"stride_steps must be positive, got {stride_steps}")
+    if downsample_factor < 1:
+        raise ValueError(
+            f"downsample_factor must be at least one, got {downsample_factor}"
+        )
     warmup_step = int(np.ceil(warmup_ps / cfg.solver.dt))
     output_steps = _output_steps(n_steps, warmup_step, int(stride_steps))
     if output_steps.size == 0:
@@ -117,6 +141,13 @@ def simulate_one_image(
         xp.empty((n_out, n_channels), dtype=xp.float64) if record_reservoir else None
     )
     times_ps = np.empty(n_out, dtype=np.float64)
+    snapshot_steps = _snapshot_steps(field_snapshot_steps, n_steps)
+    snapshot_step_set = set(int(step) for step in snapshot_steps.tolist())
+    field_snapshot_frames: list[np.ndarray] = []
+    field_snapshot_times: list[float] = []
+    field_snapshot_pump_frames: list[np.ndarray] | None = (
+        [] if include_snapshot_pump and snapshot_steps.size else None
+    )
     out_idx = 0
     for step in range(n_steps):
         pump_t = (
@@ -125,8 +156,10 @@ def simulate_one_image(
             else pump_zero
         )
         resources.solver.step(resources.potential, pump_t, reservoir, resources.bc, state)
+        psi_materialized_this_step = False
         if step >= warmup_step and (step - warmup_step) % stride_steps == 0:
             state.materialize_psi(xp)
+            psi_materialized_this_step = True
             psi = state.psi
             rho = psi.real * psi.real + psi.imag * psi.imag
             traces_psi[out_idx] = xp.tensordot(resources.readout_masks, rho, axes=2)
@@ -140,6 +173,24 @@ def simulate_one_image(
                 )
             times_ps[out_idx] = (float(step) + 1.0) * float(cfg.solver.dt)
             out_idx += 1
+        if step in snapshot_step_set:
+            if not psi_materialized_this_step:
+                state.materialize_psi(xp)
+            psi = state.psi
+            rho = psi.real * psi.real + psi.imag * psi.imag
+            if downsample_factor > 1:
+                rho = rho[::downsample_factor, ::downsample_factor]
+            field_snapshot_frames.append(
+                np.asarray(compute_engine.to_cpu(rho), dtype=np.float64)
+            )
+            if field_snapshot_pump_frames is not None:
+                pump_snapshot = pump_t
+                if downsample_factor > 1:
+                    pump_snapshot = pump_snapshot[::downsample_factor, ::downsample_factor]
+                field_snapshot_pump_frames.append(
+                    np.asarray(compute_engine.to_cpu(pump_snapshot), dtype=np.float64)
+                )
+            field_snapshot_times.append((float(step) + 1.0) * float(cfg.solver.dt))
     if out_idx != n_out:
         raise RuntimeError(f"Expected {n_out} trace frames, recorded {out_idx}")
     psi_host = np.asarray(compute_engine.to_cpu(traces_psi), dtype=np.float64)
@@ -153,11 +204,29 @@ def simulate_one_image(
         if traces_n_inactive is not None
         else None
     )
+    field_snapshots = (
+        np.stack(field_snapshot_frames, axis=0).astype(np.float64, copy=False)
+        if field_snapshot_frames
+        else None
+    )
+    field_snapshot_times_ps = (
+        np.asarray(field_snapshot_times, dtype=np.float64)
+        if field_snapshot_frames
+        else None
+    )
+    field_snapshot_pumps = (
+        np.stack(field_snapshot_pump_frames, axis=0).astype(np.float64, copy=False)
+        if field_snapshot_pump_frames
+        else None
+    )
     return SimulationTraces(
         psi=psi_host,
         n_active=n_active_host,
         n_inactive=n_inactive_host,
         times_ps=times_ps,
+        field_snapshots=field_snapshots,
+        field_snapshot_times_ps=field_snapshot_times_ps,
+        field_snapshot_pumps=field_snapshot_pumps,
     )
 
 
@@ -189,3 +258,16 @@ def _output_steps(n_steps: int, warmup_step: int, stride_steps: int) -> np.ndarr
     if warmup_step >= n_steps:
         return np.empty(0, dtype=np.int64)
     return np.arange(warmup_step, n_steps, stride_steps, dtype=np.int64)
+
+
+def _snapshot_steps(field_snapshot_steps: np.ndarray | None, n_steps: int) -> np.ndarray:
+    if field_snapshot_steps is None:
+        return np.empty(0, dtype=np.int64)
+    steps = np.asarray(field_snapshot_steps, dtype=np.int64)
+    if steps.ndim != 1:
+        raise ValueError(f"field_snapshot_steps must have shape (M,), got {steps.shape}")
+    if np.any(steps < 0) or np.any(steps >= n_steps):
+        raise ValueError(
+            f"field_snapshot_steps must lie in [0, {n_steps}), got {steps.tolist()}"
+        )
+    return np.unique(steps)

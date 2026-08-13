@@ -67,8 +67,11 @@ def simulate_batch(
     stride_steps: int,
     record_reservoir: bool,
     batch_size: int,
+    field_snapshots_enabled: bool = False,
 ) -> BatchedTraces:
     """Simulate encoded images in GPU batches and return dynamic readout traces."""
+    if field_snapshots_enabled:
+        raise RuntimeError("field_snapshots.enabled requires readout.batch_size == 1")
     cfg = resources.cfg
     xp = compute_engine.xp
     p = np.asarray(powers_batch, dtype=np.float64)
