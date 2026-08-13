@@ -41,6 +41,7 @@ def _result_to_dict(result: Any) -> dict:
         "diverged_at_step": result.diverged_at_step,
         "diverged_at_t": result.diverged_at_t,
         "wall_time_seconds": round(result.wall_time_seconds, 2),
+        "seed": result.seed,
     }
 
 
@@ -118,6 +119,7 @@ def main() -> None:
         scalar_check_every=int(sweep.get("scalar_check_every", 50)),
         early_stop_on_divergence=bool(sweep.get("early_stop_on_divergence", True)),
         save_trace=save_trace,
+        sweep_point=point,
     )
 
     powers_dir = os.path.join(run_dir, "powers")

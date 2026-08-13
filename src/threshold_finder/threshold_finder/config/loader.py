@@ -63,10 +63,11 @@ def generate_sweep_points(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     sweep_cfg = get_sweep_config(cfg)
     variable = str(sweep_cfg.get("variable", "P"))
     if variable in {"P", "power", "pulse_energy"}:
-        return [
+        points = [
             {"index": i, "P": p, "sweep_variable": "P", "sweep_value": p}
             for i, p in enumerate(generate_power_values(sweep_cfg))
         ]
+        return _expand_seeds(points, sweep_cfg)
     if variable == "pulse_separation":
         p_fixed = float(sweep_cfg["P_fixed"])
         s_min = float(sweep_cfg["pulse_separation_min"])
@@ -97,5 +98,15 @@ def generate_sweep_points(cfg: dict[str, Any]) -> list[dict[str, Any]]:
                 pulse_support = 2.0 * cutoff_sigma * sigma_time
                 point["total_time"] = round(pulse_support + (n_pulses - 1) * sep + post_pulse_time, 10)
             points.append(point)
-        return points
+        return _expand_seeds(points, sweep_cfg)
     raise ValueError(f"Unsupported sweep.variable={variable!r}")
+
+
+def _expand_seeds(points: list[dict[str, Any]], sweep_cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    seeds = sweep_cfg.get("seeds")
+    if not seeds:
+        return points
+    return [
+        {**point, "index": index, "seed": int(seed)}
+        for index, (point, seed) in enumerate((point, seed) for point in points for seed in seeds)
+    ]

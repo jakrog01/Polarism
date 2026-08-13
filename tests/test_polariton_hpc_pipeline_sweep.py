@@ -9,7 +9,12 @@ PIPELINE_SRC = Path(__file__).resolve().parents[1] / "src" / "polariton_hpc_pipe
 if str(PIPELINE_SRC) not in sys.path:
     sys.path.insert(0, str(PIPELINE_SRC))
 
+THRESHOLD_SRC = Path(__file__).resolve().parents[1] / "src" / "threshold_finder"
+if str(THRESHOLD_SRC) not in sys.path:
+    sys.path.insert(0, str(THRESHOLD_SRC))
+
 from pipeline.config.sweep import expand_parameter_sweep
+from threshold_finder.config.loader import generate_sweep_points
 
 
 def _base_cfg(
@@ -101,3 +106,18 @@ def test_sweep_expands_all_requested_axes() -> None:
     expanded, names, _ = expand_parameter_sweep(cfg)
     assert len(expanded["scenarios"]) == 24 and len(set(names)) == 24
     assert all("sweep" in scenario for scenario in expanded["scenarios"])
+
+
+def test_threshold_sweep_seed_expansion_preserves_default_and_orders_ensembles() -> None:
+    cfg = {"sweep": {"P_min": 0.1, "P_max": 0.4, "P_step": 0.1}}
+    default = generate_sweep_points(cfg)
+    assert default == [
+        {"index": index, "P": power, "sweep_variable": "P", "sweep_value": power}
+        for index, power in enumerate((0.1, 0.2, 0.3, 0.4))
+    ]
+    seeded = generate_sweep_points({"sweep": {**cfg["sweep"], "seeds": [1, 2, 3]}})
+    assert len(seeded) == 12
+    assert [point["index"] for point in seeded] == list(range(12))
+    assert [(point["P"], point["seed"]) for point in seeded] == [
+        (power, seed) for power in (0.1, 0.2, 0.3, 0.4) for seed in (1, 2, 3)
+    ]

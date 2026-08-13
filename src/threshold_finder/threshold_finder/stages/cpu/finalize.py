@@ -46,16 +46,53 @@ def _sweep_axis(results: list[dict[str, Any]]) -> tuple[str, str, str]:
     return "P", "Pump power P", "psi_max_vs_power.png"
 
 
-def _write_csv(results: list[dict[str, Any]], path: str) -> None:
+def _write_csv(results: list[dict[str, Any]], path: str, seeded: bool) -> None:
     fieldnames = [
         "sweep_variable", "sweep_value", "P", "pulse_separation",
         "total_time", "psi_sq_max", "status", "t_psi_sq_max",
         "diverged_at_t", "wall_time_seconds",
     ]
+    if seeded:
+        fieldnames.append("psi_sq_max_std")
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(results)
+
+
+def _ensemble_rows(results: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    groups: dict[tuple[float, str, float], list[dict[str, Any]]] = {}
+    for result in results:
+        key = (
+            float(result["P"]),
+            str(result.get("sweep_variable", "P")),
+            float(result.get("sweep_value", result["P"])),
+        )
+        groups.setdefault(key, []).append(result)
+    ensemble: list[dict[str, Any]] = []
+    canonical: list[dict[str, Any]] = []
+    for (_, variable, value), rows in groups.items():
+        values = [float(row["psi_sq_max"]) for row in rows]
+        seeds = [int(row["seed"]) for row in rows if row.get("seed") is not None]
+        summary = {
+            "P": float(rows[0]["P"]),
+            "sweep_variable": variable,
+            "sweep_value": value,
+            "n_seeds": len(seeds),
+            "seeds": seeds,
+            "psi_sq_max_mean": float(np.mean(values)),
+            "psi_sq_max_std": float(np.std(values)),
+            "psi_sq_max_min": float(np.min(values)),
+            "psi_sq_max_max": float(np.max(values)),
+            "psi_sq_max_values": values,
+        }
+        ensemble.append(summary)
+        canonical.append({
+            **rows[0],
+            "psi_sq_max": summary["psi_sq_max_mean"],
+            "psi_sq_max_std": summary["psi_sq_max_std"],
+        })
+    return canonical, ensemble
 
 
 def _write_plot(results: list[dict[str, Any]], out_path: str) -> None:
@@ -109,17 +146,19 @@ def main() -> None:
         print("ERROR: no per-power result files found in run_dir/powers/.", file=sys.stderr)
         sys.exit(1)
 
-    n_ok = sum(1 for r in results if r["status"] == "ok")
-    n_div = sum(1 for r in results if r["status"] == "diverged")
+    seeded = any(result.get("seed") is not None for result in results)
+    canonical_results, ensemble = _ensemble_rows(results) if seeded else (results, [])
+    n_ok = sum(1 for r in canonical_results if r["status"] == "ok")
+    n_div = sum(1 for r in canonical_results if r["status"] == "diverged")
     threshold_row = next(
         (
-            r for r in results
+            r for r in canonical_results
             if r["status"] == "ok"
             and float(r.get("psi_sq_max", 0.0)) >= CONDENSATION_PSI_SQ_THRESHOLD
         ),
         None,
     )
-    axis_key, axis_label, plot_name = _sweep_axis(results)
+    axis_key, axis_label, plot_name = _sweep_axis(canonical_results)
     threshold_estimate = (
         threshold_row.get(axis_key, threshold_row["P"])
         if threshold_row is not None else None
@@ -128,12 +167,17 @@ def main() -> None:
     print(f"  Threshold estimate: {threshold_estimate}")
 
     csv_path = os.path.join(run_dir, "threshold_curve.csv")
-    _write_csv(results, csv_path)
+    _write_csv(canonical_results, csv_path, seeded)
     print(f"  CSV     : {csv_path}")
 
     json_path = os.path.join(run_dir, "threshold_curve.json")
-    atomic_write_json(json_path, results)
+    atomic_write_json(json_path, canonical_results)
     print(f"  JSON    : {json_path}")
+
+    if seeded:
+        ensemble_path = os.path.join(run_dir, "threshold_ensemble.json")
+        atomic_write_json(ensemble_path, ensemble)
+        print(f"  Ensemble: {ensemble_path}")
 
     threshold_path = os.path.join(run_dir, "threshold_estimate.json")
     atomic_write_json(
@@ -153,7 +197,7 @@ def main() -> None:
     os.makedirs(results_dir, exist_ok=True)
     png_path = os.path.join(results_dir, plot_name)
     try:
-        _write_plot(results, png_path)
+        _write_plot(canonical_results, png_path)
         print(f"  Plot    : {png_path}")
     except Exception as e:
         print(f"  WARNING: plot generation failed: {e}", file=sys.stderr)

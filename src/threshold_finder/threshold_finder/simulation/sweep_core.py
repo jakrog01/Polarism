@@ -43,6 +43,7 @@ class PowerResult:
     diverged_at_step: int | None
     diverged_at_t: float | None
     wall_time_seconds: float
+    seed: int | None = None
     scalar_times: list[float] = field(default_factory=list)
     scalar_psi_sq_max: list[float] = field(default_factory=list)
 
@@ -54,6 +55,7 @@ def run_power_point(
     scalar_check_every: int = 50,
     early_stop_on_divergence: bool = True,
     save_trace: bool = True,
+    sweep_point: dict[str, Any] | None = None,
 ) -> PowerResult:
     """Simulate polariton dynamics at pump power *P* and return scalar results.
 
@@ -98,7 +100,11 @@ def run_power_point(
         dx=grid.dx,
         dy=grid.dy,
         k_cutoff_um=getattr(sim_cfg.physics, "init_k_cutoff_um", None),
-        seed=getattr(sim_cfg.physics, "init_seed", None) or RNG_SEED,
+        seed=(
+            int(sweep_point["seed"])
+            if sweep_point is not None and "seed" in sweep_point
+            else getattr(sim_cfg.physics, "init_seed", None) or RNG_SEED
+        ),
         cdtype=xp.complex128,
         rdtype=xp.float64,
     )
@@ -222,6 +228,7 @@ def run_power_point(
         diverged_at_step=diverged_at_step,
         diverged_at_t=diverged_at_t,
         wall_time_seconds=wall_time,
+        seed=(int(sweep_point["seed"]) if sweep_point is not None and "seed" in sweep_point else None),
         scalar_times=scalar_times,
         scalar_psi_sq_max=scalar_psi_sq_max_vals,
     )
