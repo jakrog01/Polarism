@@ -299,7 +299,8 @@ has been checked.
 Run on Rysy:
 
 ```bash
-cd ~/polaritonSNN/PolaritonSNN/src/polariton_hpc_pipeline
+# Set POLARISM_ROOT to the Polarism checkout root on the cluster.
+cd $POLARISM_ROOT/src/polariton_hpc_pipeline
 bash submit.sh --config scenarios/config_qdouble_energy_relaxation_production_validation.yaml --dry-run
 bash submit.sh --config scenarios/config_qdouble_energy_relaxation_production_validation.yaml
 ```
@@ -363,7 +364,8 @@ Scenarios:
 Run on Rysy:
 
 ```bash
-cd ~/polaritonSNN/PolaritonSNN/src/polariton_hpc_pipeline
+# Set POLARISM_ROOT to the Polarism checkout root on the cluster.
+cd $POLARISM_ROOT/src/polariton_hpc_pipeline
 bash submit.sh --config scenarios/config_artifact_mitigation_validation.yaml --dry-run
 bash submit.sh --config scenarios/config_artifact_mitigation_validation.yaml
 ```

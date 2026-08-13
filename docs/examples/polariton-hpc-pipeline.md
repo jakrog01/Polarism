@@ -358,7 +358,8 @@ length from `8.0` to `32.0 um`, and evaluates pulse energies
 Run it from a Rysy login node:
 
 ```bash
-cd ~/polaritonSNN/PolaritonSNN/src/polariton_hpc_pipeline
+# Set POLARISM_ROOT to the Polarism checkout root on the cluster.
+cd $POLARISM_ROOT/src/polariton_hpc_pipeline
 bash submit.sh --config scenarios/config_spatiotemporal_square4.yaml --dry-run
 bash submit.sh --config scenarios/config_spatiotemporal_square4.yaml
 ```
@@ -384,7 +385,8 @@ The config does not change the physical GPE during time evolution. It compares:
 Run it from a Rysy login node:
 
 ```bash
-cd ~/polaritonSNN/PolaritonSNN/src/polariton_hpc_pipeline
+# Set POLARISM_ROOT to the Polarism checkout root on the cluster.
+cd $POLARISM_ROOT/src/polariton_hpc_pipeline
 bash submit.sh --config scenarios/config_artifact_mitigation_validation.yaml --dry-run
 bash submit.sh --config scenarios/config_artifact_mitigation_validation.yaml
 ```
