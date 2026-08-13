@@ -1,5 +1,6 @@
 """Public laser exports."""
 from polarism.laser.continuous_exp import ContinuousExponentialPump
+from polarism.laser.continuous_exp_length import ContinuousExponentialLengthPump
 from polarism.laser.continuous_gaussian import ContinuousGaussian
 from polarism.laser.laser_factory import LaserFactory
 from polarism.laser.laser_registy import register_laser
@@ -12,5 +13,6 @@ __all__ = [
     "ContinuousGaussian",
     "PulseGaussian",
     "ContinuousExponentialPump",
+    "ContinuousExponentialLengthPump",
     "UniformLaser",
 ]

@@ -40,7 +40,12 @@ class ContinuousExponentialPump(AbstractLaser):
         X: Union[np.ndarray, cp.ndarray],
         Y: Union[np.ndarray, cp.ndarray],
     ) -> Union[np.ndarray, cp.ndarray]:
-        """Return the spatial pump profile."""
+        """Return ``exp(-r / sigma_space**2)`` with squared-scale decay length.
+
+        ``sigma_space`` is a length scale whose square sets the 1/e decay
+        length; this differs from ``continuous-gaussian``, where
+        ``sigma_space`` sets the Gaussian width directly.
+        """
         r2 = (X - self.x0) ** 2 + (Y - self.y0) ** 2
         r = self.xp.sqrt(r2)
         return self.xp.exp(-r / (self.w**2))

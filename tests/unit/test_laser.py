@@ -5,6 +5,8 @@ import numpy as np
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import LaserParameters
 from polarism.laser.laser_factory import LaserFactory
+from polarism.laser.continuous_exp import ContinuousExponentialPump
+from polarism.laser.continuous_exp_length import ContinuousExponentialLengthPump
 from tests.unit.conftest import grid
 
 TOL_MACHINE_F64 = 1e-12  # Exact algebraic identity in float64.
@@ -27,6 +29,26 @@ def test_uniform_and_continuous_gaussian_peaks() -> None:
     iy1, ix1 = np.where((g.X == cfg.x0 + cfg.sigma_space) & (g.Y == cfg.y0))
     assert np.isclose(power[iy[0], ix[0]], cfg.P0, rtol=TOL_MACHINE_F64)
     assert np.isclose(power[iy1[0], ix1[0]], cfg.P0 * np.exp(-0.5), rtol=TOL_LASER_INTEG)
+
+
+def test_continuous_exponential_squared_scale_is_pinned() -> None:
+    compute_engine.xp = np
+    cfg = LaserParameters(laser_type="continuous-exp", sigma_space=3.0)
+    X = np.array([[cfg.sigma_space**2]])
+    Y = np.zeros_like(X)
+    laser = ContinuousExponentialPump(cfg, X, Y)
+    assert np.isclose(laser._P_space(X, Y)[0, 0], np.exp(-1.0), rtol=TOL_MACHINE_F64)
+
+
+def test_continuous_exponential_length_scale_is_pinned() -> None:
+    compute_engine.xp = np
+    cfg = LaserParameters(laser_type="continuous-exp-length", sigma_space=3.0)
+    X = np.array([[cfg.sigma_space]])
+    Y = np.zeros_like(X)
+    laser = ContinuousExponentialLengthPump(cfg, X, Y)
+    assert np.isclose(laser._P_space(X, Y)[0, 0], np.exp(-1.0), rtol=TOL_MACHINE_F64)
+    created, _ = _laser(cfg)
+    assert isinstance(created, ContinuousExponentialLengthPump)
 
 
 def test_pulse_timing_cutoff_ramp_and_count() -> None:
