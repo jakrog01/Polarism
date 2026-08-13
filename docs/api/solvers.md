@@ -32,7 +32,7 @@ The package includes explicit compatibility checks and warnings. In practice:
 - `ifrk4-fft-cuda` is the spectral production path: GPU-native cuFFT, periodic + CAP, quadratic-double stage-coupled
 - `split-step-fft` and `ip-rk4` on `closed-interval` grids use SciPy DCT with host-device copies every step — CPU-bound on GPU runs; diagnostic use only
 - `etd-rk2` and `ifrk4-fft-cuda` are restricted to periodic grids
-- `etd-rk2` advances the reservoir with a separate midpoint step and is not a stage-coupled production path for quadratic-double
+- `etd-rk2` advances the reservoir between predictor and corrector using a midpoint condensate estimate, retaining second-order coupling for all supported reservoir types
 - CUDA solvers are meaningful only when the GPU backend is actually active
 
 ## ifrk4-fft-cuda
@@ -88,10 +88,15 @@ grid topology:
   periodic + CAP open-boundary problems).  It stage-couples `(nR, nI)` inside the
   same FFT RK4 scheme as `psi`, eliminating the O(dt) splitting error.  Use it
   for large periodic-grid campaigns where spectral kinetics are preferred.
-- **`split-step-fft`** is diagnostic only for `quadratic-double`.  Its operator
+- **`split-step-fft`** is diagnostic only for `quadratic-double`. Its Lie
   splitting advances the reservoir with a separate RK2 step at the end of each
-  full split-step cycle, introducing a global O(dt) coupling error.  It is not a
+  full split-step cycle, introducing a global O(dt) coupling error. It is not a
   production reference for threshold or amplitude comparisons.
+
+`etd-rk2` inserts its reservoir sub-step between the predictor and corrector and
+drives it with the midpoint condensate estimate `(psi_n + a) / 2`. This retains
+O(dt²) psi-reservoir coupling for every listed reservoir type, including
+`quadratic-double` (measured p≈2.00 in the convergence study).
 
 ## Selection strategy
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING, TypedDict
 
+from polarism.compute_engine import has_cuda_device
+
 if TYPE_CHECKING:
     from polarism.config.simulation_parameters import Config
 
@@ -11,7 +13,7 @@ _SPECTRAL_SOLVERS = {"split-step-fft", "ip-rk4", "etd-rk2"}
 
 _ALL_RESERVOIR_TYPES = {"single", "double", "quadratic-double"}
 _STAGE_COUPLED_RESERVOIR_TYPES = {"single", "double", "quadratic-double"}
-_SPLIT_STEP_RESERVOIR_TYPES = {"single", "double"}
+_LIE_SPLIT_RESERVOIR_TYPES = {"single", "double"}
 
 
 class _SolverCaps(TypedDict):
@@ -23,11 +25,10 @@ class _SolverCaps(TypedDict):
         All reservoir models the solver can technically run without crashing.
     reservoir_types_quantitative
         Reservoir models for which the solver is suitable for production
-        threshold/amplitude comparisons.  For stage-coupled solvers this equals
-        reservoir_types.  For split-step solvers (split-step-fft, etd-rk2)
-        this is {"single", "double"}: acceptable O(dt) first-order coupling for
-        simple reservoirs, but not stage-coupled — do not use for quantitative
-        quadratic-double studies.
+        threshold/amplitude comparisons. For stage-coupled solvers this equals
+        reservoir_types. For Lie splitting of psi and reservoir, linear
+        single/double reservoirs remain acceptable because the coupling error
+        is subdominant.
     supports_kinetic_relaxation
         True if the solver evaluates kinetic_relaxation_eta*n_active*lap(psi)
         in the time loop.  False solvers silently ignore a non-zero eta,
@@ -97,14 +98,18 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
         "supports_potential": False,
         "boundary_types": {"no-absorption", "mask", "cap"},
         "reservoir_types": _ALL_RESERVOIR_TYPES,
-        "reservoir_types_quantitative": _SPLIT_STEP_RESERVOIR_TYPES,
+        "reservoir_types_quantitative": _LIE_SPLIT_RESERVOIR_TYPES,
         "supports_kinetic_relaxation": False,
         "description": (
-            "Spectral split-step solver. Reservoir advanced via a separate "
-            "midpoint RK2 step — acceptable O(dt) coupling for single/double, "
-            "diagnostic path only for quadratic-double. "
-            "Does not evaluate kinetic_relaxation_eta. "
-            "closed-interval path uses CPU DCT with host-device copies every step."
+            "Spectral split-step solver. Reservoir advanced sequentially after the "
+            "full-step Strang split of the condensate (Lie splitting of psi and "
+            "reservoir), giving O(dt) global coupling error whenever the reservoir "
+            "dynamics are non-trivial (measured p≈1.06 on quadratic-double, per "
+            "convergence study). Acceptable for single/double reservoirs where the "
+            "reservoir is linear in n_R and the coupling error is subdominant; "
+            "diagnostic-only for quadratic-double. Does not evaluate "
+            "kinetic_relaxation_eta. closed-interval path uses CPU DCT with "
+            "host-device copies every step."
         ),
     },
     "ip-rk4": {
@@ -127,13 +132,14 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
         "supports_potential": True,
         "boundary_types": {"no-absorption", "mask", "cap"},
         "reservoir_types": _ALL_RESERVOIR_TYPES,
-        "reservoir_types_quantitative": _SPLIT_STEP_RESERVOIR_TYPES,
+        "reservoir_types_quantitative": _STAGE_COUPLED_RESERVOIR_TYPES,
         "supports_kinetic_relaxation": False,
         "description": (
-            "ETD-RK2 spectral solver. FFT-only, periodic grid only. "
-            "Reservoir advanced via a separate midpoint step — not stage-coupled. "
-            "Does not evaluate kinetic_relaxation_eta. "
-            "Diagnostic path for quadratic-double."
+            "ETD-RK2 spectral solver. FFT-only, periodic grid only. Reservoir "
+            "advanced between predictor and corrector using a midpoint condensate "
+            "estimate (psi_n + a)/2, giving O(dt²) psi↔reservoir coupling (measured "
+            "p≈2.00 on quadratic-double, per convergence study). Does not evaluate "
+            "kinetic_relaxation_eta."
         ),
     },
     "ifrk4-fft-cuda": {
@@ -201,7 +207,7 @@ def check_solver_compatibility(cfg: Config) -> None:
         warnings.warn(
             f"Solver '{solver}' has known accuracy issues with non-zero "
             f"potential (potential_type='{potential_type}'). "
-            f"Operator splitting error will degrade results. "
+            f"Split-step error will degrade results. "
             f"Consider 'rk4-fdm', 'rk4-fdm-fused', 'rk4-cuda', or 'ifrk4-fft-cuda'.",
             UserWarning,
             stacklevel=2,
@@ -210,12 +216,13 @@ def check_solver_compatibility(cfg: Config) -> None:
     if reservoir_type not in caps["reservoir_types_quantitative"]:
         warnings.warn(
             f"Solver '{solver}' with reservoir_type='{reservoir_type}': "
-            f"the reservoir is advanced with a separate sub-step (operator splitting), "
-            f"introducing an O(dt) coupling error between psi and the reservoir. "
-            f"Suitable for diagnostics; not recommended for quantitative "
-            f"threshold or amplitude comparisons. "
-            f"For production reservoir dynamics use 'rk4-cuda' (FDM) or "
-            f"'ifrk4-fft-cuda' (spectral periodic).",
+            f"the reservoir is advanced sequentially after the full condensate step "
+            f"(Lie splitting of psi and reservoir), giving a global O(dt) coupling "
+            f"error whenever the reservoir dynamics are non-trivial. Acceptable for "
+            f"diagnostic use; not recommended for quantitative threshold or amplitude "
+            f"comparisons. For production reservoir dynamics use 'rk4-cuda' (FDM), "
+            f"'ifrk4-fft-cuda' (spectral periodic), or 'etd-rk2' (spectral, "
+            f"second-order coupling via predictor-corrector midpoint reservoir sample).",
             UserWarning,
             stacklevel=2,
         )
@@ -231,21 +238,22 @@ def check_solver_compatibility(cfg: Config) -> None:
             stacklevel=2,
         )
 
-    if solver in {"rk4-cuda", "rk4-cuda-v100", "ifrk4-fft-cuda"} and not _gpu_available():
-        warnings.warn(
-            f"Solver '{solver}' is optimized for GPU but no GPU is detected. "
-            "Falling back to CPU (numpy). For CPU-only runs, 'rk4-fdm-fused' "
-            "may be faster.",
-            UserWarning,
-            stacklevel=2,
-        )
-
-
-def _gpu_available() -> bool:
-    """Return whether the active backend exposes CUDA."""
-    try:
-        from polarism.compute_engine import compute_engine
-
-        return hasattr(compute_engine.xp, "cuda")
-    except Exception:
-        return False
+    if solver in {"rk4-cuda", "rk4-cuda-v100", "ifrk4-fft-cuda"}:
+        use_gpu = getattr(cfg.compute_engine, "use_gpu", False)
+        cuda_available = has_cuda_device()
+        if use_gpu and not cuda_available:
+            warnings.warn(
+                f"Solver '{solver}' is optimized for GPU but no CUDA device is available "
+                "(CuPy missing or `cuda.runtime.getDeviceCount()==0`); falling back to "
+                "CPU (NumPy). For CPU-only runs, 'rk4-fdm-fused' may be faster.",
+                UserWarning,
+                stacklevel=2,
+            )
+        elif not use_gpu and cuda_available:
+            warnings.warn(
+                f"Solver '{solver}' is GPU-optimised and a CUDA device is available, but "
+                "`compute_engine.use_gpu=False` in the config; running on CPU by explicit "
+                "request.",
+                UserWarning,
+                stacklevel=2,
+            )
