@@ -1,0 +1,11 @@
+lasers:
+- P0: 8
+  laser_type: continuous-exp
+  sigma_space: 2.5
+  x0: -2.0
+  y0: 0.0
+- P0: 10
+  laser_type: continuous-exp
+  sigma_space: 2.5
+  x0: 2.0
+  y0: 0.0

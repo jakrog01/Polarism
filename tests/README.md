@@ -10,6 +10,22 @@
 
 The default command deliberately deselects `slow` and `compliance` nodes to keep ordinary development feedback short. A full verification run must execute every tier above; the Phoenix reference matrix is run separately with `pytest tests/test_phoenix_benchmark.py -m slow` on CUDA hardware.
 
+## Dane referencyjne Phoenix
+
+Dziewięć porównań `test_phoenix_accuracy` (trzy przypadki fizyczne × trzy solwery FDM)
+czyta dane referencyjne z `tests/data/phoenix_benchmark/<przypadek>/`. Katalog jest
+śledzony w repozytorium, więc świeży klon wystarcza do odtworzenia porównań — nie ma
+osobnego kroku pobierania danych. Na przypadek zapisane są: `rho_max.txt` (przebieg
+`max|ψ|²` z PHOENIX), `psi_init.txt`, `pump.txt`, `potential.txt`,
+`phoenix_lasers_setup.yaml`, `timing.json` oraz `frame_first.npz` i `frame_last.npz`.
+Test najpierw sprawdza, czy siatka, pompa, potencjał i warunek początkowy Polarism
+zgadzają się z plikami PHOENIX, a dopiero potem porównuje wynik.
+
+Dane wygenerowano notatnikiem `tests/data/phoenix_benchmark/example.ipynb`
+uruchomionym w kontenerze `robertschade/phoenix:latest` (pyphoenix, fp64, GPU).
+Pliki są oznaczone w `.gitattributes` jako binarne, aby porównania pozostały
+bajtowo identyczne niezależnie od ustawienia `core.autocrlf`.
+
 ## Pełna walidacja CPU i GPU
 
 Do raportu końcowego uruchom całą baterię jednym procesem:
