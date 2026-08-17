@@ -2,18 +2,19 @@
 .*/
 .*
 __pycache__/
+*.egg-info/
 simulation_results/
 test_results/
 artifacts/
-scripts/*
-!scripts/analyse_convergence.py
+scripts/
+**/scripts/
 data/
+!tests/data/
 slurm.env
 *.md
 !README.md
-!FINDINGS.md
-!FOLLOWUP_EXP_PUMP_DECISION.md
 !gitignore
+!.gitattributes
 !docs/
 !docs/*.md
 !docs/**/*.md
@@ -21,15 +22,12 @@ slurm.env
 !.github/workflows/
 !.github/workflows/*.yml
 site/
-# Local-only launch helpers and outputs. These are machine/user specific and
-# should never be part of the tracked pipeline contract.
+
 src/*/localrun.sh
 src/*/local_run.sh
 src/*/local_submit.sh
 src/*/runs/
 
-# Local campaign/scenario configs. Keep each pipeline's config.yaml as the
-# tracked default; store ad-hoc validation and production campaigns here.
 src/pump_multi_comparison/scenarios/*.yaml
 src/threshold_finder/scenarios/*.yaml
 src/create_characteristic/scenarios/*.yaml
