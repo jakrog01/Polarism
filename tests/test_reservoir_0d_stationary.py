@@ -16,7 +16,7 @@ from tests._helpers import (
 def test_single_reservoir_0d_stationary_with_plot(output_dir):
     """Test that single reservoir 0d stationary with plot."""
     grid = make_grid(GridCfg(nx=32, ny=32, lx=200.0, ly=200.0))
-    physics = make_physics_default(D=0.0)
+    physics = make_physics_default()
     reservoir = SingleReservoir(make_reservoir_cfg(False), physics, grid)
 
     P0 = 0.02

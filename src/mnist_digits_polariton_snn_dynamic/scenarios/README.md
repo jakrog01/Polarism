@@ -6,14 +6,8 @@ Each scenario YAML is self-contained and uses the same schema as `config.yaml`. 
 
 ## Pre-Submission Gates
 
-For `pitch_sigma_sweep`, run the CPU-only spatial discretization check before
-submitting GPU jobs:
-
-```bash
-.venv/bin/python src/mnist_digits_polariton_snn_dynamic/scripts/check_pitch_sigma_discretization.py
-```
-
-The script evaluates every scenario Gaussian on the configured `1024x1024`,
+For `pitch_sigma_sweep`, validate the spatial discretization before submitting
+GPU jobs. Evaluate every scenario Gaussian on the configured `1024x1024`,
 `160 um x 160 um` periodic grid and compares the discrete integral against
 `2*pi*sigma_space_um^2`. The current sweep is below the accepted `1.0e-4`
 relative-error threshold by numerical roundoff, with worst observed lattice

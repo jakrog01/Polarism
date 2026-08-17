@@ -122,11 +122,11 @@ The condensate equation receives `nR` as the active reservoir density.
 
 | Field | Meaning | Main options |
 | --- | --- | --- |
-| `method` | time integrator | `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`, `rk4-cuda-v100`, `split-step-fft`, `etd-rk2`, `ip-rk4`, `ifrk4-fft-cuda` |
+| `method` | time integrator | `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`, `split-step-fft`, `etd-rk2`, `ip-rk4`, `ifrk4-fft-cuda` |
 | `dt` | timestep | positive float |
 | `total_time` | total simulation time | positive float |
 | `precision` | arithmetic mode where supported | typically `single`, `double` |
-| `laplacian` | finite-difference Laplacian stencil for `rk4-cuda` and `rk4-cuda-v100` | `five-point`, `isotropic-9pt` |
+| `laplacian` | finite-difference Laplacian stencil for `rk4-cuda` | `five-point`, `isotropic-9pt` |
 
 `solver.laplacian` defaults to `five-point`.  `isotropic-9pt` is available for
 square cells (`dx == dy`) and discretizes the same physical operator, `nabla^2`,

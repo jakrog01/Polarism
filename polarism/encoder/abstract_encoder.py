@@ -15,8 +15,7 @@ class AbstractEncoder(Protocol):
     * **amplitudes** — peak power of each Gaussian pulse.
     * **centers** — temporal centre of each Gaussian pulse (ps).
 
-    Both arrays are consumed by :func:`polarism.response.time_only.generate_pump`
-    to build the pump interpolant.
+    Both arrays are consumed downstream to build the pump interpolant.
     """
 
     def encode(

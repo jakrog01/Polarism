@@ -34,6 +34,8 @@ class ClassificationReport:
         Number of test samples.
     test_indices
         Original sample indices assigned to the test split.
+    predictions_test
+        Predicted integer labels aligned with ``test_indices``.
     """
 
     accuracy_train: float
@@ -46,6 +48,7 @@ class ClassificationReport:
     n_train: int
     n_test: int
     test_indices: np.ndarray
+    predictions_test: np.ndarray
 
 
 def train_and_evaluate(
@@ -157,4 +160,5 @@ def train_and_evaluate(
         n_train=int(y_train.shape[0]),
         n_test=int(y_test.shape[0]),
         test_indices=np.asarray(test_idx, dtype=np.int64),
+        predictions_test=np.asarray(y_pred_test, dtype=np.int64),
     )

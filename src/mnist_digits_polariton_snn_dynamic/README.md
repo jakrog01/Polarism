@@ -1,5 +1,9 @@
 # MNIST Digits Polariton SNN Dynamic
 
+This is an experimental application example outside the WF-/WJ- requirements.
+Polarism does not claim validated MNIST classification accuracy; its automated
+end-to-end coverage checks execution and reproducibility only.
+
 This workflow encodes downsampled MNIST digits into a 7x7 lattice of pulsed
 Gaussian pumps and records dynamic condensate and reservoir traces for a
 logistic-regression readout.
@@ -11,34 +15,9 @@ output directory.
 
 ## Local Diagnostics
 
-Use the project virtual environment for every diagnostic:
-
-```bash
-.venv/bin/python src/mnist_digits_polariton_snn_dynamic/scripts/verify_geometry.py
-.venv/bin/python src/mnist_digits_polariton_snn_dynamic/scripts/check_pitch_sigma_discretization.py
-.venv/bin/python src/mnist_digits_polariton_snn_dynamic/scripts/profile_pump_allocation.py
-```
-
-`verify_geometry.py` checks that the current 7x7 lattice and linear encoder
-match the old explicit implementation.
-
-`check_pitch_sigma_discretization.py` is the CPU-only gate for
-`scenarios/pitch_sigma_sweep/`. It evaluates each scenario Gaussian on the
-configured real-space grid and compares the discrete integral against
-`2*pi*sigma_space_um^2`. The current sweep has worst observed relative error
-`3.18e-16` across all 7x7 lattice centers, including `pitch04_sigma0_67`, so no
-sigma/dx validation threshold or per-scenario grid refinement is currently
-required by this diagnostic.
-
-`profile_pump_allocation.py` is an optional CuPy micro-profile for the nonzero
-pulse branch in the time-step loop. The current measurement shows the
-preallocated-buffer variant is not worth implementing for this workflow.
-
-The current review record is kept in:
-
-```text
-src/mnist_digits_polariton_snn_dynamic/scripts/review_findings_report.md
-```
+Campaign-specific diagnostics and profiling tools are local-only and excluded
+from version control. They do not form part of this workflow's tracked
+interface.
 
 ## Deterministic Initialization
 
@@ -64,17 +43,11 @@ The pitch/sigma campaign lives in:
 src/mnist_digits_polariton_snn_dynamic/scenarios/pitch_sigma_sweep/
 ```
 
-Before submitting the campaign to GPU, run:
-
-```bash
-.venv/bin/python src/mnist_digits_polariton_snn_dynamic/scripts/check_pitch_sigma_discretization.py
-```
-
-The accepted diagnostic threshold for this campaign is `1.0e-4` relative error
-against the analytic spatial Gaussian integral. If a future scenario exceeds
-that threshold, do not submit it directly. Either add an explicit
-`GridLatticeGeometry` sigma/dx guard or refine the grid for the affected
-scenario and estimate the FFT cost increase.
+Before submitting the campaign to GPU, validate the discrete Gaussian integral
+against the analytic spatial Gaussian integral. The accepted threshold is
+`1.0e-4` relative error. If a future scenario exceeds that threshold, do not
+submit it directly. Either add an explicit `GridLatticeGeometry` sigma/dx guard
+or refine the grid for the affected scenario and estimate the FFT cost increase.
 
 Each campaign scenario is submitted as three dependent stages:
 

@@ -16,7 +16,7 @@ The repository is organized around one clear boundary:
 The full documentation site is in `docs/` and is configured by `mkdocs.yml`.
 
 Documentation site:
-https://jakrog01.github.io/PolaritonSNN/#getting-started
+https://jakrog01.github.io/polarism/#getting-started
 
 ## Repository Layout
 
@@ -41,7 +41,7 @@ src/                          Example applications built on `polarism`
 
 docs/                         MkDocs Material documentation site
 run.py                        Tyro CLI over the public `polarism.Config`
-requirements.txt              Runtime, development, and docs dependencies
+pyproject.toml                Project metadata and dependency groups
 ```
 
 ## Quick Local Setup
@@ -53,7 +53,7 @@ not expected to contain the required packages.
 python -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install -e ".[dev]"
 ```
 
 Run the default CPU-oriented checks:
@@ -156,18 +156,9 @@ The dynamic MNIST workflow lives in
 It maps downsampled MNIST digits onto a 7x7 lattice of pulsed Gaussian pumps and
 records dynamic readout traces for classification.
 
-Before submitting the pitch/sigma campaign, run the CPU-side discretization
-gate:
-
-```bash
-.venv/bin/python src/mnist_digits_polariton_snn_dynamic/scripts/check_pitch_sigma_discretization.py
-```
-
-The current `pitch_sigma_sweep` scenarios pass the `1.0e-4` relative-error
-threshold against the analytic Gaussian spatial integral; the worst measured
-lattice error is `3.18e-16`. The review report and optional pump-allocation
-profile are documented in
-[`src/mnist_digits_polariton_snn_dynamic/scripts/review_findings_report.md`](src/mnist_digits_polariton_snn_dynamic/scripts/review_findings_report.md).
+Local campaign diagnostics are intentionally ignored and are not part of the
+repository contract. The tracked scenarios remain the reproducible inputs for
+the workflow.
 
 ## Current Production Conventions
 

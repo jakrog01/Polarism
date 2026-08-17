@@ -1,9 +1,22 @@
 # mnist_digits_polariton_snn_dynamic Pipeline
 
+This is an experimental application example outside the WF-/WJ- requirements.
+The repository does not claim validated MNIST classification accuracy, and the
+automated test verifies data flow and determinism rather than model quality.
+
 `src/mnist_digits_polariton_snn_dynamic/` is a dynamic MNIST classification
 workflow built on top of `polarism`. It downscales digits to a 7x7 input, maps
 pixels to pulsed Gaussian pump energies, simulates condensate and reservoir
 dynamics, and trains a logistic-regression readout.
+
+Each 7x7 image intensity is mapped linearly to one of 49 pulse energies. The
+readout receives time-resolved condensate-density values integrated over 49
+spot masks plus one global mask; optional active and inactive reservoir traces
+are appended, and `raw`, `summary`, or `both` selects their feature reduction.
+A standardized multinomial logistic regression is fitted only on the
+stratified training split and produces integer predictions for the held-out
+split. The deterministic synthetic end-to-end test uses 20 generated inputs
+and does not assert or publish an accuracy value.
 
 The workflow keeps reusable physics configuration in:
 
@@ -34,17 +47,8 @@ physics:
 ## Pitch/Sigma Sweep Gate
 
 The pitch/sigma campaign checks whether changing pump spacing and spot width
-affects spatial mixing. Before submitting this campaign to GPU, run the CPU-only
-Gaussian discretization diagnostic:
-
-```bash
-.venv/bin/python src/mnist_digits_polariton_snn_dynamic/scripts/check_pitch_sigma_discretization.py
-```
-
-The script reads `polarism_base.yaml` and
-`scenarios/pitch_sigma_sweep/*.yaml`, evaluates each Gaussian on the same
-centered periodic grid convention as `PeriodicSimulationGrid2D`, and compares
-the discrete integral with the analytic spatial integral:
+affects spatial mixing. Validate the discrete Gaussian integral against the
+analytic spatial integral before submitting the campaign:
 
 ```text
 sum(exp(-0.5 * r^2 / sigma^2)) * dx * dy
@@ -103,6 +107,10 @@ Each subset reports held-out accuracy and `delta_vs_pixel_baseline`. Scenario
 reports are written to `ablation_report.json`; the campaign-level comparison is
 written to `campaign_ablation_summary.json`.
 
+Those values belong to the explicitly configured external campaign that
+created its output directory. They are not reproduced by the synthetic flow
+test and are not evidence of validated MNIST accuracy.
+
 ## Slurm Chain
 
 `cluster/submit_campaign.sh` submits three dependent jobs per scenario:
@@ -125,23 +133,8 @@ bash src/mnist_digits_polariton_snn_dynamic/cluster/submit_campaign.sh --dry-run
 Do not submit the real queue until the calibration proxy is accepted and one
 full baseline GPU timing pilot has been measured on Rysy.
 
-## Pump Allocation Profile
+## Local Diagnostics
 
-The nonzero pulse branch in the runner time-step loop can be profiled with:
-
-```bash
-.venv/bin/python src/mnist_digits_polariton_snn_dynamic/scripts/profile_pump_allocation.py
-```
-
-The current measurement shows the preallocated `pump_t` buffer variant has only
-a small isolated benefit for the batch-32 shape, so the runner implementation
-keeps the simpler multiplication path.
-
-## Review Record
-
-The current diagnostic table, seed consistency note, and pump-allocation profile
-are recorded in:
-
-```text
-src/mnist_digits_polariton_snn_dynamic/scripts/review_findings_report.md
-```
+Campaign-specific diagnostics and profiling tools are intentionally local and
+are excluded from version control. They do not form part of the workflow
+contract.

@@ -27,36 +27,9 @@ class IPRK4Solver(AbstractSolver):
         hbar = self.config.physics.hbar
         m_eff = self.config.physics.m_eff
 
-        grid_type = getattr(config.grid, "grid_type", "periodic")
-        self._use_dct = grid_type == "closed-interval"
-
-        if self._use_dct and hasattr(self.xp, "cuda"):
-            import warnings
-
-            warnings.warn(
-                "ip-rk4: closed-interval grid uses SciPy DCT "
-                "with host-device copies on every step. "
-                "This is CPU-bound and not suitable for GPU production runs. "
-                "For GPU-native spectral evolution use 'ifrk4-fft-cuda' "
-                "with a periodic grid and CAP absorber.",
-                UserWarning,
-                stacklevel=2,
-            )
-
         self._eta = getattr(config.physics, "kinetic_relaxation_eta", 0.0)
 
-        if self._use_dct:
-            nx, ny = grid.nx, grid.ny
-            dx, dy = grid.dx, grid.dy
-            nx_idx = self.xp.arange(nx, dtype=self.xp.float64)
-            ny_idx = self.xp.arange(ny, dtype=self.xp.float64)
-            lambda_x = 4.0 / (dx**2) * self.xp.sin(self.xp.pi * nx_idx / (2 * nx)) ** 2
-            lambda_y = 4.0 / (dy**2) * self.xp.sin(self.xp.pi * ny_idx / (2 * ny)) ** 2
-            LX, LY = self.xp.meshgrid(lambda_x, lambda_y, indexing="xy")
-            self._L_eig = LX + LY
-        else:
-            self._L_eig = grid.k_squared
-
+        self._L_eig = grid.k_squared
         self._L = -1j * hbar * self._L_eig / (2 * m_eff)
 
         self._exp_L_half = self.xp.exp(self._L * (dt / 2))
@@ -65,52 +38,12 @@ class IPRK4Solver(AbstractSolver):
         self._exp_L_neg_full = self.xp.exp(-self._L * dt)
         self._hbar_over_2m = hbar / (2.0 * m_eff)
 
-        self._dctn = None
-        self._idctn = None
-
-    def _load_dct(self):
-        """Load DCT helpers for closed-interval grids."""
-        if self._dctn is None:
-            try:
-                from scipy.fft import dctn, idctn
-
-                self._dctn = dctn
-                self._idctn = idctn
-            except ImportError:
-                raise ImportError(
-                    "scipy is required for ip-rk4 solver with closed-interval grids."
-                )
-
     def _forward(self, psi):
         """Transform psi to spectral space."""
-        if self._use_dct:
-            self._load_dct()
-            if hasattr(self.xp, "asnumpy"):
-                psi_np = self.xp.asnumpy(psi)
-            else:
-                psi_np = psi
-            re_k = self._dctn(psi_np.real, type=2, norm="ortho")
-            im_k = self._dctn(psi_np.imag, type=2, norm="ortho")
-            result = re_k + 1j * im_k
-            if hasattr(self.xp, "asnumpy"):
-                return self.xp.asarray(result)
-            return result
         return self.xp.fft.fft2(psi)
 
     def _inverse(self, psi_k):
         """Transform from spectral space back to real space."""
-        if self._use_dct:
-            self._load_dct()
-            if hasattr(self.xp, "asnumpy"):
-                psi_k_np = self.xp.asnumpy(psi_k)
-            else:
-                psi_k_np = psi_k
-            re = self._idctn(psi_k_np.real, type=2, norm="ortho")
-            im = self._idctn(psi_k_np.imag, type=2, norm="ortho")
-            result = re + 1j * im
-            if hasattr(self.xp, "asnumpy"):
-                return self.xp.asarray(result)
-            return result
         return self.xp.fft.ifft2(psi_k)
 
     def _nonlinear_rhs(self, psi, nR, nI, potential, psi_k=None):

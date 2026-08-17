@@ -53,16 +53,8 @@ the complete Phoenix matrix as well as the CPU/GPU agreement checks. Do not run
 a second pytest process at the same time: Phoenix needs exclusive use of the
 GPU for meaningful timing and reproducible comparisons.
 
-The JUnit XML is the primary machine-readable execution record. After a
-successful run, generate the Polish-language tables and figures with:
-
-```bash
-.venv/bin/python -m scripts.generate_verification_evidence
-.venv/bin/python -m scripts.generate_verification_artifacts
-```
-
-All outputs under `artifacts/` are local generated data and must not be
-committed.
+The JUnit XML is the primary machine-readable execution record. All outputs
+under `artifacts/` are local generated data and must not be committed.
 
 ## What the tests cover
 
@@ -95,8 +87,12 @@ The repository now includes a documentation workflow that:
 2. builds the MkDocs site
 3. deploys the built site to GitHub Pages on pushes to `master` or `main`
 
+The test workflow runs automatically for every push and pull request on Python
+3.12 and 3.13. It installs the `test` dependency extra and runs the CPU test
+selection, excluding slow, compliance, and GPU-only tests.
+
 ## Important limitation
 
-The Pages workflow intentionally avoids running the test suites. This keeps the deployment job focused on documentation publishing and avoids spending GitHub-hosted runner time on validations that are better run locally or on hardware-aware infrastructure.
-
-If you later add CI back, keep the heavier compliance and GPU-oriented validations separate from the documentation deployment path.
+The Pages workflow intentionally avoids running the test suites. This keeps the
+deployment job focused on documentation publishing; heavier compliance and
+GPU-oriented validations remain separate from the hosted CPU CI suite.

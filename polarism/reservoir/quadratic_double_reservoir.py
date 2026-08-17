@@ -14,8 +14,6 @@ Equations of motion (state order: ``(nR, nI)``)
 ``dnI/dt = P(x,y,t) - kappa * nI² - gammaI * nI``
 
 The active density ``nR`` is passed to the GPE as the reservoir source term.
-This matches the time-only ODE in ``polarism.response.time_only`` where the
-condensate density ``nC`` plays the role of ``|ψ|²``.
 """
 from __future__ import annotations
 

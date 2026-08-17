@@ -1,7 +1,10 @@
 """Spatial convergence artefacts with a sigma=0.9 μm broadband packet.
 
 The broadband width keeps every solver below the 1e-2 error ceiling while
-leaving a 3.6e-3 spectral error on the coarsest grid.
+leaving a measurable spectral error on the coarsest grid. The intermediate
+192 grid supplies a third asymptotic point after rejecting nx=64 while keeping
+the existing 1024 reference. This gives a reference-to-finest ratio of four
+without the memory and runtime cost of a 2048-square reference for every case.
 """
 from __future__ import annotations
 
@@ -30,7 +33,7 @@ CASES = {
     "bandlimited": {"sigma": 4.0, "kx": 3.0},
     "broadband": {"sigma": 0.9, "kx": 6.0},
 }
-TEST_GRIDS = (64, 128, 256)
+TEST_GRIDS = (64, 128, 192, 256)
 REFERENCE_GRID = 1024
 
 
