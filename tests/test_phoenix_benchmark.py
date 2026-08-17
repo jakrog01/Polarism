@@ -771,8 +771,14 @@ def _run_benchmark_case(
     rho_max_path = case_dir / "rho_max.txt"
     lasers_yaml = case_dir / "phoenix_lasers_setup.yaml"
 
-    assert rho_max_path.exists(), f"Missing: {rho_max_path}"
-    assert lasers_yaml.exists(), f"Missing: {lasers_yaml}"
+    missing_data_hint = (
+        "The Phoenix reference set is tracked in the repository under "
+        "tests/data/phoenix_benchmark/. Regenerate it with "
+        "tests/data/phoenix_benchmark/example.ipynb inside the PHOENIX "
+        "container if the checkout is incomplete."
+    )
+    assert rho_max_path.exists(), f"Missing: {rho_max_path}. {missing_data_hint}"
+    assert lasers_yaml.exists(), f"Missing: {lasers_yaml}. {missing_data_hint}"
 
     validate_benchmark_data(case.name, case_dir, lasers_yaml)
 

@@ -1,0 +1,8 @@
+{
+  "case": "01_uniform_pump",
+  "elapsed_s": 45.213471795999794,
+  "t_end_ps": 500.0,
+  "tstep_ps": 0.001,
+  "precision": "fp64",
+  "device": "GPU"
+}

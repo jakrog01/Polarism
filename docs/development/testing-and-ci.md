@@ -72,6 +72,21 @@ committed.
 - `test_solver_compliance.py` compares solver families and reservoir variants.
 - `test_phoenix_benchmark.py` is a long benchmark-style validation path.
 
+## Phoenix reference data
+
+`test_phoenix_benchmark.py` reads its reference traces from
+`tests/data/phoenix_benchmark/`, which is tracked in the repository. A fresh
+clone therefore contains everything the nine `test_accuracy` comparisons need
+(`rho_max.txt`, `psi_init.txt`, `pump.txt`, `potential.txt`,
+`phoenix_lasers_setup.yaml`, `timing.json`, `frame_first.npz`,
+`frame_last.npz`); there is no separate data download step. Unlike `artifacts/`,
+this directory is verification *input*, not generated output.
+
+The data was produced by `tests/data/phoenix_benchmark/example.ipynb` inside the
+`robertschade/phoenix:latest` container (pyphoenix, fp64, GPU) and is marked
+binary in `.gitattributes` so the byte-exact input checks stay valid regardless
+of the local `core.autocrlf` setting.
+
 ## GitHub Actions deployment flow
 
 The repository now includes a documentation workflow that:
