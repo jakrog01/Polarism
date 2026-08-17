@@ -13,7 +13,7 @@ def pytest_addoption(parser):
     parser.addoption(
         "--use-gpu",
         action="store_true",
-        default=True,
+        default=False,
         help="Run benchmarks on GPU (requires CuPy)",
     )
 
@@ -21,7 +21,7 @@ def pytest_addoption(parser):
 @pytest.fixture(scope="session")
 def use_gpu(request):
     """Return whether GPU tests are enabled."""
-    return request.config.getoption("--use-gpu", default=True)
+    return request.config.getoption("--use-gpu", default=False)
 
 
 @pytest.fixture(autouse=True)

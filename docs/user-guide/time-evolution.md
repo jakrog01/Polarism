@@ -9,7 +9,6 @@ The codebase supports several real-time integration strategies. The best choice 
 | Reference finite difference RK4 | `rk4-fdm` | Baseline correctness and convergence studies |
 | Fused finite difference RK4 | `rk4-fdm-fused` | Faster CPU or backend-agnostic finite-difference runs |
 | CUDA fused RK4 | `rk4-cuda` | GPU production runs |
-| V100-tuned CUDA RK4 | `rk4-cuda-v100` | GPU runs specialized for V100-class hardware |
 | Split-step FFT | `split-step-fft` | Spectral runs on simple periodic-like setups |
 | Interaction-picture RK4 | `ip-rk4` | Spectral-style evolution when its assumptions fit |
 | ETD-RK2 | `etd-rk2` | Periodic spectral evolution with exponential differencing |
@@ -27,10 +26,11 @@ Recommended order:
 
 ## Spectral solver limitations
 
-`split-step-fft` and `ip-rk4` on `closed-interval` grids invoke SciPy DCT and
-perform host-device copies on every timestep.  On a GPU backend this is CPU-bound
-and orders of magnitude slower than `ifrk4-fft-cuda`.  Both solvers emit a
-`UserWarning` when this path is active.
+All spectral solvers (`split-step-fft`, `ip-rk4`, `etd-rk2`, `ifrk4-fft-cuda`)
+are FFT-only and therefore accept the `periodic` grid only.  Selecting a
+`closed-interval` grid raises `SolverCompatibilityError` at configuration time.
+For `closed-interval` domains use the finite-difference family: `rk4-fdm`,
+`rk4-fdm-fused` or `rk4-cuda`.
 
 `etd-rk2` advances the reservoir via a separate midpoint step, not stage-coupled
 with `psi`.  It is not a production path for `quadratic-double` threshold studies.

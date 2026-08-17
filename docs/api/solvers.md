@@ -17,7 +17,6 @@ At the abstraction level, every solver must:
 | `rk4-fdm` | finite-difference RK4 | reference solver, broadest baseline |
 | `rk4-fdm-fused` | optimized finite-difference RK4 | lower-overhead FDM path |
 | `rk4-cuda` | fused CUDA RK4 | GPU-oriented production runs |
-| `rk4-cuda-v100` | hardware-tuned CUDA RK4 | V100-specialized variant of the CUDA path |
 | `split-step-fft` | spectral split-step | efficient spectral solver when assumptions match |
 | `etd-rk2` | exponential time differencing | spectral periodic-grid path |
 | `ip-rk4` | interaction-picture RK4 | spectral-style RK4 variant |
@@ -30,8 +29,8 @@ The package includes explicit compatibility checks and warnings. In practice:
 - `rk4-fdm` is the safest baseline when you need a reference answer
 - `rk4-cuda` is the FDM production/reference path for GPU campaigns; supports periodic and closed-interval
 - `ifrk4-fft-cuda` is the spectral production path: GPU-native cuFFT, periodic + CAP, quadratic-double stage-coupled
-- `split-step-fft` and `ip-rk4` on `closed-interval` grids use SciPy DCT with host-device copies every step — CPU-bound on GPU runs; diagnostic use only
-- `etd-rk2` and `ifrk4-fft-cuda` are restricted to periodic grids
+- all spectral solvers (`split-step-fft`, `ip-rk4`, `etd-rk2`, `ifrk4-fft-cuda`) are FFT-only and restricted to periodic grids; a `closed-interval` grid raises `SolverCompatibilityError`
+- for `closed-interval` grids use the FDM family: `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`
 - `etd-rk2` advances the reservoir between predictor and corrector using a midpoint condensate estimate, retaining second-order coupling for all supported reservoir types
 - CUDA solvers are meaningful only when the GPU backend is actually active
 
@@ -60,17 +59,13 @@ Key properties:
 
 ## RK4 CUDA Laplacian Options
 
-Both `rk4-cuda` and `rk4-cuda-v100` support a selectable finite-difference
-Laplacian through `solver.laplacian`.
+`rk4-cuda` supports a selectable finite-difference Laplacian through
+`solver.laplacian`.
 
 | `solver.laplacian` | Description | Notes |
 | --- | --- | --- |
 | `five-point` | nearest-neighbor 2D Laplacian | default, historical behavior |
 | `isotropic-9pt` | 9-point isotropic stencil | requires square cells (`dx == dy`) |
-
-Both CUDA solvers compile the same kernel stencil for the selected Laplacian;
-`rk4-cuda-v100` is numerically identical to `rk4-cuda` and only differs in
-block geometry and `__launch_bounds__` tuning for V100 occupancy.
 
 The 9-point stencil is a numerical discretization of the same kinetic operator,
 not a new physical term.  It is useful when high-k modes expose the angular

@@ -17,6 +17,8 @@ import matplotlib.pyplot as plt
 import polarism.laser
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import Config
+from polarism.env_metadata import collect_env_metadata
+from tests._helpers import PeakMemoryMonitor, align_global_phase
 
 pytestmark = pytest.mark.slow
 
@@ -102,7 +104,7 @@ def compute_accuracy_metrics(
     t_sim: np.ndarray,
     rho_sim: np.ndarray,
     tail_fraction: float = 0.1,
-) -> dict:
+) -> tuple[dict[str, float | None], dict[str, str]]:
     """Compute accuracy metrics."""
     rho_sim_interp = np.interp(t_ref, t_sim, rho_sim)
     floor = max(1e-20, 1e-8 * float(rho_ref.max()))
@@ -122,8 +124,8 @@ def compute_accuracy_metrics(
         max_tail_rel = float(tail_rel_errors.max())
         mean_tail_rel = float(tail_rel_errors.mean())
     else:
-        max_tail_rel = np.nan
-        mean_tail_rel = np.nan
+        max_tail_rel = None
+        mean_tail_rel = None
 
     thresholds = [1e-3, 1e-2, 1e-1, 0.5, 0.9]
     rho_max_val = float(rho_ref.max())
@@ -141,7 +143,7 @@ def compute_accuracy_metrics(
     else:
         correlation = np.nan
 
-    return {
+    metrics = {
         "final_rel_error": final_rel,
         "log_rmse": log_rmse,
         "max_tail_rel_error": max_tail_rel,
@@ -149,6 +151,86 @@ def compute_accuracy_metrics(
         "crossing_dt_max": crossing_dt_max,
         "correlation": correlation,
     }
+    reasons = {}
+    if max_tail_rel is None:
+        reasons["max_tail_rel_error"] = "tail mask contains no reference samples"
+        reasons["mean_tail_rel_error"] = "tail mask contains no reference samples"
+    return metrics, reasons
+
+
+def compute_frame_metrics(
+    phoenix_frame_last: dict | None,
+    polarism_frame_last: dict | None,
+) -> tuple[dict[str, float | None], dict[str, str]]:
+    """Compute final two-dimensional field metrics and missing-data reasons."""
+    names = ("frame_rho_rel_l2", "frame_nR_rel_l2", "frame_phase_rmse")
+    if phoenix_frame_last is None:
+        reason = "PHOENIX frame_last.npz is unavailable"
+        return {name: None for name in names}, {name: reason for name in names}
+    if polarism_frame_last is None:
+        reason = "Polarism final frame was not captured"
+        return {name: None for name in names}, {name: reason for name in names}
+
+    metrics: dict[str, float | None] = {}
+    reasons: dict[str, str] = {}
+    rho_ph = phoenix_frame_last["rho"].astype(np.float64)
+    rho_pol = polarism_frame_last["rho"].astype(np.float64)
+    rho_norm = float(np.linalg.norm(rho_ph.ravel()))
+    rho_difference = float(np.linalg.norm((rho_pol - rho_ph).ravel()))
+    if rho_norm > 0.0:
+        metrics["frame_rho_rel_l2"] = rho_difference / rho_norm
+    elif float(np.linalg.norm(rho_pol.ravel())) > 0.0:
+        metrics["frame_rho_rel_l2"] = float("inf")
+    else:
+        metrics["frame_rho_rel_l2"] = 0.0
+
+    nR_ph = phoenix_frame_last["nR"].astype(np.float64)
+    nR_pol = polarism_frame_last["nR"].astype(np.float64)
+    nR_norm = float(np.linalg.norm(nR_ph.ravel()))
+    nR_difference = float(np.linalg.norm((nR_pol - nR_ph).ravel()))
+    if nR_norm > 0.0:
+        metrics["frame_nR_rel_l2"] = nR_difference / nR_norm
+    elif float(np.linalg.norm(nR_pol.ravel())) > 0.0:
+        metrics["frame_nR_rel_l2"] = float("inf")
+    else:
+        metrics["frame_nR_rel_l2"] = 0.0
+
+    psi_ph = phoenix_frame_last["psi"].astype(np.complex128)
+    psi_pol = polarism_frame_last["psi"].astype(np.complex128)
+    mask = rho_ph > 0.01 * float(rho_ph.max())
+    if np.any(mask):
+        psi_pol_masked = align_global_phase(psi_pol[mask], psi_ph[mask])
+        phase_delta = np.angle(
+            np.exp(1j * (np.angle(psi_pol_masked) - np.angle(psi_ph[mask])))
+        )
+        metrics["frame_phase_rmse"] = float(np.sqrt(np.mean(phase_delta**2)))
+    else:
+        metrics["frame_phase_rmse"] = None
+        reasons["frame_phase_rmse"] = "reference-density phase mask is empty"
+    return metrics, reasons
+
+
+def test_frame_phase_metric_is_global_phase_invariant() -> None:
+    amplitudes = np.array([[1.0, 2.0], [3.0, 4.0]])
+    phases = np.array([[0.1, -0.4], [1.2, -2.0]])
+    reference = amplitudes * np.exp(1j * phases)
+    shifted = reference * np.exp(0.73j)
+    frame_reference = {
+        "psi": reference,
+        "rho": amplitudes**2,
+        "nR": np.ones_like(amplitudes),
+    }
+    frame_shifted = {
+        "psi": shifted,
+        "rho": amplitudes**2,
+        "nR": np.ones_like(amplitudes),
+    }
+
+    metrics, reasons = compute_frame_metrics(frame_reference, frame_shifted)
+
+    assert not reasons
+    assert metrics["frame_phase_rmse"] is not None
+    assert metrics["frame_phase_rmse"] < 1e-14
 
 
 def _first_crossing_time(t: np.ndarray, y: np.ndarray, level: float) -> float:
@@ -390,7 +472,7 @@ def run_benchmark_simulation(
     save_frames: bool = False,
     case_dir: Path | None = None,
     case_name: str | None = None,
-) -> tuple[np.ndarray, np.ndarray, float, float, dict]:
+) -> tuple[np.ndarray, np.ndarray, float, dict[str, object], dict]:
     """Run benchmark simulation."""
     from polarism.simulation_controller import SimulationController
 
@@ -466,22 +548,21 @@ def run_benchmark_simulation(
 
     _gpu_sync()
 
-    start_time = time.perf_counter()
-
-    for step in range(n_steps):
-        sim.state.t = step * dt
-        sim.solver.step(
-            sim.potential, P0, sim.reservoir, sim.boundary_condition, sim.state
-        )
-
-        if (step + 1) in sample_steps:
-            t_now = (step + 1) * dt
-            rho_now = xp.abs(sim.state.psi) ** 2
-            times.append(t_now)
-            rho_max.append(float(rho_now.max()))
-
-    _gpu_sync()
-    elapsed = time.perf_counter() - start_time
+    with PeakMemoryMonitor(measure_gpu=compute_engine.use_gpu) as memory_monitor:
+        start_time = time.perf_counter()
+        for step in range(n_steps):
+            sim.state.t = step * dt
+            sim.solver.step(
+                sim.potential, P0, sim.reservoir, sim.boundary_condition, sim.state
+            )
+            if (step + 1) in sample_steps:
+                memory_monitor.sample_gpu()
+                t_now = (step + 1) * dt
+                rho_now = xp.abs(sim.state.psi) ** 2
+                times.append(t_now)
+                rho_max.append(float(rho_now.max()))
+        _gpu_sync()
+        elapsed = time.perf_counter() - start_time
 
     if save_frames:
         frames["last"] = {
@@ -491,9 +572,22 @@ def run_benchmark_simulation(
             "nR": _asnumpy(sim.reservoir.get_reservoir_density()),
         }
 
-    peak_mb = 0.0
-
-    return np.asarray(times), np.asarray(rho_max), elapsed, peak_mb, frames
+    memory = memory_monitor.result()
+    memory_metrics: dict[str, object] = {
+        "peak_memory_mb": None
+        if memory.peak_rss_bytes is None
+        else memory.peak_rss_bytes / 1024**2,
+        "peak_memory_reason": None
+        if memory.peak_rss_bytes is not None
+        else "process RSS measurement unavailable",
+        "peak_gpu_memory_mb": None
+        if memory.peak_gpu_memory_bytes is None
+        else memory.peak_gpu_memory_bytes / 1024**2,
+        "peak_gpu_memory_reason": memory.peak_gpu_memory_reason
+        if compute_engine.use_gpu
+        else "CPU backend does not allocate CUDA device memory",
+    }
+    return np.asarray(times), np.asarray(rho_max), elapsed, memory_metrics, frames
 
 
 def plot_benchmark_results(
@@ -618,36 +712,116 @@ def plot_benchmark_results(
 
         _save_fig(outdir, "performance_compare.png")
 
-    device = "GPU" if compute_engine.use_gpu else "CPU"
-    with open(outdir / "metrics.txt", "w") as f:
-        f.write(f"Benchmark: {case_name}\n")
-        f.write(f"Solver: {solver_name}\n")
-        f.write(f"Device: {device}\n")
-        f.write(f"Grid: {GRID_SIZE} x {GRID_SIZE}\n")
-        f.write(f"dt: {0.001} ps\n")
-        f.write("-" * 40 + "\n")
-        f.write("ACCURACY METRICS:\n")
-        for key, val in metrics.items():
-            if (
-                key.startswith("elapsed")
-                or key.startswith("peak")
-                or key.startswith("steps")
-                or key.startswith("sim_time")
-            ):
-                continue
-            f.write(f"  {key}: {val:.6e}\n")
-        f.write("-" * 40 + "\n")
-        f.write("PERFORMANCE METRICS:\n")
-        f.write(f"  elapsed_time_s: {metrics.get('elapsed_time_s', 0):.3f}\n")
-        f.write(f"  peak_memory_mb: {metrics.get('peak_memory_mb', 0):.2f}\n")
-        f.write(f"  steps_per_second: {metrics.get('steps_per_second', 0):.1f}\n")
 
-        if phoenix_timing:
-            f.write("-" * 40 + "\n")
-            f.write("PHOENIX REFERENCE:\n")
-            f.write(f"  device: {phoenix_timing.get('device', 'Unknown')}\n")
-            f.write(f"  elapsed_s: {phoenix_timing.get('elapsed_s', 0):.3f}\n")
-            f.write(f"  precision: {phoenix_timing.get('precision', 'Unknown')}\n")
+
+def _benchmark_thresholds(case: BenchmarkCase) -> dict[str, dict[str, object]]:
+    return {
+        "correlation": {"operator": ">=", "value": case.correlation_tol},
+        "log_rmse": {"operator": "<=", "value": case.log_rmse_tol},
+        "crossing_dt_max": {"operator": "<=", "value": case.crossing_dt_tol},
+        "final_rel_error": {"operator": "<=", "value": case.final_rel_tol},
+        "max_tail_rel_error": {"operator": "<=", "value": case.tail_rel_tol},
+        "frame_rho_rel_l2": {"operator": "<=", "value": case.frame_rho_tol},
+        "frame_nR_rel_l2": {"operator": "<=", "value": case.frame_nR_tol},
+        "frame_phase_rmse": {"operator": "<=", "value": case.frame_phase_tol},
+    }
+
+
+def _metric_passed(value: float | None, threshold: dict[str, object]) -> bool | None:
+    if value is None:
+        return None
+    limit = float(threshold["value"])
+    return bool(value >= limit if threshold["operator"] == ">=" else value <= limit)
+
+
+def write_benchmark_report(
+    outdir: Path,
+    case: BenchmarkCase,
+    solver_name: str,
+    cfg: Config,
+    n_steps: int,
+    metrics: dict[str, object],
+    reasons: dict[str, str],
+    phoenix_timing: dict | None,
+) -> None:
+    """Write human-readable and machine-readable benchmark evidence."""
+    thresholds = _benchmark_thresholds(case)
+    results = {
+        name: _metric_passed(metrics.get(name), threshold)
+        for name, threshold in thresholds.items()
+    }
+    report = {
+        "case": case.name,
+        "solver": solver_name,
+        "backend": "gpu" if compute_engine.use_gpu else "cpu",
+        "precision": "fp32" if cfg.solver.precision == "single" else "fp64",
+        "nx": cfg.grid.nx,
+        "ny": cfg.grid.ny,
+        "dx": cfg.grid.lx / cfg.grid.nx,
+        "dt": cfg.solver.dt,
+        "total_time": cfg.solver.total_time,
+        "n_steps": n_steps,
+        "metrics": metrics,
+        "metric_reasons": reasons,
+        "thresholds": thresholds,
+        "results": results,
+        "validation_scope": case.validation_scope,
+        "frame_phase_alignment": "global-U(1)-overlap-on-reference-density-mask",
+        "elapsed_time_s": metrics["elapsed_time_s"],
+        "phoenix_timing": phoenix_timing,
+        "environment": collect_env_metadata(),
+    }
+    outdir.mkdir(parents=True, exist_ok=True)
+    (outdir / "metrics.json").write_text(
+        json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8"
+    )
+    lines = [
+        f"Benchmark: {case.name}",
+        f"Solver: {solver_name}",
+        f"Backend: {report['backend']}",
+        f"Precision: {report['precision']}",
+        f"Grid: {cfg.grid.nx} x {cfg.grid.ny}",
+        f"dt: {cfg.solver.dt} ps",
+        f"Validation scope: {case.validation_scope}",
+        "-" * 72,
+        "ACCURACY METRICS:",
+    ]
+    for name, threshold in thresholds.items():
+        value = metrics.get(name)
+        if value is None:
+            lines.append(f"  {name}: not computed: {reasons[name]}")
+        else:
+            result = "PASS" if results[name] else "FAIL"
+            lines.append(
+                f"  {name}: {float(value):.6e}; threshold "
+                f"{threshold['operator']} {float(threshold['value']):.6e}; {result}"
+            )
+    if metrics.get("mean_tail_rel_error") is None:
+        lines.append(
+            "  mean_tail_rel_error: not computed: "
+            f"{reasons['mean_tail_rel_error']}"
+        )
+    else:
+        lines.append(
+            f"  mean_tail_rel_error: {float(metrics['mean_tail_rel_error']):.6e}; "
+            "informational"
+        )
+    lines.extend(["-" * 72, "PERFORMANCE METRICS:"])
+    for name in (
+        "elapsed_time_s",
+        "peak_memory_mb",
+        "peak_gpu_memory_mb",
+        "steps_per_second",
+    ):
+        value = metrics.get(name)
+        if value is None:
+            lines.append(f"  {name}: not computed: {reasons[name]}")
+        else:
+            lines.append(f"  {name}: {float(value):.6e}")
+    if phoenix_timing is not None:
+        lines.extend(["-" * 72, "PHOENIX REFERENCE:"])
+        lines.extend(f"  {key}: {value}" for key, value in phoenix_timing.items())
+    (outdir / "metrics.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def plot_frame_comparison(
@@ -716,6 +890,7 @@ class BenchmarkCase:
     frame_rho_tol: float = 0.10
     frame_nR_tol: float = 0.10
     frame_phase_tol: float = 0.10
+    validation_scope: str = "Direct PHOENIX accuracy gate."
 
 
 BENCHMARK_CASES = [
@@ -757,6 +932,76 @@ BENCHMARK_CASES = [
         frame_phase_tol=0.25,
     ),
 ]
+
+
+def _calibrated_ifrk4_cases() -> list[BenchmarkCase]:
+    """Return GPU spectral tolerances derived from completed PHOENIX runs.
+
+    For case 01 the measured values were 0.05462 final relative error, 0.01755
+    log RMSE, 0.07715 maximum tail error, 3.7515 ps crossing error, 0.01940
+    density L2, 2.02e-5 reservoir L2, and 0.009725 rad globally aligned phase
+    RMSE. The limits retain 28–57 percent margin. For case 02 the corresponding
+    measurements were 0.01594, 0.007782, 0.17181, 0.5500 ps, 0.06303,
+    0.004575, and 0.08093 rad globally aligned; its limits retain 28–57 percent
+    margin. The phase limits of 0.015 and 0.11 retain 54 and 36 percent margin
+    over the aligned measurements. These GPU spectral limits do not change the
+    independently calibrated FDM cases. In the measured case 01, the direct
+    FDM-to-IFRK rho-max difference at 500 ps is 0.05305, accounting for 97.1
+    percent of the 0.05462 IFRK-to-PHOENIX final error, while the density L2
+    difference decreases from 0.02412 at 10 ps to 0.01938 at 500 ps. This
+    identifies the spatial discretization as the dominant measured source of
+    the final scalar discrepancy but does not support monotonic field-trajectory
+    divergence. The role of the noisy initial condition remains untested. These
+    wider limits are an accepted validation boundary that characterizes bounded
+    agreement and must not be interpreted as FDM-level PHOENIX parity.
+    """
+    return [
+        BenchmarkCase(
+            name="01_uniform_pump",
+            final_rel_tol=0.07,
+            log_rmse_tol=0.025,
+            tail_rel_tol=0.10,
+            crossing_dt_tol=5.0,
+            tail_fraction=0.5,
+            correlation_tol=0.999,
+            frame_rho_tol=0.03,
+            frame_nR_tol=0.001,
+            frame_phase_tol=0.015,
+            validation_scope=(
+                "In measured case 01, the direct FDM-to-IFRK rho-max difference "
+                "at 500 ps accounts for 97.1 percent of the IFRK-to-PHOENIX "
+                "final error, identifying spatial discretization as the dominant "
+                "measured source. Field-density L2 does not grow from 10 to 500 "
+                "ps, and the role of noise remains untested. The wider IFRK4 "
+                "limits characterize bounded agreement, not FDM-level PHOENIX "
+                "parity. "
+                "The phase metric removes the global U(1) offset."
+            ),
+        ),
+        BenchmarkCase(
+            name="02_pump_no_potential",
+            final_rel_tol=0.025,
+            log_rmse_tol=0.012,
+            tail_rel_tol=0.22,
+            crossing_dt_tol=0.75,
+            tail_fraction=0.3,
+            correlation_tol=0.999,
+            frame_rho_tol=0.085,
+            frame_nR_tol=0.007,
+            frame_phase_tol=0.11,
+            validation_scope=(
+                "Case 01 identifies spatial discretization as the dominant "
+                "measured source of its final scalar discrepancy. The same "
+                "decomposition has not been run for case 02, and the role of "
+                "noise remains untested. The wider IFRK4 limits characterize "
+                "bounded agreement, not FDM-level PHOENIX parity. "
+                "The phase metric removes the global U(1) offset."
+            ),
+        ),
+    ]
+
+
+IFRK4_BENCHMARK_CASES = _calibrated_ifrk4_cases()
 
 
 def _run_benchmark_case(
@@ -801,25 +1046,44 @@ def _run_benchmark_case(
 
     psi_init_path = case_dir / "psi_init.txt"
 
-    t_sim, rho_sim, elapsed, peak_mb, frames = run_benchmark_simulation(
+    t_sim, rho_sim, elapsed, memory_metrics, frames = run_benchmark_simulation(
         cfg, t_ref, psi_init_path=psi_init_path, save_frames=save_frames,
         case_dir=case_dir, case_name=case.name,
     )
 
-    accuracy = compute_accuracy_metrics(
+    accuracy, reasons = compute_accuracy_metrics(
         t_ref, rho_ref, t_sim, rho_sim, tail_fraction=case.tail_fraction
     )
+    frame_metrics, frame_reasons = compute_frame_metrics(
+        phoenix_frame_last, frames["last"]
+    )
+    reasons.update(frame_reasons)
 
-    n_steps = int(t_ref[-1] / cfg.solver.dt)
+    n_steps = int(np.ceil(t_ref[-1] / cfg.solver.dt))
     steps_per_sec = n_steps / elapsed if elapsed > 0 else 0
 
     metrics = {
         **accuracy,
+        **frame_metrics,
         "elapsed_time_s": elapsed,
-        "peak_memory_mb": peak_mb,
+        **memory_metrics,
         "steps_per_second": steps_per_sec,
         "sim_time_ps": float(t_ref[-1]),
     }
+    reasons["peak_memory_mb"] = str(
+        memory_metrics.get("peak_memory_reason")
+        or "process RSS measurement unavailable"
+    )
+    reasons["peak_gpu_memory_mb"] = str(
+        memory_metrics.get("peak_gpu_memory_reason")
+        or "CUDA device memory measurement unavailable"
+    )
+    metrics.pop("peak_memory_reason", None)
+    metrics.pop("peak_gpu_memory_reason", None)
+    for name, value in tuple(metrics.items()):
+        if isinstance(value, (float, np.floating)) and not np.isfinite(value):
+            metrics[name] = None
+            reasons[name] = "metric is undefined for the measured reference signal"
 
     device = "gpu" if compute_engine.use_gpu else "cpu"
     outdir = (
@@ -839,6 +1103,16 @@ def _run_benchmark_case(
         metrics=metrics,
         phoenix_timing=phoenix_timing,
     )
+    write_benchmark_report(
+        outdir=outdir,
+        case=case,
+        solver_name=solver_name,
+        cfg=cfg,
+        n_steps=n_steps,
+        metrics=metrics,
+        reasons=reasons,
+        phoenix_timing=phoenix_timing,
+    )
 
     if save_frames:
         plot_frame_comparison(
@@ -856,49 +1130,22 @@ def _run_benchmark_case(
             polarism_frame=frames["last"],
         )
 
-        if phoenix_frame_last is not None and frames["last"] is not None:
-            rho_ph = phoenix_frame_last["rho"].astype(np.float64)
-            rho_pol = frames["last"]["rho"].astype(np.float64)
-            norm = np.sqrt(np.sum(rho_ph**2))
-            if norm > 0:
-                metrics["frame_rho_rel_l2"] = float(
-                    np.sqrt(np.sum((rho_pol - rho_ph) ** 2)) / norm
-                )
-            else:
-                metrics["frame_rho_rel_l2"] = 0.0
-
-            nR_ph = phoenix_frame_last["nR"].astype(np.float64)
-            nR_pol = frames["last"]["nR"].astype(np.float64)
-            nR_norm = np.sqrt(np.sum(nR_ph**2))
-            nR_pol_norm = np.sqrt(np.sum(nR_pol**2))
-            if nR_norm > 0:
-                metrics["frame_nR_rel_l2"] = float(
-                    np.sqrt(np.sum((nR_pol - nR_ph) ** 2)) / nR_norm
-                )
-            elif nR_pol_norm > 0:
-                metrics["frame_nR_rel_l2"] = float("inf")
-            else:
-                metrics["frame_nR_rel_l2"] = 0.0
-
-            psi_ph = phoenix_frame_last["psi"].astype(np.complex128)
-            psi_pol = frames["last"]["psi"].astype(np.complex128)
-            rho_threshold = 0.01 * rho_ph.max()
-            mask = rho_ph > rho_threshold
-            if mask.sum() > 0:
-                phase_ph = np.angle(psi_ph[mask])
-                phase_pol = np.angle(psi_pol[mask])
-                dphase = np.angle(np.exp(1j * (phase_pol - phase_ph)))
-                metrics["frame_phase_rmse"] = float(np.sqrt(np.mean(dphase**2)))
-
     return metrics
 
 
-FDM_SOLVERS = ["rk4-fdm", "rk4-fdm-fused", "rk4-cuda"]
+BENCHMARK_SOLVERS = ["rk4-fdm", "rk4-fdm-fused", "rk4-cuda", "ifrk4-fft-cuda"]
 
 SOLVER_CASE_MATRIX = [
-    (solver, case)
-    for solver in FDM_SOLVERS
-    for case in BENCHMARK_CASES
+    pytest.param(
+        solver,
+        case,
+        id=f"{solver}-{case.name}",
+        marks=pytest.mark.gpu if solver == "ifrk4-fft-cuda" else (),
+    )
+    for solver in BENCHMARK_SOLVERS
+    for case in (
+        IFRK4_BENCHMARK_CASES if solver == "ifrk4-fft-cuda" else BENCHMARK_CASES
+    )
 ]
 
 
@@ -919,22 +1166,22 @@ def _assert_metrics(metrics: dict, case: BenchmarkCase) -> None:
         f"Final relative error {metrics['final_rel_error']:.4f} "
         f"exceeds tolerance {case.final_rel_tol}"
     )
-    if np.isfinite(metrics["max_tail_rel_error"]):
+    if metrics["max_tail_rel_error"] is not None:
         assert metrics["max_tail_rel_error"] <= case.tail_rel_tol, (
             f"Tail relative error {metrics['max_tail_rel_error']:.4f} "
             f"exceeds tolerance {case.tail_rel_tol}"
         )
-    if "frame_rho_rel_l2" in metrics:
+    if metrics["frame_rho_rel_l2"] is not None:
         assert metrics["frame_rho_rel_l2"] <= case.frame_rho_tol, (
             f"Last-frame density L2 error {metrics['frame_rho_rel_l2']:.4f} "
             f"exceeds tolerance {case.frame_rho_tol}"
         )
-    if "frame_nR_rel_l2" in metrics:
+    if metrics["frame_nR_rel_l2"] is not None:
         assert metrics["frame_nR_rel_l2"] <= case.frame_nR_tol, (
             f"Last-frame reservoir nR L2 error {metrics['frame_nR_rel_l2']:.4f} "
             f"exceeds tolerance {case.frame_nR_tol}"
         )
-    if "frame_phase_rmse" in metrics:
+    if metrics["frame_phase_rmse"] is not None:
         assert metrics["frame_phase_rmse"] <= case.frame_phase_tol, (
             f"Last-frame phase RMSE {metrics['frame_phase_rmse']:.4f} rad "
             f"exceeds tolerance {case.frame_phase_tol}"
@@ -944,9 +1191,10 @@ def _assert_metrics(metrics: dict, case: BenchmarkCase) -> None:
 @pytest.mark.parametrize(
     "solver_name,case",
     SOLVER_CASE_MATRIX,
-    ids=[f"{s}-{c.name}" for s, c in SOLVER_CASE_MATRIX],
 )
 def test_phoenix_accuracy(solver_name: str, case: BenchmarkCase):
     """Test that phoenix accuracy."""
+    if solver_name == "ifrk4-fft-cuda" and not compute_engine.use_gpu:
+        pytest.skip("ifrk4-fft-cuda PHOENIX crosscheck requires a CUDA backend")
     metrics = _run_benchmark_case(case, solver_name)
     _assert_metrics(metrics, case)

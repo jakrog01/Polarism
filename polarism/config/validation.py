@@ -12,7 +12,7 @@ from polarism.boundary_conditions.absorption.absorption_registry import (
 if TYPE_CHECKING:
     from polarism.config.simulation_parameters import Config
 
-_EXPLICIT_FDM_SOLVERS = {"rk4-fdm", "rk4-fdm-fused", "rk4-cuda", "rk4-cuda-v100"}
+_EXPLICIT_FDM_SOLVERS = {"rk4-fdm", "rk4-fdm-fused", "rk4-cuda"}
 _VALID_PRECISIONS = {"single", "double"}
 _VALID_INIT_MODES = {"legacy_positive_uniform", "complex_gaussian_zero_mean", "filtered_complex_gaussian"}
 _VALID_PROFILE_TYPES = {"sin2", "parabolic"}

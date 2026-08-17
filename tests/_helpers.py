@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
@@ -21,6 +22,90 @@ class GridCfg:
     lx: float = 200.0
     ly: float = 200.0
     grid_type: str = "periodic"
+
+
+@dataclass(frozen=True)
+class PeakMemoryResult:
+    """Peak process and optional CUDA memory measurements."""
+
+    peak_rss_bytes: int | None
+    peak_gpu_memory_bytes: int | None
+    peak_gpu_memory_reason: str | None
+
+
+class PeakMemoryMonitor:
+    """Sample process RSS and CUDA pool usage during a measured operation."""
+
+    def __init__(self, measure_gpu: bool = False, interval_seconds: float = 0.005):
+        self._measure_gpu = measure_gpu
+        self._interval_seconds = interval_seconds
+        self._stop = Event()
+        self._thread: Thread | None = None
+        self._peak_rss_bytes: int | None = None
+        self._peak_gpu_memory_bytes: int | None = None
+        self._peak_gpu_memory_reason: str | None = None
+
+    @staticmethod
+    def _read_rss_bytes() -> int | None:
+        try:
+            for line in Path("/proc/self/status").read_text().splitlines():
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) * 1024
+        except (OSError, ValueError, IndexError):
+            return None
+        return None
+
+    def _sample_rss_loop(self) -> None:
+        while not self._stop.is_set():
+            self._sample_rss_once()
+            self._stop.wait(self._interval_seconds)
+
+    def _sample_rss_once(self) -> None:
+        value = self._read_rss_bytes()
+        if value is not None:
+            self._peak_rss_bytes = max(self._peak_rss_bytes or value, value)
+
+    def sample_gpu(self) -> None:
+        """Update the CUDA memory high-water measurement when requested."""
+        if not self._measure_gpu:
+            return
+        try:
+            import cupy
+
+            pool = cupy.get_default_memory_pool()
+            value = max(int(pool.used_bytes()), int(pool.total_bytes()))
+            self._peak_gpu_memory_bytes = max(
+                self._peak_gpu_memory_bytes or value, value
+            )
+            self._peak_gpu_memory_reason = None
+        except Exception as error:
+            self._peak_gpu_memory_reason = f"CUDA memory measurement unavailable: {error}"
+
+    def __enter__(self) -> "PeakMemoryMonitor":
+        self._stop.clear()
+        self._sample_rss_once()
+        self.sample_gpu()
+        self._thread = Thread(target=self._sample_rss_loop, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.sample_gpu()
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(0.1, 4.0 * self._interval_seconds))
+        self._sample_rss_once()
+
+    def result(self) -> PeakMemoryResult:
+        """Return measurements collected after leaving the context."""
+        gpu_reason = self._peak_gpu_memory_reason
+        if self._measure_gpu and self._peak_gpu_memory_bytes is None and gpu_reason is None:
+            gpu_reason = "CUDA memory measurement produced no samples"
+        return PeakMemoryResult(
+            peak_rss_bytes=self._peak_rss_bytes,
+            peak_gpu_memory_bytes=self._peak_gpu_memory_bytes,
+            peak_gpu_memory_reason=gpu_reason,
+        )
 
 
 class NoBoundaryCondition:
@@ -106,9 +191,6 @@ def make_physics_default(**overrides):
         gamma_A=0.005,
         R_IA=5e-2,
         R_AI=2.5e-3,
-        D=0.0,
-        D_I=0.0,
-        D_A=0.0,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -128,9 +210,6 @@ def make_physics_linear(**overrides):
         gamma_A=0.0,
         R_IA=0.0,
         R_AI=0.0,
-        D=0.0,
-        D_I=0.0,
-        D_A=0.0,
     )
     base.update(overrides)
     return SimpleNamespace(**base)

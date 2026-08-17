@@ -23,7 +23,7 @@ from polarism.results import (
 from polarism.simulation_controller import SimulationController
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.simulation_state import SimulationState
-from polarism.solver import AbstractSolver, create_solver, RK4CudaSolver, RK4CudaV100Solver
+from polarism.solver import AbstractSolver, create_solver, RK4CudaSolver
 
 __version__ = "0.3.0"
 __all__ = [
@@ -34,7 +34,6 @@ __all__ = [
     "create_solver",
     "AbstractSolver",
     "RK4CudaSolver",
-    "RK4CudaV100Solver",
     "LaserFactory",
     "RealTimeVisualization",
     "ResultNode",

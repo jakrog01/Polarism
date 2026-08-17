@@ -9,8 +9,6 @@ from polarism.compute_engine import has_cuda_device
 if TYPE_CHECKING:
     from polarism.config.simulation_parameters import Config
 
-_SPECTRAL_SOLVERS = {"split-step-fft", "ip-rk4", "etd-rk2"}
-
 _ALL_RESERVOIR_TYPES = {"single", "double", "quadratic-double"}
 _STAGE_COUPLED_RESERVOIR_TYPES = {"single", "double", "quadratic-double"}
 _LIE_SPLIT_RESERVOIR_TYPES = {"single", "double"}
@@ -36,7 +34,6 @@ class _SolverCaps(TypedDict):
     """
     grid_types: set[str]
     supports_potential: bool
-    boundary_types: set[str]
     reservoir_types: set[str]
     reservoir_types_quantitative: set[str]
     supports_kinetic_relaxation: bool
@@ -47,7 +44,6 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
     "rk4-fdm": {
         "grid_types": {"periodic", "closed-interval"},
         "supports_potential": True,
-        "boundary_types": {"no-absorption", "mask", "cap"},
         "reservoir_types": _ALL_RESERVOIR_TYPES,
         "reservoir_types_quantitative": _STAGE_COUPLED_RESERVOIR_TYPES,
         "supports_kinetic_relaxation": True,
@@ -59,7 +55,6 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
     "rk4-fdm-fused": {
         "grid_types": {"periodic", "closed-interval"},
         "supports_potential": True,
-        "boundary_types": {"no-absorption", "mask", "cap"},
         "reservoir_types": _ALL_RESERVOIR_TYPES,
         "reservoir_types_quantitative": _STAGE_COUPLED_RESERVOIR_TYPES,
         "supports_kinetic_relaxation": True,
@@ -71,7 +66,6 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
     "rk4-cuda": {
         "grid_types": {"periodic", "closed-interval"},
         "supports_potential": True,
-        "boundary_types": {"no-absorption", "mask", "cap"},
         "reservoir_types": _ALL_RESERVOIR_TYPES,
         "reservoir_types_quantitative": _STAGE_COUPLED_RESERVOIR_TYPES,
         "supports_kinetic_relaxation": True,
@@ -80,23 +74,9 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
             "FDM production/reference path for periodic and closed-interval grids."
         ),
     },
-    "rk4-cuda-v100": {
-        "grid_types": {"periodic", "closed-interval"},
-        "supports_potential": True,
-        "boundary_types": {"no-absorption", "mask", "cap"},
-        "reservoir_types": _ALL_RESERVOIR_TYPES,
-        "reservoir_types_quantitative": _STAGE_COUPLED_RESERVOIR_TYPES,
-        "supports_kinetic_relaxation": True,
-        "description": (
-            "V100-specialised CUDA RK4 solver. "
-            "2-D block geometry + __launch_bounds__(256,4). "
-            "Numerically identical to rk4-cuda; stage-coupled reservoir."
-        ),
-    },
     "split-step-fft": {
-        "grid_types": {"periodic", "closed-interval"},
+        "grid_types": {"periodic"},
         "supports_potential": False,
-        "boundary_types": {"no-absorption", "mask", "cap"},
         "reservoir_types": _ALL_RESERVOIR_TYPES,
         "reservoir_types_quantitative": _LIE_SPLIT_RESERVOIR_TYPES,
         "supports_kinetic_relaxation": False,
@@ -107,30 +87,26 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
             "dynamics are non-trivial (measured p≈1.06 on quadratic-double, per "
             "convergence study). Acceptable for single/double reservoirs where the "
             "reservoir is linear in n_R and the coupling error is subdominant; "
-            "diagnostic-only for quadratic-double. Does not evaluate "
-            "kinetic_relaxation_eta. closed-interval path uses CPU DCT with "
-            "host-device copies every step."
+            "diagnostic-only for quadratic-double. FFT-only, periodic grid only. "
+            "Does not evaluate kinetic_relaxation_eta."
         ),
     },
     "ip-rk4": {
-        "grid_types": {"periodic", "closed-interval"},
+        "grid_types": {"periodic"},
         "supports_potential": True,
-        "boundary_types": {"no-absorption", "mask", "cap"},
         "reservoir_types": _ALL_RESERVOIR_TYPES,
         "reservoir_types_quantitative": _STAGE_COUPLED_RESERVOIR_TYPES,
         "supports_kinetic_relaxation": True,
         "description": (
-            "Interaction-picture RK4. Stage-coupled reservoir. "
-            "Evaluates kinetic_relaxation_eta spectrally via _forward/_inverse. "
-            "closed-interval path uses SciPy DCT with host-device copies every "
-            "step — CPU-bound on GPU; not suitable for GPU production runs. "
-            "For GPU-native spectral production use 'ifrk4-fft-cuda'."
+            "Interaction-picture RK4. Stage-coupled reservoir. FFT-only, "
+            "periodic grid only. Evaluates kinetic_relaxation_eta spectrally "
+            "via _forward/_inverse. For GPU-native spectral production use "
+            "'ifrk4-fft-cuda'."
         ),
     },
     "etd-rk2": {
         "grid_types": {"periodic"},
         "supports_potential": True,
-        "boundary_types": {"no-absorption", "mask", "cap"},
         "reservoir_types": _ALL_RESERVOIR_TYPES,
         "reservoir_types_quantitative": _STAGE_COUPLED_RESERVOIR_TYPES,
         "supports_kinetic_relaxation": False,
@@ -145,7 +121,6 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
     "ifrk4-fft-cuda": {
         "grid_types": {"periodic"},
         "supports_potential": True,
-        "boundary_types": {"no-absorption", "mask", "cap"},
         "reservoir_types": _ALL_RESERVOIR_TYPES,
         "reservoir_types_quantitative": _STAGE_COUPLED_RESERVOIR_TYPES,
         "supports_kinetic_relaxation": True,
@@ -227,18 +202,7 @@ def check_solver_compatibility(cfg: Config) -> None:
             stacklevel=2,
         )
 
-    if solver in _SPECTRAL_SOLVERS and grid_type == "closed-interval":
-        warnings.warn(
-            f"Solver '{solver}' uses spectral methods (FFT/DCT) on a "
-            f"closed-interval grid. The DCT cannot exactly diagonalize the "
-            f"finite-difference Neumann Laplacian, so results may differ "
-            f"from FDM-based solvers. For best accuracy on closed-interval "
-            f"grids, use 'rk4-fdm', 'rk4-fdm-fused', or 'rk4-cuda'.",
-            UserWarning,
-            stacklevel=2,
-        )
-
-    if solver in {"rk4-cuda", "rk4-cuda-v100", "ifrk4-fft-cuda"}:
+    if solver in {"rk4-cuda", "ifrk4-fft-cuda"}:
         use_gpu = getattr(cfg.compute_engine, "use_gpu", False)
         cuda_available = has_cuda_device()
         if use_gpu and not cuda_available:

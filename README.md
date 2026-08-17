@@ -11,6 +11,9 @@ The repository is organized around one clear boundary:
 
 The full documentation site is in `docs/` and is configured by `mkdocs.yml`.
 
+Documentation site:
+https://jakrog01.github.io/polarism/#getting-started
+
 ## Repository Layout
 
 ```text
@@ -26,7 +29,7 @@ tests/                        CPU, compliance, and benchmark-style tests
 
 docs/                         MkDocs Material documentation site
 run.py                        Tyro CLI over the public `polarism.Config`
-requirements.txt              Runtime, development, and docs dependencies
+pyproject.toml                Project metadata and dependency groups
 ```
 
 ## Quick Local Setup
@@ -38,7 +41,7 @@ not expected to contain the required packages.
 python -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install -e ".[dev]"
 ```
 
 Run the default CPU-oriented checks:

@@ -29,8 +29,12 @@ def test_solver_compatibility_errors_and_warnings() -> None:
     with pytest.raises(SolverCompatibilityError, match="grid_type"):
         check_solver_compatibility(cfg)
     cfg.solver.method = "split-step-fft"
-    with pytest.warns(UserWarning, match="spectral"):
+    with pytest.raises(SolverCompatibilityError, match="grid_type"):
         check_solver_compatibility(cfg)
+    cfg.solver.method = "ip-rk4"
+    with pytest.raises(SolverCompatibilityError, match="grid_type"):
+        check_solver_compatibility(cfg)
+    cfg.solver.method = "split-step-fft"
     cfg.grid.grid_type = "periodic"
     cfg.potential.potential_type = "double-well-supergaussian"
     with pytest.warns(UserWarning, match="split-step-fft"):
