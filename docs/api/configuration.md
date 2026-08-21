@@ -33,12 +33,13 @@ configurations.  Checks include:
 - `hbar > 0`, `m_eff > 0`
 - all decay/scattering/transfer rates (`gamma_C`, `gamma_R`, `gamma_I`,
   `gamma_A`, `R`, `R_IA`, `R_AI`, `kappa`) are `>= 0`
-- all relaxation/diffusion coefficients (`kinetic_relaxation_eta`,
-  `reservoir_diffusion_I/A/R`) are `>= 0`
+- all interaction, relaxation, and diffusion coefficients (`g_C`, `g_R`,
+  `g_I`, `kinetic_relaxation_eta`, `reservoir_diffusion_I/A/R`) are `>= 0`
 - `init_eps >= 0`; `init_mode` is a recognised value; `init_k_cutoff_um > 0`
   is required when `init_mode='filtered_complex_gaussian'`
 - `boundary_condition.strength >= 0`; `mask_width_percent` in `[0, 0.5]`;
-  `profile_type` in `{'sin2', 'parabolic'}` when absorption is active
+  `absorption` must be a registered strategy; `profile_type` is in
+  `{'sin2', 'parabolic'}` when absorption is active
 - `laser.sigma_space > 0`; `sigma_time > 0` and `cutoff_sigma > 0` for
   `pulse-gaussian`; `pulse_separation > 0` when `n_pulses > 1`; `n_pulses >= 0`
 - `power_definition` in `{'peak_amplitude', 'pulse_energy'}`
@@ -75,6 +76,7 @@ coefficient so that the corrective action is unambiguous.
 | `V1`, `V2` | potential amplitudes | floats |
 | `w1`, `w2` | characteristic widths | positive floats |
 | `order` | super-Gaussian order | positive float |
+| `expose_results` | retained output-exposure setting | currently has no effect on result-node creation |
 
 ## Laser options
 
@@ -92,6 +94,7 @@ coefficient so that the corrective action is unambiguous.
 | `cutoff_sigma` | pulse truncation radius in sigma units | positive float |
 | `delay` | start delay before pump turns on; for `pulse-gaussian`, the first peak occurs later at `delay + cutoff_sigma * sigma_time` | nonnegative float |
 | `n_pulses` | finite pulse-train length for pulsed lasers; `0` means an unbounded pulse train | nonnegative integer |
+| `expose_results` | publish the total pump field and per-laser scalar group to result visitors | boolean |
 
 `power_definition` is currently used by `pulse-gaussian`.  In
 `peak_amplitude` mode, `P0` is the local peak source density at the pump
@@ -107,6 +110,7 @@ total pulse dose.
 | Field | Meaning | Main options |
 | --- | --- | --- |
 | `reservoir_type` | reservoir-model selection | `single`, `double`, `quadratic-double` |
+| `expose_results` | publish reservoir fields and scalars to result visitors | boolean |
 
 `quadratic-double` uses an inactive reservoir directly fed by the pump and an
 active reservoir that feeds the condensate:
@@ -168,7 +172,7 @@ The `physics` block stores the scalar coefficients entering the condensate and r
 
 - `hbar`, `m_eff`
 - `gamma_C`, `gamma_R`, `gamma_I`, `gamma_A`
-- `g_C`, `g_R`
+- `g_C`, `g_R`, `g_I`
 - `R`, `R_IA`, `R_AI`
 - `kappa` for the `quadratic-double` reservoir
 - `init_eps`, `init_mode`, `init_k_cutoff_um`, `init_seed`

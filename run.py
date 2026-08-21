@@ -1,18 +1,5 @@
-"""Command-line entry point for running one simulation."""
-from __future__ import annotations
-
-import tyro
-
-import polarism as ps
-from polarism.compute_engine import compute_engine
-
-
-def main() -> None:
-    """Run the command-line entry point."""
-    cfg = tyro.cli(ps.Config)
-    compute_engine.configure(cfg.compute_engine)
-    controller = ps.SimulationController(cfg)
-    controller.run()
+"""Backward-compatible repository entry point for the Polarism CLI."""
+from polarism.cli import main
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 site_name: Polarism
 site_description: High-performance documentation for the Polarism Gross-Pitaevskii solver
-site_url: https://jakrog01.github.io/polarism/
+site_url: https://jakrog01.github.io/Polarism/
 docs_dir: docs
 strict: true
 

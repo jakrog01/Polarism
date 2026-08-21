@@ -68,7 +68,7 @@ under `artifacts/` are local generated data and must not be committed.
 
 `test_phoenix_benchmark.py` reads its reference traces from
 `tests/data/phoenix_benchmark/`, which is tracked in the repository. A fresh
-clone therefore contains everything the nine `test_accuracy` comparisons need
+clone therefore contains everything the eleven `test_phoenix_accuracy` comparisons need
 (`rho_max.txt`, `psi_init.txt`, `pump.txt`, `potential.txt`,
 `phoenix_lasers_setup.yaml`, `timing.json`, `frame_first.npz`,
 `frame_last.npz`); there is no separate data download step. Unlike `artifacts/`,
