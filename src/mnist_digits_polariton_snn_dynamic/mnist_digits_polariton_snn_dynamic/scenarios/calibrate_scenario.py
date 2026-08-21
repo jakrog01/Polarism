@@ -2,16 +2,14 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
-
-import yaml
-
 from mnist_digits_polariton_snn_dynamic.simulation.calibration import calibrate_threshold
+from mnist_digits_polariton_snn_dynamic.scenarios.stage_meta import (
+    find_scenario as _find_scenario,
+    load_yaml as _load_yaml,
+    write_stage_meta as _write_stage_meta,
+)
 
 
 def main() -> None:
@@ -88,62 +86,5 @@ def run_calibration(
             stop,
             error,
         )
-
-
-def _find_scenario(manifest_data: dict[str, Any], scenario_id: str) -> dict[str, Any]:
-    scenarios = manifest_data.get("scenarios")
-    if not isinstance(scenarios, list):
-        raise ValueError("manifest.scenarios must be a list")
-    for scenario in scenarios:
-        if isinstance(scenario, dict) and scenario.get("id") == scenario_id:
-            if "config" not in scenario:
-                raise ValueError(f"Scenario {scenario_id!r} is missing config")
-            return scenario
-    raise ValueError(f"Scenario not found in manifest: {scenario_id}")
-
-
-def _write_stage_meta(
-    path: Path,
-    scenario_id: str,
-    config: Path,
-    manifest: Path,
-    stage: str,
-    start: datetime,
-    stop: datetime,
-    error: str | None,
-) -> None:
-    meta = {
-        "scenario_id": scenario_id,
-        "stage": stage,
-        "config_path": str(config),
-        "config_sha256": _sha256_file(config),
-        "manifest_path": str(manifest),
-        "manifest_sha256": _sha256_file(manifest),
-        "started_at_utc": start.isoformat(),
-        "stopped_at_utc": stop.isoformat(),
-        "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
-        "error": error,
-    }
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(meta, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def _load_yaml(path: Path) -> dict[str, Any]:
-    with path.open(encoding="utf-8") as stream:
-        data = yaml.safe_load(stream)
-    if not isinstance(data, dict):
-        raise ValueError(f"YAML file must contain a mapping: {path}")
-    return data
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 if __name__ == "__main__":
     main()

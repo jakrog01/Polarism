@@ -11,7 +11,8 @@ Contributions are easiest to review when physics logic, runtime orchestration, a
 ## Code quality expectations
 
 - Add or update type hints on public code.
-- Keep docstrings accurate enough for the generated API reference.
+- Keep docstrings accurate for library users and maintain the corresponding
+  hand-written API reference pages in `docs/api/`.
 - Prefer extending factories and registries over hard-coding new branches into unrelated modules.
 - Validate numerical changes with at least the default pytest suite, and use the compliance suite when solver behavior is affected.
 

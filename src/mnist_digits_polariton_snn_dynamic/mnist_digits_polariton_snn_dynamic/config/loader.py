@@ -121,6 +121,24 @@ class EncodingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ThresholdConfig:
+    """Optional analytic spike-threshold scan settings."""
+
+    p_min: float = 1.0
+    p_max: float = 4000.0
+    n_points: int = 96
+    scale: str = "log"
+    window_start_ps: float = 0.0
+    window_end_ps: float | None = None
+    dt_eval_ps: float | None = None
+    hysteresis_rel: float = 0.02
+    min_above_ps: float = 0.0
+    edge_tol_rel: float = 1.0e-3
+    model: str = "pump_only"
+    spontaneous_source: float = 1.0e-6
+
+
+@dataclass(frozen=True, slots=True)
 class ReadoutConfig:
     """Dynamic density trace readout settings.
 
@@ -229,7 +247,7 @@ class SNNDynamicConfig:
     ----------
     polarism_config_path
         Path to the polarism YAML backing the reservoir.
-    data, geometry, pulse, encoding, readout, classifier
+    data, geometry, pulse, encoding, threshold, readout, classifier
         Nested typed sections.
     output_dir
         Directory for features/labels/report artifacts.
@@ -240,6 +258,7 @@ class SNNDynamicConfig:
     geometry: GeometryConfig
     pulse: PulseConfig
     encoding: EncodingConfig
+    threshold: ThresholdConfig
     readout: ReadoutConfig
     classifier: ClassifierConfig
     output_dir: str
@@ -253,6 +272,7 @@ _TOP_LEVEL_KEYS: frozenset[str] = frozenset(
         "geometry",
         "pulse",
         "encoding",
+        "threshold",
         "readout",
         "classifier",
         "output_dir",
@@ -302,6 +322,7 @@ def load_snn_dynamic_config(path: str) -> SNNDynamicConfig:
         geometry=_make_dataclass(GeometryConfig, raw["geometry"]),
         pulse=_make_dataclass(PulseConfig, raw["pulse"]),
         encoding=_make_dataclass(EncodingConfig, raw["encoding"]),
+        threshold=_make_dataclass(ThresholdConfig, raw.get("threshold", {})),
         readout=_make_dataclass(ReadoutConfig, raw["readout"]),
         classifier=_make_dataclass(ClassifierConfig, raw["classifier"]),
         output_dir=str(Path(str(raw["output_dir"])).expanduser()),

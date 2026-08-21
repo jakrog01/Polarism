@@ -28,7 +28,7 @@ The supported entry point is:
 bash src/polariton_hpc_pipeline/submit.sh [--config config.yaml] [--runs-dir /path/to/runs] [--dry-run]
 ```
 
-This wrapper owns the run-directory setup and stage polling logic on a Rysy login node. By default it writes runs under `TETYDA_RUNS_BASE`; use `--runs-dir` to override that. The legacy scripts under `legacy/` are kept for reference only and are not part of the main path.
+This wrapper owns the run-directory setup and stage polling logic on a Rysy login node. By default it writes runs under `TETYDA_RUNS_BASE`; use `--runs-dir` to override that.
 
 ## Pipeline structure
 
@@ -38,12 +38,17 @@ This wrapper owns the run-directory setup and stage polling logic on a Rysy logi
 | Cluster wrappers | `cluster/` | site-specific environment and resource setup |
 | Config layer | `pipeline/config/` | YAML loading, validation, translation into `polarism.Config` |
 | Parameter sweep layer | `pipeline/config/sweep.py` | direct expansion over power, pulse separation, pulse width, spot size, and square-side axes |
+| Output-policy layer | `pipeline/config/output_policy.py` | resolves raw-output and artifact-retention policy |
+| Sweep utilities | `pipeline/config/sweep_utils.py` | shared expansion and laser-type resolution helpers |
+| Experiment layer | `pipeline/experiments/` | registry plus `generic`, `probe5_trap_gate`, and `square4_fringe` experiment definitions |
 | Manifest layer | `pipeline/manifest/` | run metadata and atomic JSON writes |
 | Simulation core | `pipeline/simulation/core.py` | drives `polarism` and delegates HDF5 output to reusable storage backends |
+| ROI utilities | `pipeline/simulation/roi.py` | region-of-interest definitions and reductions |
 | Analysis layer | `pipeline/analysis/` | NumPy-only post-run metrics such as square-4 fringe analysis |
+| Fringe analysis | `pipeline/analysis/fringe.py` | square-4 fringe metrics |
+| Render layer | `pipeline/render/nvenc_stream.py` | streaming FFmpeg/NVENC encoding |
 | GPU stages | `pipeline/stages/gpu/` | threshold search and scenario execution |
 | CPU stages | `pipeline/stages/cpu/` | final aggregation and optional post-hoc visualization from archived HDF5 |
-| Legacy scripts | `legacy/` | deprecated paths kept outside the supported workflow |
 
 ## Slurm execution model
 

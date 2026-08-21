@@ -8,7 +8,7 @@ bash submit.sh [--config config.yaml] [--runs-dir /path/to/runs] [--dry-run] [--
 
 This is the production entry point. It validates config, creates a run
 directory, and submits the full Rysy workflow as Slurm jobs connected with
-`afterok` dependencies. Legacy paths are in `legacy/`.
+`afterok` dependencies.
 
 Prepared run directories can also be executed locally across multiple GPUs:
 
@@ -41,29 +41,39 @@ polariton_hpc_pipeline/
 │   ├── job_gpu.sh                ← GPU stage wrapper (loads CUDA)
 │   └── job_stage.sh              ← Non-GPU stage wrapper (no CUDA)
 │
-├── pipeline/                     ← Python package
-│   ├── config/
-│   │   ├── loader.py             ← YAML loading, power/delay expression parsing
-│   │   ├── validator.py          ← Pre-submit config + slurm.env validation
-│   │   └── builder.py            ← Constructs configs + resolves per-laser delays
-│   ├── manifest/
-│   │   └── io.py                 ← Atomic JSON writes, run manifest, scenario index
-│   ├── simulation/
-│   │   └── core.py               ← Physics kernel: auto-sized appendable HDF5 writer + run_simulation_from_config
-│   └── stages/
-│       ├── gpu/
-│       │   ├── threshold_search.py  ← GPU: find condensation threshold
-│       │   └── run_scenario.py      ← GPU: simulate one scenario + inline render
-│       └── cpu/
-│           ├── viz_engine.py        ← Visualization engine (pure functions)
-│           ├── visualize.py         ← Optional post-hoc plots if raw HDF5 was archived
-│           └── finalize.py          ← CPU: cross-scenario summary from lightweight artifacts
-│
-└── legacy/                       ← DEPRECATED — not used by the pipeline
-    ├── DEPRECATED.md
-    ├── orchestrate.sh
-    ├── run_scenario.py
-    └── optimize.py
+└── pipeline/                     ← Python package
+    ├── config/
+    │   ├── loader.py             ← YAML loading, power/delay expression parsing
+    │   ├── validator.py          ← Pre-submit config + slurm.env validation
+    │   ├── builder.py            ← Constructs configs + resolves per-laser delays
+    │   ├── output_policy.py      ← Resolves output and archival policy
+    │   ├── prepare_run.py        ← Freezes a run-local config and scenario index
+    │   ├── sweep.py              ← Expands direct parameter sweeps
+    │   └── sweep_utils.py        ← Shared sweep and laser-resolution helpers
+    ├── experiments/
+    │   ├── base.py               ← Experiment interface
+    │   ├── generic.py            ← Generic parameter sweep
+    │   ├── probe5_trap_gate.py   ← Probe-five trap-gate experiment
+    │   ├── registry.py           ← Experiment registration and lookup
+    │   └── square4_fringe.py     ← Square-four fringe experiment
+    ├── manifest/
+    │   └── io.py                 ← Atomic JSON writes, run manifest, scenario index
+    ├── analysis/
+    │   └── fringe.py             ← Square-four fringe metrics
+    ├── render/
+    │   └── nvenc_stream.py       ← Streaming FFmpeg/NVENC video encoder
+    ├── simulation/
+    │   ├── core.py               ← Physics kernel: auto-sized appendable HDF5 writer + run_simulation_from_config
+    │   └── roi.py                ← Region-of-interest definitions and reductions
+    └── stages/
+        ├── gpu/
+        │   ├── threshold_search.py    ← GPU: find condensation threshold
+        │   ├── run_scenario.py        ← GPU: simulate one scenario + inline render
+        │   └── run_scenarios_local.py ← Local multi-GPU scenario execution
+        └── cpu/
+            ├── viz_engine.py        ← Visualization engine (pure functions)
+            ├── visualize.py         ← Optional post-hoc plots if raw HDF5 was archived
+            └── finalize.py          ← CPU: cross-scenario summary from lightweight artifacts
 ```
 
 ---
@@ -398,6 +408,12 @@ Interpretation:
 | `max_runtime_minutes` | ✓ | Wall-clock cap for the search stage |
 
 ### `slurm.env` (required)
+
+All submission wrappers read one shared file at the repository root. Start
+with `cp slurm.env.example slurm.env`, keep the generated `slurm.env` private,
+and replace every example value that is required by the pipeline you will run.
+The validators check only that pipeline's required variables and deliberately
+allow variables used by other pipelines or supplied by the local cluster.
 
 | Variable | Required | Description |
 |----------|----------|-------------|

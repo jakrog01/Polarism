@@ -16,7 +16,7 @@ The repository is organized around one clear boundary:
 The full documentation site is in `docs/` and is configured by `mkdocs.yml`.
 
 Documentation site:
-https://jakrog01.github.io/polarism/#getting-started
+https://jakrog01.github.io/Polarism/#getting-started
 
 ## Repository Layout
 
@@ -40,7 +40,7 @@ src/                          Example applications built on `polarism`
                                Dynamic MNIST SNN workflow with pitch/sigma sweep
 
 docs/                         MkDocs Material documentation site
-run.py                        Tyro CLI over the public `polarism.Config`
+run.py                        Compatibility wrapper for the `polarism` CLI
 pyproject.toml                Project metadata and dependency groups
 ```
 
@@ -115,7 +115,7 @@ ps.SimulationController(cfg).run()
 For the command-line interface generated from `polarism.Config`:
 
 ```bash
-.venv/bin/python run.py --help
+.venv/bin/polarism --help
 ```
 
 More examples are documented in

@@ -24,8 +24,9 @@ bash src/dot_response_fit/submit.sh --dry-run
 bash src/dot_response_fit/submit.sh --wait
 ```
 
-The wrapper expects `slurm.env` at the repository root and uses the repository
-`.venv` when available.
+The wrapper expects `slurm.env` at the repository root; create it with
+`cp slurm.env.example slurm.env` and replace the example cluster values. It
+uses the repository `.venv` when available.
 
 ## Stages
 

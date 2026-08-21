@@ -3,16 +3,16 @@ description: |
   Sweep pitch/sigma_space testujacy spatial mixing hypoverification.
 baseline_scenario_id: pitch12_sigma2_baseline
 stages:
-  calibrate:
-    kind: gpu
-    time_env: SNN_MIX_CAL_TIME
-    output: calibration.json
+  threshold:
+    kind: cpu
+    time_env: SNN_THRESHOLD_TIME
+    output: spike_threshold.json
   run:
     kind: gpu
     time_env: SNN_MIX_FULL_TIME
-    calibrated_power: true
+    power_source: threshold
     depends_on:
-      - calibrate
+      - threshold
   finalize:
     kind: cpu
     time_env: FINALIZE_TIME

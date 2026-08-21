@@ -76,7 +76,9 @@ bash src/create_characteristic/submit.sh
 bash src/create_characteristic/submit.sh --config src/create_characteristic/scenarios/moj_sweep.yaml
 ```
 
-Wymaga pliku `slurm.env` w katalogu głównym repozytorium z zmiennymi:
+Wymaga pliku `slurm.env` w katalogu głównym repozytorium. Utwórz go raz z
+szablonu `cp slurm.env.example slurm.env`, a następnie ustaw wartości dla klastra.
+Ten pipeline wymaga zmiennych:
 `SLURM_ACCOUNT`, `SLURM_PARTITION`, `SLURM_MEM`, `SLURM_GPUS`, `SLURM_CPUS`,
 `SLURM_TIME`, `TETYDA_RUNS_BASE`, `FINALIZE_MEM`, `FINALIZE_CPUS`, `FINALIZE_TIME`.
 

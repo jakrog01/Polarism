@@ -933,17 +933,6 @@ def validate_slurm_env(env_path: str) -> list[str]:
         "FINALIZE_CPUS",
         "FINALIZE_TIME",
     }
-    _OPTIONAL_KNOWN: frozenset[str] = frozenset({
-        "SLURM_QOS",
-        "THRESHOLD_TIME",
-        "SCENARIO_TIME",
-        "FIT_TIME",
-        "TIME_RESPONSE_MEM", "TIME_RESPONSE_CPUS", "TIME_RESPONSE_TIME",
-        "PREPARE_REF_MEM", "PREPARE_REF_CPUS", "PREPARE_REF_TIME",
-        "SCRATCH",
-        "CHARACTERISTIC_TIME",
-    })
-
     if not os.path.isfile(env_path):
         errors.append(f"slurm.env not found: {env_path}")
         return errors
@@ -960,13 +949,6 @@ def validate_slurm_env(env_path: str) -> list[str]:
 
     for var in sorted(required - defined):
         errors.append(f"slurm.env missing required variable: {var}")
-
-    unknown = defined - required - _OPTIONAL_KNOWN
-    for var in sorted(unknown):
-        errors.append(
-            f"slurm.env defines unrecognised variable: {var!r}  "
-            "(typo in a stage override?)"
-        )
 
     return errors
 

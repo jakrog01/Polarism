@@ -245,13 +245,6 @@ def validate_slurm_env(env_path: str) -> list[str]:
         "PREPARE_REF_CPUS",
         "PREPARE_REF_TIME",
     }
-    optional_known: frozenset[str] = frozenset({
-        "SLURM_QOS",
-        "THRESHOLD_TIME",
-        "SCENARIO_TIME",
-        "FIT_TIME",
-    })
-
     if not os.path.isfile(env_path):
         errors.append(f"slurm.env not found: {env_path}")
         return errors
@@ -268,13 +261,6 @@ def validate_slurm_env(env_path: str) -> list[str]:
 
     for var in sorted(required - defined):
         errors.append(f"slurm.env missing required variable: {var}")
-
-    unknown = defined - required - optional_known
-    for var in sorted(unknown):
-        errors.append(
-            f"slurm.env defines unrecognised variable: {var!r}  "
-            "(remove stale settings or add to optional_known)"
-        )
 
     return errors
 
@@ -307,6 +293,8 @@ def main() -> None:
         sys.exit(1)
 
     print(f"Config valid: {args.config}")
+    if args.slurm_env:
+        print(f"Slurm env valid: {args.slurm_env}")
 
 
 if __name__ == "__main__":

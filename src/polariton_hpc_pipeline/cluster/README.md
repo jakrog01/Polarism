@@ -51,7 +51,9 @@ Do not set `SCRATCH` in `slurm.env`. Use `NVME_GB` to control the scratch size.
 
 ## Required `slurm.env`
 
-All variables below are required. The validator rejects a run that is missing any of them.
+Create the repository-root file from `slurm.env.example`. The variables below
+are required by `polariton_hpc_pipeline`; variables for the other submission
+wrappers may remain in the same shared file.
 
 ```bash
 SLURM_ACCOUNT=g100-2262

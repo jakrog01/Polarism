@@ -46,10 +46,11 @@ Save the snippet to `quickstart.py` and run:
 python quickstart.py
 ```
 
-If you prefer not to write a Python driver script, the repository also includes `run.py`, which uses `tyro` to expose `ps.Config` as command-line flags:
+If you prefer not to write a Python driver script, the installed `polarism`
+command uses `tyro` to expose `ps.Config` as command-line flags:
 
 ```bash
-python run.py \
+polarism \
   --grid.nx 128 \
   --grid.ny 128 \
   --reservoir.reservoir-type single \
@@ -63,7 +64,8 @@ python run.py \
   --result.save-hdf5
 ```
 
-Use `python run.py --help` to inspect the full set of generated options.
+Use `polarism --help` to inspect the full set of generated options. The
+repository-root `run.py` remains as a compatibility wrapper for this command.
 
 ## What this example does
 

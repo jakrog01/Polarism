@@ -26,12 +26,14 @@ def main() -> None:
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--scenario-id", required=True)
     parser.add_argument("--campaign-output-dir", required=True)
+    parser.add_argument("--power-source", choices=("threshold", "calibration", "config"), default="threshold")
     parser.add_argument("--use-calibrated-power", action="store_true")
     args = parser.parse_args()
     run_scenario(
         args.manifest,
         args.scenario_id,
         args.campaign_output_dir,
+        power_source="calibration" if args.use_calibrated_power else args.power_source,
         use_calibrated_power=args.use_calibrated_power,
     )
 
@@ -40,6 +42,7 @@ def run_scenario(
     manifest_path: str,
     scenario_id: str,
     campaign_output_dir: str,
+    power_source: str = "threshold",
     use_calibrated_power: bool = False,
 ) -> None:
     """Run one scenario from a manifest."""
@@ -49,10 +52,16 @@ def run_scenario(
     config = (manifest.parent / str(scenario["config"])).resolve()
     output_dir = Path(campaign_output_dir).expanduser().resolve() / scenario_id
     output_dir.mkdir(parents=True, exist_ok=True)
-    power_max = None
     if use_calibrated_power:
-        scenario_calibration = output_dir / "calibration.json"
-        skipped, reason = is_scenario_skipped(str(scenario_calibration))
+        print("DeprecationWarning: --use-calibrated-power is deprecated; use --power-source calibration", file=sys.stderr, flush=True)
+        power_source = "calibration"
+    if power_source not in {"threshold", "calibration", "config"}:
+        raise ValueError(f"Unsupported power_source: {power_source!r}")
+    power_max = None
+    if power_source != "config":
+        artifact_name = "spike_threshold.json" if power_source == "threshold" else "calibration.json"
+        scenario_calibration = output_dir / artifact_name
+        skipped, reason = is_scenario_skipped(str(scenario_calibration)) if power_source == "calibration" else (False, None)
         if skipped:
             _write_skip_marker(
                 output_dir / "skipped.json",
@@ -80,11 +89,13 @@ def run_scenario(
             )
             return
         power_max = final_power_max(str(scenario_calibration))
-        _write_calibrated_power(
+        _write_selected_power(
             output_dir / "calibrated_power.json",
             scenario_calibration,
             power_max,
+            power_source,
         )
+        print(f"Using power_max={power_max:.12g} from {scenario_calibration}", file=sys.stderr, flush=True)
     start = datetime.now(timezone.utc)
     error: str | None = None
     try:
@@ -137,25 +148,17 @@ def _find_scenario(manifest_data: dict[str, Any], scenario_id: str) -> dict[str,
     raise ValueError(f"Scenario not found in manifest: {scenario_id}")
 
 
-def _write_calibrated_power(
+def _write_selected_power(
     path: Path,
     scenario_calibration_path: Path,
     power_max: float,
+    power_source: str,
 ) -> None:
     scenario = _load_json(scenario_calibration_path)
-    atomic_write_json(
-        str(path),
-        {
-            "scenario_calibration_path": str(scenario_calibration_path),
-            "threshold_power_full_lattice": float(
-                scenario["threshold_power_full_lattice"]
-            ),
-            "threshold_power_single_spot": scenario["threshold_power_single_spot"],
-            "power_max_candidate": float(scenario["power_max_candidate"]),
-            "final_power_max": float(power_max),
-            "power_max_was_capped": bool(scenario["power_max_was_capped"]),
-        },
-    )
+    data: dict[str, Any] = {"power_source": power_source, "power_artifact_path": str(scenario_calibration_path), "final_power_max": float(power_max)}
+    if power_source == "calibration":
+        data.update({"threshold_power_full_lattice": float(scenario["threshold_power_full_lattice"]), "threshold_power_single_spot": scenario["threshold_power_single_spot"], "power_max_candidate": float(scenario["power_max_candidate"]), "power_max_was_capped": bool(scenario["power_max_was_capped"])})
+    atomic_write_json(str(path), data)
 
 
 def _write_scenario_meta(

@@ -113,6 +113,11 @@ test and are not evidence of validated MNIST accuracy.
 
 ## Slurm Chain
 
+The campaign reads the shared repository-root scheduler configuration. Create
+it before the first submission with `cp slurm.env.example slurm.env`, then set
+the Slurm account, resources, persistent run directory, and any `SNN_MIX_*`
+overrides required by the campaign.
+
 `cluster/submit_campaign.sh` submits three dependent jobs per scenario:
 
 ```text

@@ -22,19 +22,20 @@ account for the increased FFT cost.
 
 `cluster/submit_campaign.sh` submits three jobs per scenario:
 
-- `<id>_calibrate`: GPU threshold calibration, writes `calibration.json`.
-- `<id>_run`: GPU full run, depends on own calibration and writes raw traces
+- `<id>_threshold`: CPU analytic threshold scan, writes `spike_threshold.json`.
+- `<id>_run`: GPU full run, depends on its own threshold and writes raw traces
   and classifier outputs.
 - `<id>_finalize`: CPU-only ablation, depends on the full run, writes
   `ablation_report.json`.
 
-Each scenario calibration estimates `threshold_power_full_lattice`, applies a
-central single-spot guard, and writes the scenario-local `final_power_max` used
-by the full run. The manifest `baseline_scenario_id` remains the reporting
-reference only.
+The threshold stage maximizes pulse-separated gain/loss crossings and writes
+the scenario-local `final_power_max` used by the full run. The manifest
+`baseline_scenario_id` remains the reporting reference only. Pass
+`--with-calibrate` to submit the legacy GPU calibration between threshold and
+run.
 
-The submitter runs scenarios sequentially. Later scenario calibrations depend on
-the finalize job from the immediately preceding scenario.
+The submitter runs scenarios sequentially. Later threshold scans depend on the
+finalize job from the immediately preceding scenario.
 
 Submit a campaign from the package directory with:
 
@@ -42,4 +43,8 @@ Submit a campaign from the package directory with:
 bash cluster/submit_campaign.sh --dry-run scenarios/pitch_sigma_sweep/manifest.yaml
 ```
 
-Submit without `--dry-run` only after the condensation proxy is accepted.
+The legacy calibration path can be inspected with:
+
+```bash
+bash cluster/submit_campaign.sh --dry-run --with-calibrate scenarios/pitch_sigma_sweep/manifest.yaml
+```
