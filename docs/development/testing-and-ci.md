@@ -40,7 +40,7 @@ Run the slow suite only on a machine where the runtime and available data make s
 
 ## Complete verification run
 
-Use the following command for a full verification pass:
+Use the following command for a complete verification pass:
 
 ```bash
 .venv/bin/pytest -q -m '' --use-gpu --tb=short \

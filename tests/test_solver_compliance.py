@@ -29,7 +29,6 @@ from tests._helpers import (
     potential_zero,
     pump_uniform,
 )
-from tests._reporting import write_validation_record
 
 pytestmark = pytest.mark.compliance
 
@@ -90,49 +89,6 @@ def _log_correlation(rho_a, rho_b):
     return float(np.corrcoef(log_a, log_b)[0, 1])
 
 
-def _write_compliance_record(
-    test_name: str,
-    solver_reference: str,
-    solver_under_test: str,
-    grid_cfg: GridCfg,
-    dt: float,
-    n_steps: int,
-    reservoir_type: str,
-    error_norm: str,
-    measured_value: float,
-    threshold: float,
-    passed: bool,
-) -> None:
-    denominator = grid_cfg.nx - 1 if grid_cfg.grid_type == "closed-interval" else grid_cfg.nx
-    file_solver = solver_under_test.split(":", maxsplit=1)[0]
-    write_validation_record(
-        Path("solver_compliance") / f"{test_name}_{file_solver}.json",
-        error_norm=error_norm,
-        measured_value=measured_value,
-        threshold=threshold,
-        passed=passed,
-        precision="fp64",
-        grid={
-            "nx": grid_cfg.nx,
-            "ny": grid_cfg.ny,
-            "lx": grid_cfg.lx,
-            "ly": grid_cfg.ly,
-            "dx": grid_cfg.lx / denominator,
-            "grid_type": grid_cfg.grid_type,
-        },
-        dt=dt,
-        total_time=dt * n_steps,
-        n_steps=n_steps,
-        solver_reference=solver_reference,
-        solver_under_test=solver_under_test,
-        backend_reference="cpu",
-        backend_under_test="cpu",
-        reservoir_type=reservoir_type,
-        boundary=grid_cfg.grid_type,
-        potential_type="zero",
-    )
-
-
 def _plot_rho_comparison(
     outdir: Path,
     name: str,
@@ -181,19 +137,6 @@ def test_periodic_matches_reference(solver_cls):
 
     corr = _log_correlation(ref_rho, test_rho)
 
-    _write_compliance_record(
-        "periodic",
-        "RK4FDMSolver",
-        solver_cls.__name__,
-        grid_cfg,
-        dt,
-        n_steps,
-        "single",
-        "log_correlation",
-        corr,
-        0.999,
-        corr > 0.999,
-    )
 
     _plot_rho_comparison(
         RESULTS_DIR / "periodic",
@@ -228,19 +171,6 @@ def test_closed_interval_matches_reference(solver_cls):
 
     corr = _log_correlation(ref_rho, test_rho)
 
-    _write_compliance_record(
-        "closed_interval",
-        "RK4FDMSolver",
-        solver_cls.__name__,
-        grid_cfg,
-        dt,
-        n_steps,
-        "single",
-        "log_correlation",
-        corr,
-        0.999,
-        corr > 0.999,
-    )
 
     _plot_rho_comparison(
         RESULTS_DIR / "closed_interval",
@@ -302,19 +232,6 @@ def test_double_reservoir_matches_single(solver_cls):
     rho_double = np.array(rho_double)
     corr = _log_correlation(rho_single, rho_double)
 
-    _write_compliance_record(
-        "double_reservoir",
-        f"{solver_cls.__name__}:single",
-        f"{solver_cls.__name__}:double",
-        grid_cfg,
-        dt,
-        n_steps,
-        "double",
-        "log_correlation",
-        corr,
-        0.99,
-        corr > 0.99,
-    )
 
     _plot_rho_comparison(
         RESULTS_DIR / "reservoir",
@@ -353,19 +270,6 @@ def test_fdm_solvers_bitwise_close(solver_cls):
         np.linalg.norm(psi_ref) + 1e-30
     )
 
-    _write_compliance_record(
-        "fdm_bitwise",
-        "RK4FDMSolver",
-        solver_cls.__name__,
-        grid_cfg,
-        dt,
-        n_steps,
-        "single",
-        "relative_l2",
-        float(rel_err),
-        1e-8,
-        bool(rel_err < 1e-8),
-    )
 
     outdir = RESULTS_DIR / "bitwise"
     outdir.mkdir(parents=True, exist_ok=True)

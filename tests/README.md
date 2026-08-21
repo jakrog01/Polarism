@@ -2,83 +2,83 @@
 
 ## How to run each tier
 
-- `pytest -m "not slow and not compliance"` runs the default unit, integration, and requirements tiers.
+- `pytest -m "not slow and not compliance"` runs the default unit and integration tiers.
 - `pytest -m compliance` runs the reference and cross-check tiers.
 - `pytest -m slow` runs convergence, memory, and GPU-speedup tiers.
 - `pytest -m gpu` runs CPU/GPU agreement and speedup checks on CUDA hardware.
 - Continuous integration runs `pytest -m 'not slow and not compliance and not gpu'` on `ubuntu-latest` for every push and PR.
 
-The default command deliberately deselects `slow` and `compliance` nodes to keep ordinary development feedback short. A full verification run must execute every tier above; the Phoenix reference matrix is run separately with `pytest tests/test_phoenix_benchmark.py -m slow --use-gpu` on CUDA hardware.
+The default command deliberately deselects `slow` and `compliance` nodes to keep ordinary development feedback short. A full validation pass must execute every tier above; the Phoenix reference matrix is run separately with `pytest tests/test_phoenix_benchmark.py -m slow --use-gpu` on CUDA hardware.
 
-## Dane referencyjne Phoenix
+## Phoenix reference data
 
-Jedenaście porównań `test_phoenix_accuracy` obejmuje trzy przypadki fizyczne
-dla trzech solverów FDM oraz dwa przypadki bez potencjału dla `ifrk4-fft-cuda`.
-Porównania czytają dane referencyjne z `tests/data/phoenix_benchmark/<przypadek>/`. Katalog jest
-śledzony w repozytorium, więc świeży klon wystarcza do odtworzenia porównań — nie ma
-osobnego kroku pobierania danych. Na przypadek zapisane są: `rho_max.txt` (przebieg
-`max|ψ|²` z PHOENIX), `psi_init.txt`, `pump.txt`, `potential.txt`,
-`phoenix_lasers_setup.yaml`, `timing.json` oraz `frame_first.npz` i `frame_last.npz`.
-Test najpierw sprawdza, czy siatka, pompa, potencjał i warunek początkowy Polarism
-zgadzają się z plikami PHOENIX, a dopiero potem porównuje wynik.
+The eleven `test_phoenix_accuracy` comparisons cover three physical cases for
+three FDM solvers plus two potential-free cases for `ifrk4-fft-cuda`. They read
+their reference data from `tests/data/phoenix_benchmark/<case>/`. That directory
+is tracked in the repository, so a fresh clone is enough to reproduce the
+comparisons — there is no separate data download step. Each case stores
+`rho_max.txt` (the `max|psi|^2` trace from PHOENIX), `psi_init.txt`, `pump.txt`,
+`potential.txt`, `phoenix_lasers_setup.yaml`, `timing.json`, and
+`frame_first.npz` with `frame_last.npz`. The test first checks that the Polarism
+grid, pump, potential, and initial condition match the PHOENIX files, and only
+then compares the result.
 
-Progi `ifrk4-fft-cuda` opisują zaakceptowaną granicę ograniczonej zgodności, a
-nie zgodność z PHOENIX na poziomie solverów FDM. W przypadku 01 bezpośrednia
-różnica maksimum gęstości FDM–IFRK przy 500 ps wyniosła 0.05305, czyli 97.1%
-błędu końcowego IFRK–PHOENIX równego 0.05462. Różnica L2 całego pola gęstości
-nie narastała: spadła z 0.02412 przy 10 ps do 0.01938 przy 500 ps. Pomiar
-wskazuje operator przestrzenny jako dominujące źródło końcowej rozbieżności
-skalarnej, ale nie potwierdza monotonicznego rozjazdu całej trajektorii ani
-wpływu szumu. Pełne dane są w `artifacts/crosscheck/ifrk4_divergence.json`.
-Każdy nowy raport zapisuje zakres interpretacji w polu `validation_scope`
-pliku `metrics.json` oraz w `metrics.txt`. Metryka `frame_phase_rmse` przed
-porównaniem usuwa stały globalny offset fazy U(1) na masce gęstości
-referencyjnej.
+The `ifrk4-fft-cuda` thresholds describe an accepted limit of partial agreement,
+not FDM-level agreement with PHOENIX. In case 01 the direct FDM-IFRK difference
+of the density maximum at 500 ps was 0.05305, i.e. 97.1% of the final
+IFRK-PHOENIX error of 0.05462. The L2 difference of the full density field did
+not grow: it fell from 0.02412 at 10 ps to 0.01938 at 500 ps. The measurement
+points to the spatial operator as the dominant source of the final scalar
+discrepancy, but it does not confirm a monotonic divergence of the whole
+trajectory or an influence of noise. Every new report records the interpretation
+scope in the `validation_scope` field of `metrics.json` and in `metrics.txt`. The
+`frame_phase_rmse` metric removes a constant global U(1) phase offset on the
+reference density mask before comparing.
 
-Katalogi FDM w `tests/test_results/test_phoenix_benchmark/` bez `metrics.json`
-pochodzą sprzed wprowadzenia bieżącego formatu raportu. Wartość zera przy
-niezmierzonym użyciu pamięci w ich archiwalnych `metrics.txt` nie jest aktualnym
-dowodem pomiarowym. Raporty w nowym formacie powstają dopiero po ponownym
-uruchomieniu odpowiedniego przypadku; repozytorium nie traktuje starych plików
-graficznych ani tekstowych jako wyniku obecnej walidacji.
+FDM directories under `tests/test_results/test_phoenix_benchmark/` without a
+`metrics.json` predate the current report format. The zero value for unmeasured
+memory use in their archived `metrics.txt` is not current measurement evidence.
+Reports in the new format appear only after the corresponding case is re-run;
+the repository does not treat the old image or text files as a result of the
+present validation.
 
-Dane wygenerowano notatnikiem `tests/data/phoenix_benchmark/example.ipynb`
-uruchomionym w kontenerze `robertschade/phoenix:latest` (pyphoenix, fp64, GPU).
-Pliki są oznaczone w `.gitattributes` jako binarne, aby porównania pozostały
-bajtowo identyczne niezależnie od ustawienia `core.autocrlf`.
+The data was generated with the `tests/data/phoenix_benchmark/example.ipynb`
+notebook run inside the `robertschade/phoenix:latest` container (pyphoenix,
+fp64, GPU). The files are marked binary in `.gitattributes` so the comparisons
+stay byte-identical regardless of the `core.autocrlf` setting.
 
-Bez flagi `--use-gpu` pytest konfiguruje backend CPU, także dla macierzy Phoenix.
-Flaga jest wymagana do odtworzenia raportów `ifrk4-fft-cuda` i wyników GPU.
+Without the `--use-gpu` flag pytest configures the CPU backend, including for
+the Phoenix matrix. The flag is required to reproduce the `ifrk4-fft-cuda`
+reports and the GPU results.
 
-## Pełna walidacja CPU i GPU
+## Full CPU and GPU validation
 
-Do raportu końcowego uruchom całą baterię jednym procesem:
+Run the whole battery as a single process:
 
 ```bash
 .venv/bin/pytest -q -m '' --use-gpu --tb=short \
   --junitxml=artifacts/reports/full_verification.xml
 ```
 
-Polecenie obejmuje wszystkie markery, pełną macierz Phoenix oraz test
-zgodności CPU/GPU. Nie uruchamiaj równolegle drugiego pytest na tej samej
-karcie GPU. Pliki `artifacts/` są wynikami wykonania i pozostają poza historią
-Git.
+The command covers every marker, the full Phoenix matrix, and the CPU/GPU
+agreement test. Do not run a second pytest process against the same GPU. Files
+under `artifacts/` are run outputs and stay outside Git history.
 
 ## What each tier proves
 
-Unit tests verify single-file correctness. Integration verifies the end-to-end run matrix. Reference tests compare against analytic closed forms. Convergence tests support order-of-accuracy claims. Cross-checks compare solvers and CPU/GPU parity. Quality tests cover memory scaling, extensibility, reproducibility, and GPU speedup. The requirements matrix provides WF/WJ traceability to collected test nodes.
+Unit tests verify single-file correctness. Integration verifies the end-to-end run matrix. Reference tests compare against analytic closed forms. Convergence tests support order-of-accuracy claims. Cross-checks compare solvers and CPU/GPU parity. Quality tests cover memory scaling, extensibility, reproducibility, and GPU speedup.
 
 ## Artefacts
 
-Generated outputs are `artifacts/convergence/*.json`, including `artifacts/convergence/fitted_orders.json`; `artifacts/benchmark/gpu_speedup.json` with `environment` and `entries` keys; `artifacts/benchmark/hardware.tex`; and `artifacts/requirements_matrix.json` plus `artifacts/requirements_matrix.tex`.
+Generated outputs are `artifacts/convergence/*.json`, `artifacts/benchmark/gpu_speedup.json` with `environment` and `entries` keys, and `artifacts/benchmark/hardware.tex`.
 Pipeline manifests and scenario metadata carry an `environment` object with the stable runtime fields; seeded threshold scans additionally write `threshold_ensemble.json`.
 
-Dla serii czasowej `rk4-fdm_single` najdrobniejszy punkt `dt=0.000125`
-pozostaje w regresji: jego błąd `1.61e-6` jest ponad pięć rzędów wielkości
-powyżej podłogi `1e-11`, a trzy końcowe nachylenia lokalne wynoszą 3.983,
-3.986 i 3.973. Niższe `fit_r2=0.9968` powoduje punkt `dt=0.002` z lokalnym
-nachyleniem 5.173, a nie kontaminacja najdrobniejszego punktu podłogą
-Richardsona. Fit nadal spełnia pasmo rzędu i kryterium jakości.
+For the `rk4-fdm_single` time series the finest point `dt=0.000125` stays in the
+regression: its error of `1.61e-6` is more than five orders of magnitude above
+the `1e-11` floor, and the three final local slopes are 3.983, 3.986, and 3.973.
+The lower `fit_r2=0.9968` is caused by the `dt=0.002` point with a local slope of
+5.173, not by contamination of the finest point by the Richardson floor. The fit
+still satisfies the order band and the quality criterion.
 
 ## Adding a solver
 

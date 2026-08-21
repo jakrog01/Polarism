@@ -47,6 +47,5 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "compliance: marks solver compliance tests (run with '-m compliance')",
     "gpu: requires an available CUDA device (deselected in default run)",
-    "requirements: verifies the requirements-matrix bookkeeping",
 ]
 addopts = "-m 'not slow and not compliance'"

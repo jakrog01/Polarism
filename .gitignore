@@ -31,3 +31,9 @@ src/*/runs/
 src/pump_multi_comparison/scenarios/*.yaml
 src/threshold_finder/scenarios/*.yaml
 src/create_characteristic/scenarios/*.yaml
+
+# local report material (never tracked)
+/figures/
+/rysunki/
+/*.pdf
+/*.png
