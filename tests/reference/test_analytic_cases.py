@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -11,7 +10,6 @@ from polarism.config.simulation_parameters import PhysicsConstants, ReservoirPar
 from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
 from polarism.reservoir.double_reservoir import DoubleReservoir
 from polarism.simulation_controller import SimulationController
-from tests._reporting import write_validation_record
 from tests.unit.conftest import grid, small_config
 
 TOL_PHASE_ROT = 1e-10  # Exact algebraic identity for a uniform nonlinear field.
@@ -204,34 +202,6 @@ def test_closed_interval_neumann_eigenmode_phase() -> None:
     modulus_error = float(np.max(np.abs(np.abs(controller.state.psi) - np.abs(initial))))
     measured = max(complex_error, modulus_error)
     threshold = 1e-10
-    write_validation_record(
-        Path("closed_interval_neumann_eigenmode.json"),
-        error_norm="max(relative_l2_complex,absolute_modulus_linf)",
-        measured_value=measured,
-        threshold=threshold,
-        passed=measured < threshold,
-        precision="fp64",
-        grid={
-            "nx": cfg.grid.nx,
-            "ny": cfg.grid.ny,
-            "lx": cfg.grid.lx,
-            "ly": cfg.grid.ly,
-            "dx": controller.grid.dx,
-            "grid_type": cfg.grid.grid_type,
-        },
-        dt=cfg.solver.dt,
-        total_time=cfg.solver.total_time,
-        n_steps=int(cfg.solver.total_time / cfg.solver.dt),
-        solver_reference="discrete-neumann-eigenmode",
-        solver_under_test="rk4-fdm",
-        backend_reference="analytic",
-        backend_under_test="cpu",
-        reservoir_type="single",
-        boundary="closed-interval-neumann",
-        potential_type="zero",
-        extra={"complex_error": complex_error, "modulus_error": modulus_error},
-        artifact_root=Path("artifacts/reference"),
-    )
     assert measured < threshold
 
 
@@ -289,35 +259,4 @@ def test_double_reservoir_zero_dimensional_closed_form() -> None:
     transient_error = float(np.linalg.norm(actual - expected) / np.linalg.norm(expected))
     measured = max(stationary_error, transient_error)
     threshold = 1e-7
-    write_validation_record(
-        Path("double_reservoir_zero_dimensional.json"),
-        error_norm="max(stationary_relative_l2,transient_relative_l2)",
-        measured_value=measured,
-        threshold=threshold,
-        passed=measured < threshold,
-        precision="fp64",
-        grid={
-            "nx": 1,
-            "ny": 1,
-            "lx": spatial_grid.lx,
-            "ly": spatial_grid.ly,
-            "dx": spatial_grid.dx,
-            "grid_type": spatial_grid.grid_type,
-        },
-        dt=dt,
-        total_time=dt * n_steps,
-        n_steps=n_steps,
-        solver_reference="scipy.linalg.expm",
-        solver_under_test="DoubleReservoir.midpoint",
-        backend_reference="analytic",
-        backend_under_test="cpu",
-        reservoir_type="double",
-        boundary="zero-dimensional",
-        potential_type="zero",
-        extra={
-            "stationary_relative_l2": stationary_error,
-            "transient_relative_l2": transient_error,
-        },
-        artifact_root=Path("artifacts/reference"),
-    )
     assert measured < threshold

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -9,7 +8,6 @@ from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import ComputeEngineParameters
 from polarism.simulation_controller import SimulationController
 from tests._helpers import rel_l2_err
-from tests._reporting import write_validation_record
 from tests.unit.conftest import small_config
 
 TOL_STAGE_COUPLED = 1e-3
@@ -56,32 +54,6 @@ def test_solver_end_state_agreement(solver: str, reservoir: str) -> None:
     tolerance = TOL_DIAGNOSTIC_SPLIT_COUPLED if diagnostic else TOL_SPLIT_COUPLED if solver in {"split-step-fft", "etd-rk2"} else TOL_STAGE_COUPLED
     measured = float(
         np.max(np.abs(actual - reference) / np.maximum(np.abs(reference), 1e-30))
-    )
-    write_validation_record(
-        Path("solver_agreement") / f"{solver}_{reservoir}.json",
-        error_norm="max_rel_observable",
-        measured_value=measured,
-        threshold=tolerance,
-        passed=measured < tolerance,
-        precision="fp64",
-        grid={
-            "nx": 64,
-            "ny": 64,
-            "lx": 30.0,
-            "ly": 30.0,
-            "dx": 30.0 / 64.0,
-            "grid_type": "periodic",
-        },
-        dt=2.5e-3 if solver in {"split-step-fft", "etd-rk2"} else 5e-3,
-        total_time=0.5,
-        n_steps=200 if solver in {"split-step-fft", "etd-rk2"} else 100,
-        solver_reference="rk4-fdm",
-        solver_under_test=solver,
-        backend_reference="cpu",
-        backend_under_test="cpu",
-        reservoir_type=reservoir,
-        boundary="periodic",
-        potential_type="zero",
     )
     assert measured < tolerance
 
@@ -171,43 +143,6 @@ def test_ifrk4_fft_cuda_matches_rk4_fdm() -> None:
         reference_active = result[2]
         actual_active = result[3]
         measured = result[4]
-        write_validation_record(
-            Path("solver_agreement") / f"ifrk4-fft-cuda_{reservoir}.json",
-            error_norm="rel_l2_after_phase_alignment",
-            measured_value=measured,
-            threshold=TOL_IFRK4_INDEPENDENT,
-            passed=measured < TOL_IFRK4_INDEPENDENT,
-            precision="fp64",
-            grid={
-                "nx": 128,
-                "ny": 128,
-                "lx": 40.0,
-                "ly": 40.0,
-                "dx": 40.0 / 128.0,
-                "grid_type": "periodic",
-            },
-            dt=1e-3,
-            total_time=1.0,
-            n_steps=1000,
-            solver_reference="rk4-fdm",
-            solver_under_test="ifrk4-fft-cuda",
-            backend_reference="cpu",
-            backend_under_test="gpu",
-            reservoir_type=reservoir,
-            boundary="periodic",
-            potential_type="double-well-supergaussian",
-            extra={
-                "reference_active_density_max": reference_active,
-                "actual_active_density_max": actual_active,
-                "cpu_reservoir_variant_separation": cpu_variant_separation,
-                "gpu_reservoir_variant_separation": gpu_variant_separation,
-                "cross_solver_error_variant_separation": error_variant_separation,
-                "pump_peak": 5.0,
-                "pump_sigma_space": 8.0,
-                "scattering_rate_R": 0.1,
-                "reservoir_interaction_g_R": 0.02,
-            },
-        )
         assert reference_active > MINIMUM_ACTIVE_RESERVOIR_DENSITY
         assert actual_active > MINIMUM_ACTIVE_RESERVOIR_DENSITY
         assert measured < TOL_IFRK4_INDEPENDENT

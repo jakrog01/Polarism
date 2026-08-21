@@ -22,3 +22,8 @@ data/
 !.github/workflows/*.yml
 site/
 
+# local report material (never tracked)
+/figures/
+/rysunki/
+/*.pdf
+/*.png

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -9,7 +8,6 @@ import pytest
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import Config
 from polarism.simulation_controller import SimulationController
-from tests._reporting import write_validation_record
 from tests.unit.conftest import small_config
 
 
@@ -138,45 +136,9 @@ def test_pulse_gaussian_drives_linear_reservoir_reference() -> None:
     coarse_dt = 1e-3
     fine_dt = 5e-4
     coarse_error, _ = _pulse_response_error(coarse_dt)
-    measured, controller = _pulse_response_error(fine_dt)
+    measured, _ = _pulse_response_error(fine_dt)
     observed_order = math.log(coarse_error / measured) / math.log(coarse_dt / fine_dt)
-    cfg = controller.cfg
     threshold = 3.5e-3
-    write_validation_record(
-        Path("pulse_gaussian_linear_response.json"),
-        error_norm="maximum_transient_relative_l2",
-        measured_value=measured,
-        threshold=threshold,
-        passed=measured < threshold,
-        precision="fp64",
-        grid={
-            "nx": cfg.grid.nx,
-            "ny": cfg.grid.ny,
-            "lx": cfg.grid.lx,
-            "ly": cfg.grid.ly,
-            "dx": controller.grid.dx,
-            "grid_type": cfg.grid.grid_type,
-        },
-        dt=fine_dt,
-        total_time=cfg.solver.total_time,
-        n_steps=int(cfg.solver.total_time / fine_dt),
-        solver_reference="closed-form-truncated-gaussian-convolution",
-        solver_under_test="rk4-fdm",
-        backend_reference="analytic",
-        backend_under_test="cpu",
-        reservoir_type="single",
-        boundary="periodic",
-        potential_type="zero",
-        extra={
-            "laser_type": "pulse-gaussian",
-            "power_definition": "pulse_energy",
-            "coarse_dt": coarse_dt,
-            "coarse_error": coarse_error,
-            "observed_order": observed_order,
-            "cutoff_sigma": cfg.laser.cutoff_sigma,
-        },
-        artifact_root=Path("artifacts/reference"),
-    )
     assert 0.9 < observed_order < 1.1
     assert measured < threshold
 
@@ -259,41 +221,6 @@ def test_absorber_wave_packet_reflection() -> None:
     monotonic = all(
         all(later < earlier for earlier, later in zip(values, values[1:]))
         for values in reflections.values()
-    )
-    passed = measured < threshold and no_absorption > 0.8 and monotonic
-    write_validation_record(
-        Path("absorber_wave_packet_reflection.json"),
-        error_norm="interior_norm_reflection_fraction",
-        measured_value=measured,
-        threshold=threshold,
-        passed=passed,
-        precision="fp64",
-        grid={
-            "nx": 256,
-            "ny": 8,
-            "lx": 80.0,
-            "ly": 4.0,
-            "dx": 80.0 / 255.0,
-            "grid_type": "closed-interval",
-        },
-        dt=0.005,
-        total_time=total_time,
-        n_steps=int(total_time / 0.005),
-        solver_reference="double-width-no-absorption",
-        solver_under_test="rk4-fdm",
-        backend_reference="cpu",
-        backend_under_test="cpu",
-        reservoir_type="single",
-        boundary="closed-interval-with-absorber",
-        potential_type="zero",
-        extra={
-            "mask_width_percent": list(widths),
-            "reflection_by_strategy": reflections,
-            "no_absorption_reflection": no_absorption,
-            "wide_reference_interior_norm": wide_reference,
-            "monotonic": monotonic,
-        },
-        artifact_root=Path("artifacts/reference"),
     )
     assert no_absorption > 0.8
     assert monotonic
