@@ -42,6 +42,8 @@ from typing import Any
 
 import numpy as np
 
+from polarism.analysis.condensation import CONDENSATION_PSI_SQ_FLOOR
+
 from pipeline.config.builder import build_scenario_lasers
 from pipeline.config.sweep_utils import PULSE_LASER_TYPES, resolve_laser_type
 from pipeline.experiments.probe5_trap_gate import (
@@ -81,7 +83,7 @@ from polarism.simulation_state import SimulationState
 from polarism.solver.create_solver import create_solver
 
 COND_GROWTH_FACTOR = 1e6
-COND_PSI_SQ_THRESHOLD = 5e-2
+COND_PSI_SQ_THRESHOLD = CONDENSATION_PSI_SQ_FLOOR
 CHECK_EVERY = 500
 MIN_CHECK_TIME = 50.0
 RNG_SEED = 42

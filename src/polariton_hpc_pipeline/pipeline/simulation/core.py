@@ -12,6 +12,7 @@ import traceback
 import h5py
 import numpy as np
 
+from polarism.analysis.condensation import CONDENSATION_PSI_SQ_FLOOR
 from pipeline.config.output_policy import OutputPolicy
 from pipeline.simulation.roi import (
     compile_circle_rois,
@@ -32,7 +33,7 @@ from polarism.solver.create_solver import create_solver
 from tqdm import trange
 
 COND_GROWTH_FACTOR = 1e6
-COND_PSI_SQ_THRESHOLD = 5e-2
+COND_PSI_SQ_THRESHOLD = CONDENSATION_PSI_SQ_FLOOR
 CHECK_EVERY = 50
 MIN_CHECK_TIME = 50.0
 RNG_SEED = 42

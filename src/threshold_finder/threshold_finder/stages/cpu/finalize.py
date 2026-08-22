@@ -24,9 +24,10 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 import numpy as np
 
+from polarism.analysis.condensation import CONDENSATION_PSI_SQ_FLOOR
 from threshold_finder.manifest.io import atomic_write_json, set_manifest_field
 
-CONDENSATION_PSI_SQ_THRESHOLD = 5e-2
+CONDENSATION_PSI_SQ_THRESHOLD = CONDENSATION_PSI_SQ_FLOOR
 
 
 def _load_all_results(run_dir: str) -> list[dict[str, Any]]:
