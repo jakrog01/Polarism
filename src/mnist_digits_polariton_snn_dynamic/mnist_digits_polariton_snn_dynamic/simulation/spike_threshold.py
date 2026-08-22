@@ -30,6 +30,13 @@ from typing import Callable, Literal
 
 import numpy as np
 
+from polarism.analysis.condensation import (
+    CrossingResult as _SharedCrossingResult,
+    count_upward_crossings as _shared_count_upward_crossings,
+    critical_reservoir_density,
+    gain_loss_signal,
+    integrate_zero_dim as _shared_integrate_zero_dim,
+)
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import (
     ComputeEngineParameters,
@@ -217,6 +224,11 @@ def count_upward_crossings(
     return CrossingResult(len(crossings), crossings, float("nan"), duty, crossings[0] if crossings else None)
 
 
+CrossingResult = _SharedCrossingResult
+count_upward_crossings = _shared_count_upward_crossings
+integrate_zero_dim = _shared_integrate_zero_dim
+
+
 def evaluate_power(
     power: float,
     t: np.ndarray,
@@ -236,9 +248,19 @@ def evaluate_power(
     mask = (t >= window_start_ps) & (t <= window_end_ps)
     window_t = t[mask]
     window_n_r = n_r[mask]
-    signal = float(physics.R) * window_n_r - float(physics.gamma_C)
-    crossings = count_upward_crossings(window_t, signal, hysteresis=hysteresis_rel * float(physics.gamma_C), min_above_ps=min_above_ps)
-    return replace(crossings, nR_max=float(np.max(window_n_r)))
+    signal = gain_loss_signal(window_n_r, physics)
+    crossings = count_upward_crossings(
+        window_t,
+        signal,
+        hysteresis=hysteresis_rel * float(physics.gamma_C),
+        min_above_ps=min_above_ps,
+    )
+    n_r_max = float(np.max(window_n_r))
+    return replace(
+        crossings,
+        nR_max=n_r_max,
+        ratio_to_critical=n_r_max / critical_reservoir_density(physics),
+    )
 
 
 def select_threshold_power(
