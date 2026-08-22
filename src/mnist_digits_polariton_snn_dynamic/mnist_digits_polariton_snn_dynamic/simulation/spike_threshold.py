@@ -32,6 +32,8 @@ import numpy as np
 
 from polarism.analysis.condensation import (
     CrossingResult as _SharedCrossingResult,
+    CONDENSATION_PSI_SQ_FLOOR,
+    classify,
     count_upward_crossings as _shared_count_upward_crossings,
     critical_reservoir_density,
     gain_loss_signal,
@@ -72,6 +74,8 @@ class SpikeThresholdSettings:
     model: Literal["pump_only", "coupled"] = "pump_only"
     spontaneous_source: float = 1.0e-6
     make_plot: bool = True
+    trace_powers: Literal["key", "all", "none"] = "key"
+    axis2: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +115,7 @@ class SpikeThresholdResult:
     final_power_max: float | None
     crossing_times_ps: tuple[float, ...]
     sensitivity: dict[str, float | str]
+    map: dict[str, object] | None = None
 
 
 class NoSpikingRegimeError(RuntimeError):
@@ -345,7 +350,10 @@ def find_spike_threshold(
         return cache[key]
 
     points = [measure(float(power)) for power in powers]
-    curve = tuple(_curve_point(float(power), point) for power, point in zip(powers, points))
+    curve = tuple(
+        _curve_point(float(power), point)
+        for power, point in zip(powers, points)
+    )
     maximum = max(point.n_crossings for point in points)
     common = _result_base(config_path, scenario_id, cfg.physics, cfg.reservoir.reservoir_type, dynamic, chosen, center_value, stop, dt, curve, maximum, status="ok")
     if maximum <= 1:
@@ -357,6 +365,11 @@ def find_spike_threshold(
     p_lo, p_hi, threshold, n_max = select_threshold_power(powers, np.array([point.n_crossings for point in points]), measure, edge_tol_rel=chosen.edge_tol_rel)
     final = measure(threshold)
     if p_lo == float(powers[0]) or p_hi == float(powers[-1]):
+        if chosen.model == "coupled":
+            raise ValueError(
+                "coupled spiking plateau touches the scan boundary; expand the scan "
+                "range because the plateau is not physically closed"
+            )
         print("WARNING: selected spiking plateau touches a scan boundary", file=sys.stderr, flush=True)
     sensitivity = _sensitivity(chosen)
     if chosen.model == "coupled":
@@ -379,6 +392,7 @@ def find_spike_threshold(
         print(f"WARNING: neighbor_pump_overlap={overlap:.6g} exceeds 1e-3", file=sys.stderr, flush=True)
     signal = float(cfg.physics.R) * integrate_zero_dim(t, threshold * normalized, cfg.physics, model=chosen.model, spontaneous_source=chosen.spontaneous_source)[1] - float(cfg.physics.gamma_C)
     _write_artifacts(Path(output_dir), result, t, signal, final.crossing_times_ps, plot=chosen.make_plot)
+    _write_trace_files(Path(output_dir), result, powers, t, normalized, cfg.physics, chosen)
     return result
 
 
@@ -466,7 +480,17 @@ def _result_base(
 
 
 def _curve_point(power: float, result: CrossingResult) -> dict[str, float | int | None]:
-    return {"P": power, "n_crossings": result.n_crossings, "nR_max": result.nR_max, "duty_above": result.duty_above, "first_crossing_ps": result.first_crossing_ps}
+    verdict = classify(result, 0.0, CONDENSATION_PSI_SQ_FLOOR)
+    return {
+        "P": power,
+        "n_crossings": result.n_crossings,
+        "nR_max": result.nR_max,
+        "ratio_to_critical": result.ratio_to_critical,
+        "duty_above": result.duty_above,
+        "first_crossing_ps": result.first_crossing_ps,
+        "t_above_total_ps": result.duty_above,
+        "klass": verdict.klass,
+    }
 
 
 def _sensitivity(settings: SpikeThresholdSettings) -> dict[str, float | str]:
@@ -533,11 +557,14 @@ def _write_artifacts(output_dir: Path, result: SpikeThresholdResult, t: np.ndarr
     output_dir.mkdir(parents=True, exist_ok=True)
     atomic_write_json(str(output_dir / "spike_threshold.json"), asdict(result))
     with (output_dir / "spike_threshold_curve.csv").open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=("P", "n_crossings", "nR_max", "duty_above", "first_crossing_ps"))
+        stream.write("# Analytic pump_only stage reports only necessary gain classes: dark or gain_only.\n")
+        writer = csv.DictWriter(stream, fieldnames=("P", "n_crossings", "nR_max", "ratio_to_critical", "duty_above", "first_crossing_ps", "t_above_total_ps", "klass"))
         writer.writeheader()
         writer.writerows(sorted(result.curve, key=lambda item: float(item["P"])))
     if plot:
         import matplotlib.pyplot as plt
+        results_dir = output_dir / "results"
+        results_dir.mkdir(exist_ok=True)
         fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
         powers = np.array([float(item["P"]) for item in result.curve])
         axes[0].plot(powers, [int(item["n_crossings"]) for item in result.curve], marker="o")
@@ -553,7 +580,65 @@ def _write_artifacts(output_dir: Path, result: SpikeThresholdResult, t: np.ndarr
         axes[1].set(xlabel="time (ps)", ylabel="R nR - gamma_C")
         fig.tight_layout()
         fig.savefig(output_dir / "spike_threshold.png", dpi=150)
+        fig.savefig(results_dir / "crossings_vs_power.png", dpi=150)
         plt.close(fig)
+        fig, axis = plt.subplots(figsize=(8, 4.5))
+        axis.plot(t, signal)
+        axis.axhline(0.0, color="black", linewidth=0.8)
+        axis.axhline(result.hysteresis_rel * result.physics["gamma_C"], color="gray", linestyle="--")
+        axis.axhline(-result.hysteresis_rel * result.physics["gamma_C"], color="gray", linestyle="--")
+        axis.plot(crossings, np.zeros(len(crossings)), "o")
+        axis.set(xlabel="time (ps)", ylabel="R nR - gamma_C")
+        fig.tight_layout()
+        fig.savefig(results_dir / "gain_loss_at_threshold.png", dpi=150)
+        plt.close(fig)
+
+
+def _write_trace_files(
+    output_dir: Path,
+    result: SpikeThresholdResult,
+    powers: np.ndarray,
+    t: np.ndarray,
+    normalized: np.ndarray,
+    physics: PhysicsConstants,
+    settings: SpikeThresholdSettings,
+) -> None:
+    if settings.trace_powers == "none":
+        return
+    selected = list(map(float, powers)) if settings.trace_powers == "all" else [
+        result.plateau["P_lo"],
+        result.P_threshold,
+        result.plateau["P_hi"],
+        result.plateau["P_lo"] / 2.0,
+        2.0 * result.plateau["P_hi"],
+        float(powers[0]),
+        float(powers[-1]),
+    ]
+    traces_dir = output_dir / "traces"
+    traces_dir.mkdir(exist_ok=True)
+    for index, power in enumerate(dict.fromkeys(selected)):
+        integrated = integrate_zero_dim(
+            t,
+            power * normalized,
+            physics,
+            model=settings.model,
+            spontaneous_source=settings.spontaneous_source,
+        )
+        n_active = integrated[1]
+        n_condensate = integrated[2] if len(integrated) == 3 else np.array((), dtype=np.float64)
+        derivative = np.gradient(n_active, t)
+        transfer = derivative + float(physics.gamma_R) * n_active
+        if n_condensate.size:
+            transfer = transfer + float(physics.R) * n_active * n_condensate
+        n_inactive = np.sqrt(np.maximum(transfer / float(physics.kappa), 0.0))
+        np.savez_compressed(
+            traces_dir / f"power_{index:02d}_{power:.6g}.npz",
+            t_ps=t,
+            n_inactive=n_inactive,
+            n_active=n_active,
+            gain_loss=gain_loss_signal(n_active, physics),
+            n_condensate=n_condensate,
+        )
 
 
 def _interpolate_time(t0: float, t1: float, y0: float, y1: float, target: float) -> float:

@@ -136,6 +136,8 @@ class ThresholdConfig:
     edge_tol_rel: float = 1.0e-3
     model: str = "pump_only"
     spontaneous_source: float = 1.0e-6
+    trace_powers: str = "key"
+    axis2: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
