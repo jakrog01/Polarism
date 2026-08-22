@@ -14,8 +14,8 @@ This page collects the main configuration choices in one place. It is meant as a
 | Option | Use when | Notes |
 | --- | --- | --- |
 | `no-absorption` | you want no artificial damping at the domain edge | best only when edge reflections are physically acceptable |
-| `mask` | you want a simple absorbing rim near the boundary | practical default for many finite-domain runs |
-| `cap` | you want absorption represented as a complex absorbing potential | useful when you want boundary damping folded into the effective potential picture |
+| `mask` | you want a simple absorbing rim near the boundary | practical default for many finite-domain runs; larger `strength` increases per-step damping and `0` disables it |
+| `cap` | you want absorption represented as a complex absorbing potential | useful when you want boundary damping folded into the effective potential picture; `strength` scales the imaginary absorbing potential |
 
 ## Potential type
 
