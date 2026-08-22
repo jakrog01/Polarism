@@ -41,7 +41,6 @@ from polarism.analysis.condensation import (
 )
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import (
-    ComputeEngineParameters,
     LaserParameters,
     PhysicsConstants,
 )
@@ -79,17 +78,6 @@ class SpikeThresholdSettings:
 
 
 @dataclass(frozen=True, slots=True)
-class CrossingResult:
-    """Crossing diagnostics evaluated at one pump power."""
-
-    n_crossings: int
-    crossing_times_ps: tuple[float, ...]
-    nR_max: float
-    duty_above: float
-    first_crossing_ps: float | None
-
-
-@dataclass(frozen=True, slots=True)
 class SpikeThresholdResult:
     """Complete, serializable result of a spike-threshold scan."""
 
@@ -124,109 +112,6 @@ class NoSpikingRegimeError(RuntimeError):
     def __init__(self, result: SpikeThresholdResult) -> None:
         super().__init__("no_spiking_regime: maximum crossing count is at most one")
         self.result = result
-
-
-def integrate_zero_dim(
-    t: np.ndarray,
-    pump: np.ndarray,
-    physics: PhysicsConstants,
-    *,
-    model: Literal["pump_only", "coupled"] = "pump_only",
-    spontaneous_source: float = 1.0e-6,
-) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Integrate the zero-dimensional reservoir equations using RK4.
-
-    Parameters
-    ----------
-    t, pump
-        Matching time and central-pump arrays.
-    physics
-        Polarism physics constants.
-    model
-        ``pump_only`` or condensate-depleting ``coupled`` equations.
-    spontaneous_source
-        Source term ``R_sp`` used only by the coupled model.
-    """
-    times = np.asarray(t, dtype=np.float64)
-    source = np.asarray(pump, dtype=np.float64)
-    if times.ndim != 1 or source.shape != times.shape or times.size < 2:
-        raise ValueError("t and pump must be matching one-dimensional arrays of length >= 2")
-    if np.any(~np.isfinite(times)) or np.any(~np.isfinite(source)) or np.any(np.diff(times) <= 0.0):
-        raise ValueError("t must be strictly increasing and t/pump must be finite")
-    if model not in {"pump_only", "coupled"}:
-        raise ValueError(f"Unsupported threshold model: {model!r}")
-    n_r = np.zeros_like(times)
-    n_i = np.zeros_like(times)
-    n_c = np.full_like(times, float(physics.init_eps) ** 2) if model == "coupled" else None
-    kappa, gamma_r, gamma_i, scattering, gamma_c = (float(physics.kappa), float(physics.gamma_R), float(physics.gamma_I), float(physics.R), float(physics.gamma_C))
-    active = inactive = 0.0
-    condensate = float(physics.init_eps) ** 2
-    for index, step in enumerate(np.diff(times)):
-        p0, p1 = float(source[index]), float(source[index + 1])
-        pm = 0.5 * (p0 + p1)
-        if model == "pump_only":
-            def derivative(ar: float, ir: float, pv: float) -> tuple[float, float]:
-                transfer = kappa * ir * ir
-                return transfer - gamma_r * ar, pv - transfer - gamma_i * ir
-            a1, i1 = derivative(active, inactive, p0)
-            a2, i2 = derivative(active + 0.5 * step * a1, inactive + 0.5 * step * i1, pm)
-            a3, i3 = derivative(active + 0.5 * step * a2, inactive + 0.5 * step * i2, pm)
-            a4, i4 = derivative(active + step * a3, inactive + step * i3, p1)
-            active = max(0.0, active + step * (a1 + 2.0 * a2 + 2.0 * a3 + a4) / 6.0)
-            inactive = max(0.0, inactive + step * (i1 + 2.0 * i2 + 2.0 * i3 + i4) / 6.0)
-        else:
-            def derivative(ar: float, ir: float, cr: float, pv: float) -> tuple[float, float, float]:
-                transfer = kappa * ir * ir
-                return transfer - gamma_r * ar - scattering * ar * cr, pv - transfer - gamma_i * ir, (scattering * ar - gamma_c) * cr + spontaneous_source
-            a1, i1, c1 = derivative(active, inactive, condensate, p0)
-            a2, i2, c2 = derivative(active + 0.5 * step * a1, inactive + 0.5 * step * i1, condensate + 0.5 * step * c1, pm)
-            a3, i3, c3 = derivative(active + 0.5 * step * a2, inactive + 0.5 * step * i2, condensate + 0.5 * step * c2, pm)
-            a4, i4, c4 = derivative(active + step * a3, inactive + step * i3, condensate + step * c3, p1)
-            active = max(0.0, active + step * (a1 + 2.0 * a2 + 2.0 * a3 + a4) / 6.0)
-            inactive = max(0.0, inactive + step * (i1 + 2.0 * i2 + 2.0 * i3 + i4) / 6.0)
-            condensate = max(0.0, condensate + step * (c1 + 2.0 * c2 + 2.0 * c3 + c4) / 6.0)
-        n_r[index + 1], n_i[index + 1] = active, inactive
-        if n_c is not None:
-            n_c[index + 1] = condensate
-    if n_c is None:
-        return times, n_r
-    return times, n_r, n_c
-
-
-def count_upward_crossings(
-    t: np.ndarray,
-    s: np.ndarray,
-    *,
-    hysteresis: float,
-    min_above_ps: float = 0.0,
-) -> CrossingResult:
-    """Count Schmitt-triggered upward gain crossings with linear timing."""
-    times = np.asarray(t, dtype=np.float64)
-    signal = np.asarray(s, dtype=np.float64)
-    if times.ndim != 1 or signal.shape != times.shape or times.size == 0:
-        raise ValueError("t and s must be matching nonempty one-dimensional arrays")
-    if hysteresis < 0.0 or min_above_ps < 0.0:
-        raise ValueError("hysteresis and min_above_ps must be nonnegative")
-    above_duration = _positive_duration(times, signal)
-    if times.size == 1:
-        crossings = (float(times[0]),) if signal[0] >= hysteresis else ()
-        return CrossingResult(len(crossings), crossings, float("nan"), 1.0 if signal[0] > 0 else 0.0, crossings[0] if crossings else None)
-    armed = True
-    candidates: list[float] = []
-    if signal[0] >= hysteresis:
-        candidates.append(float(times[0]))
-        armed = False
-    for index in range(1, times.size):
-        left, right = signal[index - 1], signal[index]
-        if armed and left < hysteresis <= right:
-            candidates.append(_interpolate_time(times[index - 1], times[index], left, right, hysteresis))
-            armed = False
-        elif not armed and right <= -hysteresis:
-            armed = True
-    crossings = tuple(candidate for candidate in candidates if _above_run_duration(times, signal, candidate) >= min_above_ps)
-    duration = max(float(times[-1] - times[0]), 0.0)
-    duty = above_duration / duration if duration else float(signal[0] > 0.0)
-    return CrossingResult(len(crossings), crossings, float("nan"), duty, crossings[0] if crossings else None)
 
 
 CrossingResult = _SharedCrossingResult
@@ -385,6 +270,20 @@ def find_spike_threshold(
             )
         )
     result = SpikeThresholdResult(**common, plateau={"P_lo": p_lo, "P_hi": p_hi, "width_ratio": p_hi / p_lo}, P_threshold=threshold, final_power_max=threshold, crossing_times_ps=final.crossing_times_ps, sensitivity=sensitivity)
+    if chosen.axis2 is not None:
+        result = replace(
+            result,
+            map=_build_axis2_map(
+                Path(output_dir),
+                chosen.axis2,
+                powers,
+                t,
+                cfg,
+                dynamic,
+                chosen,
+                stop,
+            ),
+        )
     if p_hi / p_lo < 1.05:
         print(f"WARNING: plateau_width_ratio={p_hi / p_lo:.6g} is below 1.05", file=sys.stderr, flush=True)
     overlap = result.spot["neighbor_pump_overlap"]
@@ -397,11 +296,12 @@ def find_spike_threshold(
 
 
 def _normalized_central_pump(t: np.ndarray, cfg: object, pulse: PulseConfig, sigma_space: float) -> tuple[np.ndarray, float]:
-    compute_engine.configure(ComputeEngineParameters(use_gpu=False))
     grid = create_grid(cfg.grid)
     laser = PulseGaussian(LaserParameters(mode="single", laser_type="pulse-gaussian", P0=1.0, Pmax=1.0, x0=0.0, y0=0.0, sigma_space=float(sigma_space), sigma_time=float(pulse.sigma_time), pulse_separation=float(pulse.pulse_separation), n_pulses=int(pulse.n_pulses), cutoff_sigma=float(pulse.cutoff_sigma), power_definition=str(pulse.power_definition), expose_results=False), grid.X, grid.Y, precision="double")
-    iy, ix = np.unravel_index(np.argmin(np.asarray(grid.X) ** 2 + np.asarray(grid.Y) ** 2), grid.X.shape)
-    center_at_peak = float(laser.get_power(grid.X, grid.Y, laser.phase)[iy, ix])
+    x_cpu = compute_engine.to_cpu(grid.X)
+    y_cpu = compute_engine.to_cpu(grid.Y)
+    iy, ix = np.unravel_index(np.argmin(x_cpu * x_cpu + y_cpu * y_cpu), x_cpu.shape)
+    center_at_peak = float(compute_engine.to_cpu(laser.get_power(grid.X, grid.Y, laser.phase))[iy, ix])
     peak_temporal = 1.0 if pulse.power_definition == "peak_amplitude" else 1.0 / float(laser.temporal_integral)
     center_spatial = center_at_peak / peak_temporal
     profile = center_spatial * _temporal_profile(t, pulse, laser.phase, laser.temporal_integral)
@@ -616,6 +516,7 @@ def _write_trace_files(
     ]
     traces_dir = output_dir / "traces"
     traces_dir.mkdir(exist_ok=True)
+    plot_traces: list[tuple[float, np.ndarray, np.ndarray, np.ndarray]] = []
     for index, power in enumerate(dict.fromkeys(selected)):
         integrated = integrate_zero_dim(
             t,
@@ -639,32 +540,104 @@ def _write_trace_files(
             gain_loss=gain_loss_signal(n_active, physics),
             n_condensate=n_condensate,
         )
+        if power in {result.plateau["P_lo"], result.P_threshold, result.plateau["P_hi"]}:
+            plot_traces.append((power, n_inactive, n_active, gain_loss_signal(n_active, physics)))
+    if settings.make_plot and plot_traces:
+        import matplotlib.pyplot as plt
+        figure, axes = plt.subplots(3, 1, figsize=(9, 8), sharex=True)
+        for power, n_inactive, n_active, signal in plot_traces:
+            label = f"P={power:.6g}"
+            axes[0].plot(t, n_inactive, label=label)
+            axes[1].plot(t, n_active, label=label)
+            axes[2].plot(t, signal, label=label)
+        axes[1].axhline(critical_reservoir_density(physics), color="black", linestyle="--")
+        axes[2].axhline(0.0, color="black", linewidth=0.8)
+        axes[0].set_ylabel("nI")
+        axes[1].set_ylabel("nR")
+        axes[2].set(xlabel="time (ps)", ylabel="gain-loss")
+        axes[0].legend()
+        figure.tight_layout()
+        results_dir = output_dir / "results"
+        results_dir.mkdir(exist_ok=True)
+        figure.savefig(results_dir / "reservoir_traces.png", dpi=150)
+        plt.close(figure)
 
 
-def _interpolate_time(t0: float, t1: float, y0: float, y1: float, target: float) -> float:
-    if y1 == y0:
-        return float(t1)
-    return float(t0 + (target - y0) * (t1 - t0) / (y1 - y0))
-
-
-def _positive_duration(t: np.ndarray, s: np.ndarray) -> float:
-    total = 0.0
-    for t0, t1, s0, s1 in zip(t[:-1], t[1:], s[:-1], s[1:]):
-        step = float(t1 - t0)
-        if s0 > 0.0 and s1 > 0.0:
-            total += step
-        elif s0 > 0.0 >= s1:
-            total += _interpolate_time(float(t0), float(t1), float(s0), float(s1), 0.0) - float(t0)
-        elif s0 <= 0.0 < s1:
-            total += float(t1) - _interpolate_time(float(t0), float(t1), float(s0), float(s1), 0.0)
-    return total
-
-
-def _above_run_duration(t: np.ndarray, s: np.ndarray, crossing: float) -> float:
-    index = int(np.searchsorted(t, crossing, side="right"))
-    end = float(t[-1])
-    for current in range(max(index, 1), t.size):
-        if s[current - 1] > 0.0 >= s[current]:
-            end = _interpolate_time(float(t[current - 1]), float(t[current]), float(s[current - 1]), float(s[current]), 0.0)
-            break
-    return max(0.0, end - crossing)
+def _build_axis2_map(
+    output_dir: Path,
+    axis2: dict[str, object],
+    powers: np.ndarray,
+    t: np.ndarray,
+    cfg: object,
+    dynamic: object,
+    settings: SpikeThresholdSettings,
+    window_end_ps: float,
+) -> dict[str, object]:
+    parameter = str(axis2.get("parameter", ""))
+    if parameter not in {"pulse_separation", "sigma_time", "n_pulses"}:
+        raise ValueError("threshold.axis2.parameter must be pulse_separation, sigma_time, or n_pulses")
+    values = axis2.get("values")
+    if not isinstance(values, list) or not values:
+        raise ValueError("threshold.axis2.values must be a nonempty list")
+    rows: list[list[int]] = []
+    records: list[dict[str, float | int | str]] = []
+    for value in values:
+        pulse = replace(dynamic.pulse, **{parameter: int(value) if parameter == "n_pulses" else float(value)})
+        normalized, _ = _normalized_central_pump(t, cfg, pulse, dynamic.geometry.sigma_space_um)
+        counts: list[int] = []
+        for power in powers:
+            point = evaluate_power(
+                float(power),
+                t,
+                normalized,
+                cfg.physics,
+                window_start_ps=float(settings.window_start_ps),
+                window_end_ps=window_end_ps,
+                hysteresis_rel=float(settings.hysteresis_rel),
+                min_above_ps=float(settings.min_above_ps),
+                model=settings.model,
+                spontaneous_source=float(settings.spontaneous_source),
+            )
+            counts.append(point.n_crossings)
+            records.append(
+                {
+                    "axis2_value": float(value),
+                    "P": float(power),
+                    "n_crossings": point.n_crossings,
+                    "nR_max": point.nR_max,
+                    "klass": classify(point, 0.0, CONDENSATION_PSI_SQ_FLOOR).klass,
+                }
+            )
+        rows.append(counts)
+    with (output_dir / "crossings_map.csv").open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=("axis2_value", "P", "n_crossings", "nR_max", "klass"))
+        writer.writeheader()
+        writer.writerows(records)
+    if settings.make_plot:
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import BoundaryNorm
+        figure, axis = plt.subplots(figsize=(8, 5))
+        counts_array = np.asarray(rows, dtype=np.int64)
+        maximum = max(1, int(counts_array.max()))
+        mesh = axis.pcolormesh(
+            powers,
+            np.asarray(values, dtype=np.float64),
+            counts_array,
+            shading="nearest",
+            cmap="viridis",
+            norm=BoundaryNorm(np.arange(-0.5, maximum + 1.5), 256),
+        )
+        axis.set_xscale("log")
+        axis.set(xlabel="P", ylabel=parameter, title="Gain-crossing map")
+        figure.colorbar(mesh, ax=axis, label="N crossings")
+        figure.tight_layout()
+        results_dir = output_dir / "results"
+        results_dir.mkdir(exist_ok=True)
+        figure.savefig(results_dir / "crossings_heatmap.png", dpi=150)
+        plt.close(figure)
+    return {
+        "axis2_parameter": parameter,
+        "axis2_values": [float(value) for value in values],
+        "powers": powers.tolist(),
+        "n_crossings": rows,
+    }

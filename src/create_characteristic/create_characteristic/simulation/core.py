@@ -212,7 +212,8 @@ def run_grid_point(
                     fraction = (gain_hysteresis - previous_gain) / (gain - previous_gain)
                     crossing_time = float(previous_gain_time + fraction * (t_gain - previous_gain_time))
                     n_gain_crossings += 1
-                    first_crossing_ps = first_crossing_ps or crossing_time
+                    if first_crossing_ps is None:
+                        first_crossing_ps = crossing_time
                     gain_armed = False
                 elif not gain_armed and gain <= -gain_hysteresis:
                     gain_armed = True
