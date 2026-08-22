@@ -24,11 +24,14 @@ from typing import Any
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import BoundaryNorm, ListedColormap
+from matplotlib.patches import Patch
 import numpy as np
 
+from polarism.analysis.condensation import CONDENSATION_PSI_SQ_FLOOR
 from create_characteristic.manifest.io import atomic_write_json, set_manifest_field
 
-DEFAULT_THRESHOLD_CRITERION = 5e-2
+DEFAULT_THRESHOLD_CRITERION = CONDENSATION_PSI_SQ_FLOOR
 
 
 def _load_all_results(run_dir: str) -> list[dict[str, Any]]:
@@ -67,12 +70,34 @@ def _build_2d_arrays(
     return np.array(energies), np.array(separations), psi_map, diverged_mask
 
 
+def _build_gain_arrays(
+    results: list[dict[str, Any]],
+    energies: np.ndarray,
+    separations: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    gain_map = np.full((len(energies), len(separations)), np.nan)
+    class_map = np.full((len(energies), len(separations)), np.nan)
+    energy_index = {value: index for index, value in enumerate(energies)}
+    separation_index = {value: index for index, value in enumerate(separations)}
+    class_values = {"dark": 0.0, "gain_only": 1.0, "latched": 2.0, "spiking": 3.0}
+    for result in results:
+        if result["status"] != "ok":
+            continue
+        ei = energy_index[float(result["pulse_energy"])]
+        si = separation_index[float(result["pulse_separation"])]
+        gain_map[ei, si] = float(result.get("n_gain_crossings", 0))
+        class_map[ei, si] = class_values.get(str(result.get("klass", "dark")), np.nan)
+    return gain_map, class_map
+
+
 def _write_csv(results: list[dict[str, Any]], path: str) -> None:
     fieldnames = [
         "point_index", "energy_index", "sep_index",
         "pulse_energy", "pulse_separation", "total_time",
         "psi_sq_max", "status", "t_psi_sq_max",
         "diverged_at_t", "wall_time_seconds",
+        "n_gain_crossings", "first_crossing_ps", "nR_center_max",
+        "ratio_to_critical", "n_active_max_domain", "gain_check_every", "klass",
     ]
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
@@ -197,6 +222,56 @@ def _write_threshold_map(
     plt.close(fig)
 
 
+def _write_gain_crossings_heatmap(
+    energies: np.ndarray,
+    separations: np.ndarray,
+    gain_map: np.ndarray,
+    out_path: str,
+) -> None:
+    fig, ax = plt.subplots(figsize=(10, 7))
+    maximum = max(1, int(np.nanmax(gain_map)))
+    boundaries = np.arange(-0.5, maximum + 1.5, 1.0)
+    mesh = ax.pcolormesh(
+        *np.meshgrid(separations, energies),
+        gain_map,
+        shading="nearest",
+        cmap="viridis",
+        norm=BoundaryNorm(boundaries, ncolors=256),
+    )
+    fig.colorbar(mesh, ax=ax, label="Gain crossings")
+    try:
+        ax.contour(*np.meshgrid(separations, energies), gain_map >= 1.0, levels=[0.5], colors="white")
+    except ValueError:
+        pass
+    ax.set(xlabel="Pulse separation (ps)", ylabel="Pulse energy", title="Gain-crossing map")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+def _write_class_map(
+    energies: np.ndarray,
+    separations: np.ndarray,
+    class_map: np.ndarray,
+    out_path: str,
+) -> None:
+    labels = ("dark", "gain_only", "latched", "spiking")
+    colors = ("#293241", "#f4a261", "#2a9d8f", "#e63946")
+    fig, ax = plt.subplots(figsize=(10, 7))
+    ax.pcolormesh(
+        *np.meshgrid(separations, energies),
+        class_map,
+        shading="nearest",
+        cmap=ListedColormap(colors),
+        norm=BoundaryNorm(np.arange(-0.5, 4.5, 1.0), ncolors=4),
+    )
+    ax.legend([Patch(color=color) for color in colors], labels, loc="upper right")
+    ax.set(xlabel="Pulse separation (ps)", ylabel="Pulse energy", title="Condensation class map")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def _build_threshold_summary(
     energies: np.ndarray,
     separations: np.ndarray,
@@ -205,6 +280,8 @@ def _build_threshold_summary(
     threshold_criterion: float,
     n_ok: int,
     n_div: int,
+    gain_map: np.ndarray,
+    class_map: np.ndarray,
 ) -> dict[str, Any]:
     above = psi_map >= threshold_criterion
     n_above = int(np.sum(above))
@@ -219,6 +296,15 @@ def _build_threshold_summary(
         else:
             threshold_energies.append(float("nan"))
 
+    gain_thresholds = [
+        float(energies[indices[0]]) if (indices := np.where(gain_map[:, si] >= 1.0)[0]).size else None
+        for si in range(len(separations))
+    ]
+    spiking_bands = []
+    for si in range(len(separations)):
+        indices = np.where(class_map[:, si] == 3.0)[0]
+        spiking_bands.append(None if not indices.size else [float(energies[indices[0]]), float(energies[indices[-1]])])
+    classes = ("dark", "gain_only", "latched", "spiking")
     return {
         "criterion": f"psi_sq_max >= {threshold_criterion}",
         "threshold_criterion": threshold_criterion,
@@ -230,6 +316,9 @@ def _build_threshold_summary(
         "energy_axis": energies.tolist(),
         "separation_axis": separations.tolist(),
         "threshold_energy_per_separation": threshold_energies,
+        "gain_threshold_energy_per_separation": gain_thresholds,
+        "spiking_band_per_separation": spiking_bands,
+        "class_counts": {name: int(np.sum(class_map == index)) for index, name in enumerate(classes)},
     }
 
 
@@ -274,9 +363,18 @@ def main() -> None:
     print(f"  JSON    : {json_path}")
 
     energies, separations, psi_map, diverged_mask = _build_2d_arrays(results)
+    gain_map, class_map = _build_gain_arrays(results, energies, separations)
 
     summary = _build_threshold_summary(
-        energies, separations, psi_map, diverged_mask, threshold_criterion, n_ok, n_div
+        energies,
+        separations,
+        psi_map,
+        diverged_mask,
+        threshold_criterion,
+        n_ok,
+        n_div,
+        gain_map,
+        class_map,
     )
     threshold_path = os.path.join(run_dir, "threshold_summary.json")
     atomic_write_json(threshold_path, summary)
@@ -315,6 +413,21 @@ def main() -> None:
         print(f"  Thr map : {threshold_map_path}")
     except Exception as e:
         print(f"  WARNING: threshold map generation failed: {e}", file=sys.stderr)
+
+    gain_heatmap_path = os.path.join(results_dir, "gain_crossings_heatmap.png")
+    class_map_path = os.path.join(results_dir, "condensation_class_map.png")
+    try:
+        _write_gain_crossings_heatmap(energies, separations, gain_map, gain_heatmap_path)
+        _write_class_map(energies, separations, class_map, class_map_path)
+    except Exception as e:
+        print(f"  WARNING: gain/class map generation failed: {e}", file=sys.stderr)
+    gain_only_count = int(np.sum(class_map == 1.0))
+    if gain_only_count > 0.05 * len(results):
+        print(
+            "WARNING: more than 5% of points are gain_only; gain crossing alone is not "
+            "sufficient for observable condensation.",
+            file=sys.stderr,
+        )
 
     try:
         set_manifest_field(run_dir, "finalize_complete", True)

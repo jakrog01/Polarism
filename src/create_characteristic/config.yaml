@@ -62,9 +62,11 @@ sweep:
   post_pulse_time: 100.0
   adaptive_total_time: true
   scalar_check_every: 100
+  gain_check_every: 10
   early_stop_on_divergence: true
   max_concurrent: 16
 
 output:
   save_per_point_trace: false
   threshold_criterion: 5.0e-2
+  threshold_definition: psi_max

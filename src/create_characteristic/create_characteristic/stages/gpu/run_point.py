@@ -48,6 +48,13 @@ def _result_to_dict(result: Any) -> dict:
         "diverged_at_step": result.diverged_at_step,
         "diverged_at_t": result.diverged_at_t,
         "wall_time_seconds": round(result.wall_time_seconds, 2),
+        "n_gain_crossings": result.n_gain_crossings,
+        "first_crossing_ps": result.first_crossing_ps,
+        "nR_center_max": result.nR_center_max,
+        "ratio_to_critical": result.ratio_to_critical,
+        "n_active_max_domain": result.n_active_max_domain,
+        "gain_check_every": result.gain_check_every,
+        "klass": result.klass,
     }
 
 
@@ -122,6 +129,7 @@ def main() -> None:
         total_time=total_time,
         cfg=cfg,
         scalar_check_every=int(sweep.get("scalar_check_every", 100)),
+        gain_check_every=int(sweep.get("gain_check_every", 10)),
         early_stop_on_divergence=bool(sweep.get("early_stop_on_divergence", True)),
         save_trace=save_trace,
     )
@@ -137,8 +145,10 @@ def main() -> None:
         trace_path = _point_trace_path(run_dir, point_index)
         np.savez_compressed(
             trace_path,
-            time=np.array(result.scalar_times, dtype=np.float64),
+            t_ps=np.array(result.scalar_times, dtype=np.float64),
             psi_sq_max=np.array(result.scalar_psi_sq_max, dtype=np.float64),
+            n_active_center=np.array(result.scalar_n_active_center, dtype=np.float64),
+            gain_loss=np.array(result.scalar_gain_loss, dtype=np.float64),
         )
         print(f"  Trace written:  {trace_path}")
 

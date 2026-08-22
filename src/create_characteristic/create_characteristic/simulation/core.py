@@ -13,6 +13,13 @@ from typing import Any
 
 from tqdm import trange
 
+from polarism.analysis.condensation import (
+    CrossingResult,
+    classify,
+    critical_reservoir_density,
+    gain_loss_signal,
+    validate_sampling,
+)
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine
 from polarism.grid.create_grid import create_grid
@@ -49,6 +56,15 @@ class PointResult:
     wall_time_seconds: float
     scalar_times: list[float] = field(default_factory=list)
     scalar_psi_sq_max: list[float] = field(default_factory=list)
+    scalar_n_active_center: list[float] = field(default_factory=list)
+    scalar_gain_loss: list[float] = field(default_factory=list)
+    n_gain_crossings: int = 0
+    first_crossing_ps: float | None = None
+    nR_center_max: float = 0.0
+    n_active_max_domain: float = 0.0
+    ratio_to_critical: float = 0.0
+    gain_check_every: int = 10
+    klass: str = "dark"
 
 
 def run_grid_point(
@@ -60,6 +76,7 @@ def run_grid_point(
     total_time: float,
     cfg: dict[str, Any],
     scalar_check_every: int = 100,
+    gain_check_every: int = 10,
     early_stop_on_divergence: bool = True,
     save_trace: bool = False,
 ) -> PointResult:
@@ -133,6 +150,7 @@ def run_grid_point(
 
     n_steps = int(sim_cfg.solver.total_time / sim_cfg.solver.dt)
     dt = sim_cfg.solver.dt
+    validate_sampling(float(gain_check_every) * float(dt), float(sim_cfg.laser.sigma_time))
 
     print(
         f"  E={pulse_energy:.1f}  sep={pulse_separation:.1f}ps  "
@@ -143,6 +161,17 @@ def run_grid_point(
     t_psi_sq_max_global = 0.0
     scalar_times: list[float] = []
     scalar_psi_sq_max_vals: list[float] = []
+    scalar_n_active_center: list[float] = []
+    scalar_gain_loss: list[float] = []
+    n_gain_crossings = 0
+    first_crossing_ps: float | None = None
+    n_r_center_max = 0.0
+    n_active_max_domain = 0.0
+    previous_gain: float | None = None
+    previous_gain_time: float | None = None
+    gain_armed = True
+    gain_hysteresis = 0.02 * float(sim_cfg.physics.gamma_C)
+    center_index = xp.unravel_index(xp.argmin(grid.X * grid.X + grid.Y * grid.Y), grid.X.shape)
 
     status = "ok"
     diverged_at_step: int | None = None
@@ -166,6 +195,36 @@ def run_grid_point(
 
             solver.step(potential, P_total, reservoir, bc, state)
 
+            if step > 0 and step % gain_check_every == 0:
+                active = reservoir.get_active_density(reservoir.get_state())
+                n_active_center = float(active[center_index])
+                active_domain_max = float(xp.max(active))
+                t_gain = (step + 1) * dt
+                gain = float(gain_loss_signal(np.array((n_active_center,)), sim_cfg.physics)[0])
+                n_r_center_max = max(n_r_center_max, n_active_center)
+                n_active_max_domain = max(n_active_max_domain, active_domain_max)
+                if previous_gain is None:
+                    if gain >= gain_hysteresis:
+                        n_gain_crossings += 1
+                        first_crossing_ps = t_gain
+                        gain_armed = False
+                elif gain_armed and previous_gain < gain_hysteresis <= gain:
+                    fraction = (gain_hysteresis - previous_gain) / (gain - previous_gain)
+                    crossing_time = float(previous_gain_time + fraction * (t_gain - previous_gain_time))
+                    n_gain_crossings += 1
+                    first_crossing_ps = first_crossing_ps or crossing_time
+                    gain_armed = False
+                elif not gain_armed and gain <= -gain_hysteresis:
+                    gain_armed = True
+                previous_gain = gain
+                previous_gain_time = t_gain
+                if save_trace:
+                    psi_sq_trace = float(xp.max(xp.abs(state.psi) ** 2))
+                    scalar_times.append(t_gain)
+                    scalar_psi_sq_max_vals.append(psi_sq_trace)
+                    scalar_n_active_center.append(n_active_center)
+                    scalar_gain_loss.append(gain)
+
             if step > 0 and step % scalar_check_every == 0:
                 psi_sq_max = float(xp.max(xp.abs(state.psi) ** 2))
                 t_now = (step + 1) * dt
@@ -178,16 +237,10 @@ def run_grid_point(
                         f"  DIVERGED at step={step}, t={t_now:.3f} ps  "
                         f"(E={pulse_energy:.1f}, sep={pulse_separation:.1f})"
                     )
-                    if save_trace:
-                        scalar_times.append(t_now)
-                        scalar_psi_sq_max_vals.append(float("nan"))
                     if early_stop_on_divergence:
                         break
 
                 if status == "ok":
-                    if save_trace:
-                        scalar_times.append(t_now)
-                        scalar_psi_sq_max_vals.append(psi_sq_max)
                     if psi_sq_max > psi_sq_max_global:
                         psi_sq_max_global = psi_sq_max
                         t_psi_sq_max_global = t_now
@@ -209,17 +262,21 @@ def run_grid_point(
                     f"  DIVERGED (final sample) at t={t_final:.3f} ps  "
                     f"(E={pulse_energy:.1f}, sep={pulse_separation:.1f})"
                 )
-                if save_trace:
-                    scalar_times.append(t_final)
-                    scalar_psi_sq_max_vals.append(float("nan"))
             else:
-                if save_trace:
-                    scalar_times.append(t_final)
-                    scalar_psi_sq_max_vals.append(psi_sq_max_final)
                 if psi_sq_max_final > psi_sq_max_global:
                     psi_sq_max_global = psi_sq_max_final
                     t_psi_sq_max_global = t_final
 
+    critical = critical_reservoir_density(sim_cfg.physics)
+    crossings = CrossingResult(
+        n_gain_crossings,
+        () if first_crossing_ps is None else (first_crossing_ps,),
+        n_r_center_max,
+        0.0,
+        first_crossing_ps,
+        n_r_center_max / critical,
+    )
+    verdict = classify(crossings, psi_sq_max_global, 5.0e-2)
     wall_time = time.monotonic() - wall_start
     print(
         f"  Done  E={pulse_energy:.1f}  sep={pulse_separation:.1f}  "
@@ -243,4 +300,13 @@ def run_grid_point(
         wall_time_seconds=wall_time,
         scalar_times=scalar_times,
         scalar_psi_sq_max=scalar_psi_sq_max_vals,
+        scalar_n_active_center=scalar_n_active_center,
+        scalar_gain_loss=scalar_gain_loss,
+        n_gain_crossings=n_gain_crossings,
+        first_crossing_ps=first_crossing_ps,
+        nR_center_max=n_r_center_max,
+        n_active_max_domain=n_active_max_domain,
+        ratio_to_critical=n_r_center_max / critical,
+        gain_check_every=gain_check_every,
+        klass=verdict.klass,
     )
