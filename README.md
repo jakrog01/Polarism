@@ -1,3 +1,5 @@
+> "The test of a first-rate intelligence is the ability to hold two opposed ideas in the mind at the same time, and still retain the ability to function." ~ F. Scott Fitzgerald
+
 # Polarism
 
 High-performance tools for 2-D driven-dissipative Gross-Pitaevskii
