@@ -1,5 +1,9 @@
 # Dot-Response Fit
 
+`dot_response_fit` is a specialized spot-size calibration workflow. It is kept
+separate from the active `create_characteristic`, MNIST classification, and
+general dynamics-and-rendering workflows.
+
 `dot_response_fit` fits the spatial Gaussian pump spot size (`sigma_space`) for
 MNIST pixel pulses by comparing:
 

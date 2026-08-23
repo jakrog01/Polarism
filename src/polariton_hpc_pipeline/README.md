@@ -1,5 +1,13 @@
 # polariton_hpc_pipeline — Pipeline Architecture
 
+`polariton_hpc_pipeline` is the general multi-scenario dynamics and rendering
+workflow. It runs configured polariton scenarios and produces field diagnostics,
+plots, and movies. It is not the ML workflow, the dedicated pump-power scan, or
+the two-dimensional threshold-crossing characteristic workflow. The retained
+`threshold_search` stage is legacy compatibility for older non-sweep configs;
+new campaigns should define their scenario powers directly and use
+`threshold_finder` when a one-dimensional response curve is needed.
+
 ## Entry point
 
 ```bash
@@ -191,7 +199,11 @@ Expanded parameter-sweep names use the same distinction: `_P...` for legacy
 `single_spot_center_E400_sep20` means an integrated pulse dose of `400`, not a
 centre peak amplitude of `400`.
 
-## Threshold Search
+## Legacy Threshold Search
+
+New parameter-sweep campaigns do not submit this stage. It remains only for
+older non-sweep and calibrated probe configurations; it is not a replacement
+for the dedicated `threshold_finder` workflow.
 
 Threshold search is no longer just a single centered-spot proxy by default.
 

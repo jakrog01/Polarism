@@ -5,14 +5,14 @@
 | File | Purpose |
 |------|---------|
 | `job_gpu.sh` | Wrapper for GPU stages. Loads CUDA modules and runs the GPU-stage command. When `ICM_RYSY_NVME=1` is exported by `submit.sh`, it sets `SCRATCH=/scratch/<slurm_job_id>`. |
-| `job_stage.sh` | Wrapper for non-GPU stages on Rysy. No CUDA modules; used for lightweight CPU-side jobs such as `finalize` and `time_response`. |
+| `job_stage.sh` | Wrapper for non-GPU stages on Rysy. No CUDA modules; used for the lightweight `finalize` stage. |
 
 ## Execution flow
 
 ```text
 rysy login node
   -> submit.sh
-  -> sbatch threshold / fit
+  -> optionally sbatch legacy threshold search
   -> sbatch scenario array with afterok dependency
        each task: simulate on NVMe scratch -> render inline -> copy back artifacts
   -> sbatch finalize with afterok dependency
@@ -29,9 +29,9 @@ HDF5 output.
 
 | Stage | Caller | Resources | `ICM_RYSY_NVME` | Scratch usage |
 |-------|--------|-----------|-----------------|---------------|
-| `threshold_search.py` / `fit_dot_size.py` | `_rysy_sbatch` | `gpu:N` | not set | no |
+| `threshold_search.py` (legacy non-sweep mode only) | `_rysy_sbatch` | `gpu:N` | not set | no |
 | `run_scenario.py` | `_rysy_sbatch_nvme` | `gpu:N,nvme:SIZE` | `1` | yes |
-| `finalize.py` / `time_response.py` | `_rysy_sbatch` | CPU only | not set | no |
+| `finalize.py` | `_rysy_sbatch` | CPU only | not set | no |
 
 `job_gpu.sh` sets `SCRATCH=/scratch/<slurm_job_id>` only when `ICM_RYSY_NVME=1`.
 It accepts both `SLURM_JOB_ID` and `SLURM_JOBID` and exits with an error if

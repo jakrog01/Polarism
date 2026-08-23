@@ -8,6 +8,12 @@ This workflow encodes downsampled MNIST digits into a 7x7 lattice of pulsed
 Gaussian pumps and records dynamic condensate and reservoir traces for a
 logistic-regression readout.
 
+It is the ML workflow: scenario YAML files define encoding, lattice geometry,
+pulse parameters, and readout settings, then the pipeline evaluates
+classification. It does not run a threshold-search stage. Use
+`threshold_finder` for pump-power response scans and `create_characteristic`
+for two-dimensional threshold-crossing maps.
+
 The Polarism physics configuration is shared through `polarism_base.yaml`.
 Scenario YAML files provide the experiment-level settings: data selection, pump
 geometry, pulse timing, encoder range, readout masks, classifier settings, and
@@ -49,12 +55,9 @@ against the analytic spatial Gaussian integral. The accepted threshold is
 submit it directly. Either add an explicit `GridLatticeGeometry` sigma/dx guard
 or refine the grid for the affected scenario and estimate the FFT cost increase.
 
-Each campaign scenario is submitted as three dependent stages:
+Each campaign scenario is submitted as two dependent stages:
 
-- `threshold`: CPU-only analytic isolated-spot scan that writes
-  `spike_threshold.json`.
-- `run`: GPU full MNIST run using `final_power_max` from that scenario's own
-  threshold artifact.
+- `run`: GPU full MNIST run using `encoding.power_max` from its scenario YAML.
 - `finalize`: CPU-only ablation readout that writes `ablation_report.json` and
   refreshes `campaign_ablation_summary.json`.
 
@@ -64,15 +67,8 @@ replace the example cluster values and set any `SNN_MIX_*` resource overrides.
 
 The baseline scenario is declared in the manifest as `baseline_scenario_id`.
 For `pitch_sigma_sweep`, it is `pitch12_sigma2_baseline`. It is used only as
-the reporting reference; it no longer defines calibrated powers for other
-variants.
-
-```text
-run encoding.power_max = scenario spike_threshold.final_power_max
-```
-
-The submitter runs scenarios sequentially. Threshold evaluation for scenario
-`N+1` depends on successful finalize completion for scenario `N`.
+the reporting reference. The submitter runs scenarios sequentially: the run
+for scenario `N+1` depends on successful finalize completion for scenario `N`.
 
 Submit the campaign from the workflow directory with:
 
@@ -81,29 +77,8 @@ cd src/mnist_digits_polariton_snn_dynamic
 bash cluster/submit_campaign.sh --dry-run scenarios/pitch_sigma_sweep/manifest.yaml
 ```
 
-Pass `--with-calibrate` to additionally run the legacy GPU calibration between
-threshold and run; that run intentionally uses `calibration.json` instead.
-
-## Threshold stage
-
-The threshold is the geometric centre of the widest power interval maximizing
-the number of upward crossings of `R*nR = gamma_C`. With absent active and
-inactive reservoir diffusion, the quadratic-double reservoir equations are
-pointwise ODEs, so the central isolated-spot calculation is exact until
-condensation. The default `pump_only` calculation omits condensate depletion,
-making its active reservoir density an upper bound after a condensate appears.
-
-Run it locally with:
-
-```bash
-PYTHONPATH=. .venv/bin/python -m mnist_digits_polariton_snn_dynamic.scenarios.find_threshold \
-  --config config.yaml --output-dir /tmp/mnist-threshold
-```
-
-It writes `spike_threshold.json`, `spike_threshold_curve.csv`, and
-`spike_threshold.png`. The configured `encoding.power_max: 800.0` is deep in
-continuous condensation (`N=1`), so it does not preserve distinct pulse-driven
-spikes. The threshold artifact selects the spiking band instead.
+Pass `--with-calibrate` only when an explicit GPU calibration is wanted; the
+run then uses `calibration.json` instead of its configured `power_max`.
 
 
 ## Ablation Output

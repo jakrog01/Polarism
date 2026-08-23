@@ -67,6 +67,6 @@ sweep:
   max_concurrent: 16
 
 output:
-  save_per_point_trace: false
+  save_per_point_trace: true
   threshold_criterion: 5.0e-2
   threshold_definition: psi_max

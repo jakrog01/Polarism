@@ -46,6 +46,22 @@ run.py                        Compatibility wrapper for the `polarism` CLI
 pyproject.toml                Project metadata and dependency groups
 ```
 
+## Workflow Boundaries
+
+Each workflow has one research purpose. Do not use one workflow as a substitute
+for another.
+
+| Workflow | Purpose | Primary outputs | Excludes |
+| --- | --- | --- | --- |
+| `create_characteristic` | Two-dimensional pulse-energy/pulse-separation sweep of threshold-crossing counts | Crossing heatmap and marked per-point traces | Power calibration, scenario movies, classification |
+| `threshold_finder` | One-dimensional pump-power response curve for one fixed Gaussian pump protocol | `max|ψ|²` versus pump power and a threshold estimate | Two-dimensional characteristics, general scenario studies |
+| `mnist_digits_polariton_snn_dynamic` | Encode MNIST inputs into a pump lattice and evaluate ML classification | Features, classifications, and ablation reports | Threshold search and generic visualization campaigns |
+| `polariton_hpc_pipeline` | General multi-scenario polariton studies with rendered field output | Scenario diagnostics, plots, and movies | ML classification and characteristic-map production; its threshold-search mode is legacy compatibility only |
+| `dot_response_fit` | Specialized fit of pump-spot size to a reference response | Spot-size fit and diagnostic comparison | General production studies |
+
+`dot_response_fit` is a specialized calibration workflow and is not part of the
+active characteristic, ML, or general-visualization paths.
+
 ## Quick Local Setup
 
 Use the project virtual environment. The global Python on the target systems is

@@ -1,6 +1,14 @@
 # threshold_finder
 
-Sweeps laser pump power P from `P_min` to `P_max` in steps of `P_step`, runs one full GPE+reservoir simulation per power point, and collects `psi_sq_max = max(|ψ|²)` for each P.
+`threshold_finder` is the one-dimensional pump-power response workflow. It
+sweeps a fixed Gaussian pump protocol from `P_min` to `P_max`, runs one full
+GPE-plus-reservoir simulation per power point, and collects
+`psi_sq_max = max(|ψ|²)` for each P.
+
+It is the dedicated power-threshold workflow. For a two-dimensional
+energy/separation map of threshold-crossing counts, use `create_characteristic`.
+For general multi-scenario simulations and rendered movies, use
+`polariton_hpc_pipeline`.
 
 ## Pipeline stages
 
@@ -38,7 +46,7 @@ that directory are ignored by Git.
 | `global.physics` | standard constants | `hbar`, `m_eff`, `gamma_R`, `gamma_C`, `R`, … |
 | `laser` | `sigma_space`, `sigma_time`, `pulse_separation`, `cutoff_sigma`, `n_pulses` | Single Gaussian pump laser (shared across all P values) |
 | `laser` | `power_definition` | `peak_amplitude` or `pulse_energy`; use `pulse_energy` for integrated per-pulse dose sweeps |
-| `sweep` | `P_min`, `P_max`, `P_step` | Power range and step |
+| `sweep` | `P_min`, `P_max`, `P_step` | Pump-power range and step; `variable` must be `P` |
 | `sweep` | `scalar_check_every` | Record psi_sq_max every N steps (≥ 1) |
 | `sweep` | `early_stop_on_divergence` | Terminate task immediately on NaN/Inf |
 | `sweep` | `max_concurrent` | Max simultaneous GPU array tasks |

@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 from tqdm import trange
 
 from polarism.analysis.condensation import (
@@ -60,6 +61,10 @@ class PointResult:
     scalar_gain_loss: list[float] = field(default_factory=list)
     n_gain_crossings: int = 0
     first_crossing_ps: float | None = None
+    n_psi_sq_threshold_crossings: int = 0
+    first_psi_sq_threshold_crossing_ps: float | None = None
+    psi_sq_threshold_crossing_times: list[float] = field(default_factory=list)
+    psi_sq_threshold_crossing_directions: list[str] = field(default_factory=list)
     nR_center_max: float = 0.0
     n_active_max_domain: float = 0.0
     ratio_to_critical: float = 0.0
@@ -103,7 +108,7 @@ def run_grid_point(
     early_stop_on_divergence : bool
         Terminate the loop immediately on NaN/Inf detection.
     save_trace : bool
-        Accumulate the full per-step scalar trace in the result.
+        Accumulate the scalar time trace at ``gain_check_every`` intervals.
 
     Returns
     -------
@@ -165,18 +170,39 @@ def run_grid_point(
     scalar_gain_loss: list[float] = []
     n_gain_crossings = 0
     first_crossing_ps: float | None = None
+    n_psi_sq_threshold_crossings = 0
+    first_psi_sq_threshold_crossing_ps: float | None = None
+    psi_sq_threshold_crossing_times: list[float] = []
+    psi_sq_threshold_crossing_directions: list[str] = []
     n_r_center_max = 0.0
     n_active_max_domain = 0.0
     previous_gain: float | None = None
     previous_gain_time: float | None = None
+    previous_psi_sq_above_threshold: bool | None = None
+    last_threshold_sample_time: float | None = None
     gain_armed = True
     gain_hysteresis = 0.02 * float(sim_cfg.physics.gamma_C)
+    threshold_criterion = float(
+        cfg.get("output", {}).get("threshold_criterion", 5.0e-2)
+    )
     center_index = xp.unravel_index(xp.argmin(grid.X * grid.X + grid.Y * grid.Y), grid.X.shape)
 
     status = "ok"
     diverged_at_step: int | None = None
     diverged_at_t: float | None = None
     last_step = 0
+
+    if save_trace:
+        active = reservoir.get_active_density(reservoir.get_state())
+        n_active_center = float(active[center_index])
+        psi_sq_initial = float(xp.max(xp.abs(state.psi) ** 2))
+        gain = float(
+            gain_loss_signal(np.array((n_active_center,)), sim_cfg.physics)[0]
+        )
+        scalar_times.append(0.0)
+        scalar_psi_sq_max_vals.append(psi_sq_initial)
+        scalar_n_active_center.append(n_active_center)
+        scalar_gain_loss.append(gain)
 
     pbar_desc = f"  E={pulse_energy:.0f} sep={pulse_separation:.0f}"
     with trange(n_steps, desc=pbar_desc, dynamic_ncols=True) as pbar:
@@ -219,8 +245,25 @@ def run_grid_point(
                     gain_armed = True
                 previous_gain = gain
                 previous_gain_time = t_gain
+                psi_sq_trace = float(xp.max(xp.abs(state.psi) ** 2))
+                psi_sq_above_threshold = psi_sq_trace >= threshold_criterion
+                if previous_psi_sq_above_threshold is None:
+                    if psi_sq_above_threshold:
+                        n_psi_sq_threshold_crossings += 1
+                        first_psi_sq_threshold_crossing_ps = t_gain
+                        psi_sq_threshold_crossing_times.append(t_gain)
+                        psi_sq_threshold_crossing_directions.append("up")
+                elif psi_sq_above_threshold != previous_psi_sq_above_threshold:
+                    n_psi_sq_threshold_crossings += 1
+                    if first_psi_sq_threshold_crossing_ps is None:
+                        first_psi_sq_threshold_crossing_ps = t_gain
+                    psi_sq_threshold_crossing_times.append(t_gain)
+                    psi_sq_threshold_crossing_directions.append(
+                        "up" if psi_sq_above_threshold else "down"
+                    )
+                previous_psi_sq_above_threshold = psi_sq_above_threshold
+                last_threshold_sample_time = t_gain
                 if save_trace:
-                    psi_sq_trace = float(xp.max(xp.abs(state.psi) ** 2))
                     scalar_times.append(t_gain)
                     scalar_psi_sq_max_vals.append(psi_sq_trace)
                     scalar_n_active_center.append(n_active_center)
@@ -252,7 +295,10 @@ def run_grid_point(
 
     if status == "ok" and n_steps > 0:
         t_final = n_steps * dt
-        already_sampled = scalar_times and scalar_times[-1] >= t_final - 0.5 * dt
+        already_sampled = (
+            last_threshold_sample_time is not None
+            and last_threshold_sample_time >= t_final - 0.5 * dt
+        )
         if not already_sampled:
             psi_sq_max_final = float(xp.max(xp.abs(state.psi) ** 2))
             if math.isnan(psi_sq_max_final) or math.isinf(psi_sq_max_final):
@@ -267,6 +313,36 @@ def run_grid_point(
                 if psi_sq_max_final > psi_sq_max_global:
                     psi_sq_max_global = psi_sq_max_final
                     t_psi_sq_max_global = t_final
+                psi_sq_above_threshold = psi_sq_max_final >= threshold_criterion
+                if previous_psi_sq_above_threshold is None:
+                    if psi_sq_above_threshold:
+                        n_psi_sq_threshold_crossings += 1
+                        first_psi_sq_threshold_crossing_ps = t_final
+                        psi_sq_threshold_crossing_times.append(t_final)
+                        psi_sq_threshold_crossing_directions.append("up")
+                elif psi_sq_above_threshold != previous_psi_sq_above_threshold:
+                    n_psi_sq_threshold_crossings += 1
+                    if first_psi_sq_threshold_crossing_ps is None:
+                        first_psi_sq_threshold_crossing_ps = t_final
+                    psi_sq_threshold_crossing_times.append(t_final)
+                    psi_sq_threshold_crossing_directions.append(
+                        "up" if psi_sq_above_threshold else "down"
+                    )
+                previous_psi_sq_above_threshold = psi_sq_above_threshold
+                if save_trace and (
+                    not scalar_times or scalar_times[-1] < t_final - 0.5 * dt
+                ):
+                    active = reservoir.get_active_density(reservoir.get_state())
+                    n_active_center = float(active[center_index])
+                    gain = float(
+                        gain_loss_signal(
+                            np.array((n_active_center,)), sim_cfg.physics
+                        )[0]
+                    )
+                    scalar_times.append(t_final)
+                    scalar_psi_sq_max_vals.append(psi_sq_max_final)
+                    scalar_n_active_center.append(n_active_center)
+                    scalar_gain_loss.append(gain)
 
     critical = critical_reservoir_density(sim_cfg.physics)
     crossings = CrossingResult(
@@ -305,6 +381,10 @@ def run_grid_point(
         scalar_gain_loss=scalar_gain_loss,
         n_gain_crossings=n_gain_crossings,
         first_crossing_ps=first_crossing_ps,
+        n_psi_sq_threshold_crossings=n_psi_sq_threshold_crossings,
+        first_psi_sq_threshold_crossing_ps=first_psi_sq_threshold_crossing_ps,
+        psi_sq_threshold_crossing_times=psi_sq_threshold_crossing_times,
+        psi_sq_threshold_crossing_directions=psi_sq_threshold_crossing_directions,
         nR_center_max=n_r_center_max,
         n_active_max_domain=n_active_max_domain,
         ratio_to_critical=n_r_center_max / critical,

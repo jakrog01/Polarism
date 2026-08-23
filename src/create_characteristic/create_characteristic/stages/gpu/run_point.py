@@ -14,7 +14,12 @@ import os
 import sys
 from typing import Any
 
+import matplotlib
 import numpy as np
+from matplotlib.lines import Line2D
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import ComputeEngineParameters
@@ -29,7 +34,48 @@ from create_characteristic.simulation.core import run_grid_point
 
 
 def _point_trace_path(run_dir: str, point_index: int) -> str:
-    return os.path.join(run_dir, "points", f"point_{point_index:06d}_trace.npz")
+    return os.path.join(run_dir, "results", "traces", f"point_{point_index:06d}_trace.png")
+
+
+def _write_trace_plot(result: Any, threshold_criterion: float, path: str) -> None:
+    times = np.asarray(result.scalar_times, dtype=np.float64)
+    psi_sq_max = np.asarray(result.scalar_psi_sq_max, dtype=np.float64)
+    n_active_center = np.asarray(result.scalar_n_active_center, dtype=np.float64)
+    gain_loss = np.asarray(result.scalar_gain_loss, dtype=np.float64)
+    crossing_times = np.asarray(result.psi_sq_threshold_crossing_times, dtype=np.float64)
+    crossing_directions = tuple(result.psi_sq_threshold_crossing_directions)
+
+    fig, axes = plt.subplots(3, 1, figsize=(11, 8), sharex=True, layout="constrained")
+    axes[0].plot(times, psi_sq_max, color="tab:blue", linewidth=1.2, label=r"$\max |\psi|^2$")
+    axes[0].axhline(threshold_criterion, color="crimson", linewidth=1.2, linestyle="--", label="threshold")
+    for crossing_time, direction in zip(crossing_times, crossing_directions, strict=True):
+        color = "tab:green" if direction == "up" else "tab:orange"
+        marker = "^" if direction == "up" else "v"
+        value = float(np.interp(crossing_time, times, psi_sq_max))
+        axes[0].scatter(crossing_time, value, color=color, marker=marker, s=42, zorder=3)
+        axes[0].axvline(crossing_time, color=color, alpha=0.3, linewidth=0.8)
+    axes[0].set(ylabel=r"$\max |\psi|^2$", title=(
+        f"E={result.pulse_energy:.4g}, separation={result.pulse_separation:.4g} ps, "
+        f"threshold crossings={result.n_psi_sq_threshold_crossings}"
+    ))
+    handles, _ = axes[0].get_legend_handles_labels()
+    handles.extend((
+        Line2D((), (), color="tab:green", marker="^", linestyle="None", label="upward crossing"),
+        Line2D((), (), color="tab:orange", marker="v", linestyle="None", label="downward crossing"),
+    ))
+    axes[0].legend(handles=handles, loc="upper right")
+
+    axes[1].plot(times, n_active_center, color="tab:purple", linewidth=1.2)
+    axes[1].set(ylabel=r"$n_A(0, 0)$")
+
+    axes[2].plot(times, gain_loss, color="tab:gray", linewidth=1.2)
+    axes[2].axhline(0.0, color="black", linewidth=0.8, linestyle="--")
+    axes[2].set(xlabel="Time (ps)", ylabel="Gain/loss")
+
+    for axis in axes:
+        axis.grid(alpha=0.25)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
 
 
 def _result_to_dict(result: Any) -> dict:
@@ -50,6 +96,10 @@ def _result_to_dict(result: Any) -> dict:
         "wall_time_seconds": round(result.wall_time_seconds, 2),
         "n_gain_crossings": result.n_gain_crossings,
         "first_crossing_ps": result.first_crossing_ps,
+        "n_psi_sq_threshold_crossings": result.n_psi_sq_threshold_crossings,
+        "first_psi_sq_threshold_crossing_ps": result.first_psi_sq_threshold_crossing_ps,
+        "psi_sq_threshold_crossing_times": result.psi_sq_threshold_crossing_times,
+        "psi_sq_threshold_crossing_directions": result.psi_sq_threshold_crossing_directions,
         "nR_center_max": result.nR_center_max,
         "ratio_to_critical": result.ratio_to_critical,
         "n_active_max_domain": result.n_active_max_domain,
@@ -143,14 +193,13 @@ def main() -> None:
 
     if save_trace and result.scalar_times:
         trace_path = _point_trace_path(run_dir, point_index)
-        np.savez_compressed(
+        os.makedirs(os.path.dirname(trace_path), exist_ok=True)
+        _write_trace_plot(
+            result,
+            float(cfg.get("output", {}).get("threshold_criterion", 5.0e-2)),
             trace_path,
-            t_ps=np.array(result.scalar_times, dtype=np.float64),
-            psi_sq_max=np.array(result.scalar_psi_sq_max, dtype=np.float64),
-            n_active_center=np.array(result.scalar_n_active_center, dtype=np.float64),
-            gain_loss=np.array(result.scalar_gain_loss, dtype=np.float64),
         )
-        print(f"  Trace written:  {trace_path}")
+        print(f"  Trace plot written: {trace_path}")
 
     print("\n  Task complete.")
     sys.exit(0)

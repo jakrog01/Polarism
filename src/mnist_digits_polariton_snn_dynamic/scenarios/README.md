@@ -20,22 +20,18 @@ account for the increased FFT cost.
 
 ## Campaign Stages
 
-`cluster/submit_campaign.sh` submits three jobs per scenario:
+`cluster/submit_campaign.sh` submits two jobs per scenario:
 
-- `<id>_threshold`: CPU analytic threshold scan, writes `spike_threshold.json`.
-- `<id>_run`: GPU full run, depends on its own threshold and writes raw traces
-  and classifier outputs.
+- `<id>_run`: GPU full run using `encoding.power_max` from its scenario YAML;
+  it writes raw traces and classifier outputs.
 - `<id>_finalize`: CPU-only ablation, depends on the full run, writes
   `ablation_report.json`.
 
-The threshold stage maximizes pulse-separated gain/loss crossings and writes
-the scenario-local `final_power_max` used by the full run. The manifest
-`baseline_scenario_id` remains the reporting reference only. Pass
-`--with-calibrate` to submit the legacy GPU calibration between threshold and
-run.
+The manifest `baseline_scenario_id` remains the reporting reference only. Pass
+`--with-calibrate` to submit an explicit GPU calibration before the run.
 
-The submitter runs scenarios sequentially. Later threshold scans depend on the
-finalize job from the immediately preceding scenario.
+The submitter runs scenarios sequentially. Later runs depend on the finalize
+job from the immediately preceding scenario.
 
 Submit a campaign from the package directory with:
 

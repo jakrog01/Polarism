@@ -26,7 +26,7 @@ def main() -> None:
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--scenario-id", required=True)
     parser.add_argument("--campaign-output-dir", required=True)
-    parser.add_argument("--power-source", choices=("threshold", "calibration", "config"), default="threshold")
+    parser.add_argument("--power-source", choices=("calibration", "config"), default="config")
     parser.add_argument("--use-calibrated-power", action="store_true")
     args = parser.parse_args()
     run_scenario(
@@ -42,7 +42,7 @@ def run_scenario(
     manifest_path: str,
     scenario_id: str,
     campaign_output_dir: str,
-    power_source: str = "threshold",
+    power_source: str = "config",
     use_calibrated_power: bool = False,
 ) -> None:
     """Run one scenario from a manifest."""
@@ -55,11 +55,11 @@ def run_scenario(
     if use_calibrated_power:
         print("DeprecationWarning: --use-calibrated-power is deprecated; use --power-source calibration", file=sys.stderr, flush=True)
         power_source = "calibration"
-    if power_source not in {"threshold", "calibration", "config"}:
+    if power_source not in {"calibration", "config"}:
         raise ValueError(f"Unsupported power_source: {power_source!r}")
     power_max = None
     if power_source != "config":
-        artifact_name = "spike_threshold.json" if power_source == "threshold" else "calibration.json"
+        artifact_name = "calibration.json"
         scenario_calibration = output_dir / artifact_name
         skipped, reason = is_scenario_skipped(str(scenario_calibration)) if power_source == "calibration" else (False, None)
         if skipped:
