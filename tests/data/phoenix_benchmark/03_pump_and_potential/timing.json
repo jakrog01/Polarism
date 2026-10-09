@@ -1,0 +1,8 @@
+{
+  "case": "03_pump_and_potential",
+  "elapsed_s": 90.3782338609999,
+  "t_end_ps": 1000.0,
+  "tstep_ps": 0.001,
+  "precision": "fp64",
+  "device": "GPU"
+}
