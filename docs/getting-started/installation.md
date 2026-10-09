@@ -2,7 +2,15 @@
 
 This project already carries the documentation dependencies needed to build the site. A single Python environment is enough for development, testing, and docs generation.
 
-## Local setup
+## Install from GitHub
+
+```bash
+pip install "git+https://github.com/jakrog01/Polarism.git"
+```
+
+Pin a release with `@v0.0.9` at the end of the URL.
+
+## Development setup
 
 ```bash
 python -m venv .venv

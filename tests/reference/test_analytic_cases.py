@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from scipy.linalg import expm
 
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
@@ -254,7 +253,9 @@ def test_double_reservoir_zero_dimensional_closed_form() -> None:
     n_steps = 500
     for _ in range(n_steps):
         transient.step(dt, zero_psi, pump)
-    expected = stationary + expm(matrix * (dt * n_steps)) @ (initial - stationary)
+    eigenvalues, eigenvectors = np.linalg.eig(matrix * (dt * n_steps))
+    propagator = (eigenvectors * np.exp(eigenvalues)) @ np.linalg.inv(eigenvectors)
+    expected = stationary + propagator.real @ (initial - stationary)
     actual = np.array([transient.nA[0, 0], transient.nI[0, 0]])
     transient_error = float(np.linalg.norm(actual - expected) / np.linalg.norm(expected))
     measured = max(stationary_error, transient_error)

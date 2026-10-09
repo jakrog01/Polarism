@@ -13,7 +13,7 @@ from tests.unit.conftest import small_config
 
 
 def test_cli_help() -> None:
-    completed = subprocess.run([sys.executable, "run.py", "--help"], capture_output=True, text=True, timeout=30)
+    completed = subprocess.run([sys.executable, "-c", "from polarism.cli import main; main()", "--help"], capture_output=True, text=True, timeout=30)
     assert completed.returncode == 0
     assert any(token in completed.stdout for token in ("Usage:", "usage:", "--help"))
 

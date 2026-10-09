@@ -10,6 +10,7 @@ The repository is organized around one clear boundary:
 - `polarism/` is the physics engine: model configuration, grids, lasers,
   reservoirs, solvers, state evolution, and result storage.
 - `tests/` contains the validation layer for the engine and solver behavior.
+- `examples/` contains runnable usage examples.
 
 The full documentation site is in `docs/` and is configured by `mkdocs.yml`.
 
@@ -30,13 +31,22 @@ polarism/                     Physics engine and reusable Python package
 tests/                        CPU, compliance, and benchmark-style tests
 
 docs/                         MkDocs Material documentation site
-run.py                        Compatibility wrapper for the `polarism` CLI
+examples/                     Runnable usage examples
 pyproject.toml                Project metadata and dependency groups
 ```
 
+## Installation
+
+```bash
+pip install "git+https://github.com/jakrog01/Polarism.git"
+```
+
+GPU solvers additionally need a CuPy build matching the local CUDA toolkit; see
+[`docs/getting-started/installation.md`](docs/getting-started/installation.md).
+
 ## Quick Local Setup
 
-Use the project virtual environment. The global Python on the target systems is
+For development, use the project virtual environment. The global Python on the target systems is
 not expected to contain the required packages.
 
 ```bash
@@ -67,6 +77,8 @@ For the complete CPU/GPU validation, including the Phoenix reference matrix:
 Run this command as a single process with exclusive access to the GPU.
 
 ## Minimal API Example
+
+The same script is available as [`examples/basic_run.py`](examples/basic_run.py).
 
 ```python
 import polarism as ps

@@ -64,8 +64,8 @@ polarism \
   --result.save-hdf5
 ```
 
-Use `polarism --help` to inspect the full set of generated options. The
-repository-root `run.py` remains as a compatibility wrapper for this command.
+Use `polarism --help` to inspect the full set of generated options. A runnable
+Python version of this setup is in `examples/basic_run.py`.
 
 ## What this example does
 
