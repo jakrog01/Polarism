@@ -24,11 +24,6 @@ PREAMBLE_1D = """
     const int j = tid % nx;
 """
 
-COMBINE_PREAMBLE_1D = """
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= N) return;
-"""
-
 _NEUMANN_NEIGHBORS = """
     const int up = (i > 0)    ? tid - nx : tid + nx;
     const int dn = (i < ny-1) ? tid + nx : tid - nx;
@@ -91,7 +86,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs(
 """
 
 _KERNEL_FUSED_STAGE_RHS_TEMPLATE = r"""
-extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs(
+extern "C" __global__ {LAUNCH_BOUNDS} void {KERNEL_NAME}(
     const {REAL}* __restrict__ psi0,
     const {REAL}* __restrict__ k_psi,
     const {REAL}* __restrict__ nR0,
@@ -99,10 +94,12 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs(
     const {REAL}* __restrict__ V_re,
     const {REAL}* __restrict__ V_im,
     const {REAL}* __restrict__ pump,
-    {REAL}* __restrict__ dpsi,
-    {REAL}* __restrict__ dnR_dt,
+    {REAL}* __restrict__ {PSI_OUTPUT},
+    {REAL}* __restrict__ {NR_OUTPUT},
+    {EXTRA_ARGUMENTS}
     const int nx, const int ny,
     const {REAL} c_dt,
+    {DT6_ARGUMENT}
     const {REAL} inv_dx2, const {REAL} inv_dy2,
     const {REAL} neg_hbar2_over_2m,
     const {REAL} inv_hbar,
@@ -142,8 +139,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs(
     const {REAL} hbar_over_2m = -neg_hbar2_over_2m * inv_hbar;
     const {REAL} relax = kinetic_relaxation_eta * nR_val * hbar_over_2m;
 
-    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre + relax * lap_re;
-    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim + relax * lap_im;
+    {PSI_EPILOGUE}
 
     const {REAL} nR_up = nR0[up] + c_dt * k_nR[up];
     const {REAL} nR_dn = nR0[dn] + c_dt * k_nR[dn];
@@ -151,29 +147,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs(
     const {REAL} nR_rt = nR0[rt] + c_dt * k_nR[rt];
     const {REAL} lap_nR = (nR_dn - 2*nR_val + nR_up) * inv_dy2
                         + (nR_rt - 2*nR_val + nR_lt) * inv_dx2;
-    dnR_dt[tid] = pump[tid] - (gamma_R + R_cond * rho) * nR_val + diff_R * lap_nR;
-}}
-"""
-
-_KERNEL_COMBINE = r"""
-extern "C" __global__ {LAUNCH_BOUNDS} void rk4_combine(
-    const {REAL}* __restrict__ psi0,
-    const {REAL}* __restrict__ k1p, const {REAL}* __restrict__ k2p,
-    const {REAL}* __restrict__ k3p, const {REAL}* __restrict__ k4p,
-    const {REAL}* __restrict__ nR0,
-    const {REAL}* __restrict__ k1n, const {REAL}* __restrict__ k2n,
-    const {REAL}* __restrict__ k3n, const {REAL}* __restrict__ k4n,
-    {REAL}* __restrict__ psi_out,
-    {REAL}* __restrict__ nR_out,
-    const {REAL} dt6,
-    const int nx, const int ny,
-    const int N
-) {{
-    {COMBINE_PREAMBLE}
-    psi_out[2*tid]   = psi0[2*tid]   + dt6 * (k1p[2*tid]   + 2*k2p[2*tid]   + 2*k3p[2*tid]   + k4p[2*tid]);
-    psi_out[2*tid+1] = psi0[2*tid+1] + dt6 * (k1p[2*tid+1] + 2*k2p[2*tid+1] + 2*k3p[2*tid+1] + k4p[2*tid+1]);
-    {REAL} nR_new = nR0[tid] + dt6 * (k1n[tid] + 2*k2n[tid] + 2*k3n[tid] + k4n[tid]);
-    nR_out[tid] = (nR_new > 0) ? nR_new : 0;
+    {RESERVOIR_EPILOGUE}
 }}
 """
 
@@ -234,7 +208,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_double(
 """
 
 _KERNEL_FUSED_STAGE_RHS_DOUBLE_TEMPLATE = r"""
-extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_double(
+extern "C" __global__ {LAUNCH_BOUNDS} void {KERNEL_NAME}(
     const {REAL}* __restrict__ psi0,
     const {REAL}* __restrict__ k_psi,
     const {REAL}* __restrict__ nA0,
@@ -244,11 +218,13 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_double(
     const {REAL}* __restrict__ V_re,
     const {REAL}* __restrict__ V_im,
     const {REAL}* __restrict__ pump,
-    {REAL}* __restrict__ dpsi,
-    {REAL}* __restrict__ dnA_dt,
-    {REAL}* __restrict__ dnI_dt,
+    {REAL}* __restrict__ {PSI_OUTPUT},
+    {REAL}* __restrict__ {NA_OUTPUT},
+    {REAL}* __restrict__ {NI_OUTPUT},
+    {EXTRA_ARGUMENTS}
     const int nx, const int ny,
     const {REAL} c_dt,
+    {DT6_ARGUMENT}
     const {REAL} inv_dx2, const {REAL} inv_dy2,
     const {REAL} neg_hbar2_over_2m,
     const {REAL} inv_hbar,
@@ -290,8 +266,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_double(
     const {REAL} hbar_over_2m = -neg_hbar2_over_2m * inv_hbar;
     const {REAL} relax = kinetic_relaxation_eta * nA_val * hbar_over_2m;
 
-    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre + relax * lap_re;
-    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim + relax * lap_im;
+    {PSI_EPILOGUE}
 
     const {REAL} nI_up = nI0[up] + c_dt * k_nI[up];
     const {REAL} nI_dn = nI0[dn] + c_dt * k_nI[dn];
@@ -307,36 +282,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_double(
     const {REAL} lap_nA = (nA_dn - 2*nA_val + nA_up) * inv_dy2
                         + (nA_rt - 2*nA_val + nA_lt) * inv_dx2;
 
-    dnI_dt[tid] = pump[tid] - (gamma_I + R_IA) * nI_val + R_AI * nA_val + diff_I * lap_nI;
-    dnA_dt[tid] = R_IA * nI_val - (gamma_A + R_AI + R_cond * rho) * nA_val + diff_A * lap_nA;
-}}
-"""
-
-_KERNEL_COMBINE_DOUBLE = r"""
-extern "C" __global__ {LAUNCH_BOUNDS} void rk4_combine_double(
-    const {REAL}* __restrict__ psi0,
-    const {REAL}* __restrict__ k1p, const {REAL}* __restrict__ k2p,
-    const {REAL}* __restrict__ k3p, const {REAL}* __restrict__ k4p,
-    const {REAL}* __restrict__ nA0,
-    const {REAL}* __restrict__ k1a, const {REAL}* __restrict__ k2a,
-    const {REAL}* __restrict__ k3a, const {REAL}* __restrict__ k4a,
-    const {REAL}* __restrict__ nI0,
-    const {REAL}* __restrict__ k1i, const {REAL}* __restrict__ k2i,
-    const {REAL}* __restrict__ k3i, const {REAL}* __restrict__ k4i,
-    {REAL}* __restrict__ psi_out,
-    {REAL}* __restrict__ nA_out,
-    {REAL}* __restrict__ nI_out,
-    const {REAL} dt6,
-    const int nx, const int ny,
-    const int N
-) {{
-    {COMBINE_PREAMBLE}
-    psi_out[2*tid]   = psi0[2*tid]   + dt6 * (k1p[2*tid]   + 2*k2p[2*tid]   + 2*k3p[2*tid]   + k4p[2*tid]);
-    psi_out[2*tid+1] = psi0[2*tid+1] + dt6 * (k1p[2*tid+1] + 2*k2p[2*tid+1] + 2*k3p[2*tid+1] + k4p[2*tid+1]);
-    {REAL} nA_new = nA0[tid] + dt6 * (k1a[tid] + 2*k2a[tid] + 2*k3a[tid] + k4a[tid]);
-    nA_out[tid] = (nA_new > 0) ? nA_new : 0;
-    {REAL} nI_new = nI0[tid] + dt6 * (k1i[tid] + 2*k2i[tid] + 2*k3i[tid] + k4i[tid]);
-    nI_out[tid] = (nI_new > 0) ? nI_new : 0;
+    {RESERVOIR_EPILOGUE}
 }}
 """
 
@@ -397,7 +343,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_qdouble(
 """
 
 _KERNEL_FUSED_STAGE_RHS_QDOUBLE_TEMPLATE = r"""
-extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_qdouble(
+extern "C" __global__ {LAUNCH_BOUNDS} void {KERNEL_NAME}(
     const {REAL}* __restrict__ psi0,
     const {REAL}* __restrict__ k_psi,
     const {REAL}* __restrict__ nR0,
@@ -407,11 +353,13 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_qdouble(
     const {REAL}* __restrict__ V_re,
     const {REAL}* __restrict__ V_im,
     const {REAL}* __restrict__ pump,
-    {REAL}* __restrict__ dpsi,
-    {REAL}* __restrict__ dnR_dt,
-    {REAL}* __restrict__ dnI_dt,
+    {REAL}* __restrict__ {PSI_OUTPUT},
+    {REAL}* __restrict__ {NR_OUTPUT},
+    {REAL}* __restrict__ {NI_OUTPUT},
+    {EXTRA_ARGUMENTS}
     const int nx, const int ny,
     const {REAL} c_dt,
+    {DT6_ARGUMENT}
     const {REAL} inv_dx2, const {REAL} inv_dy2,
     const {REAL} neg_hbar2_over_2m,
     const {REAL} inv_hbar,
@@ -454,8 +402,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_qdouble(
     const {REAL} hbar_over_2m = -neg_hbar2_over_2m * inv_hbar;
     const {REAL} relax = kinetic_relaxation_eta * nR_val * hbar_over_2m;
 
-    dpsi[2*tid]   =  inv_hbar * A_im + gl * pre + relax * lap_re;
-    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim + relax * lap_im;
+    {PSI_EPILOGUE}
 
     const {REAL} nR_up = nR0[up] + c_dt * k_nR[up];
     const {REAL} nR_dn = nR0[dn] + c_dt * k_nR[dn];
@@ -471,36 +418,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void fused_stage_rhs_qdouble(
     const {REAL} lap_nI = (nI_dn - 2*nI_val + nI_up) * inv_dy2
                         + (nI_rt - 2*nI_val + nI_lt) * inv_dx2;
 
-    dnR_dt[tid] = transfer - (gamma_R + R_cond * rho) * nR_val + diff_R * lap_nR;
-    dnI_dt[tid] = pump[tid] - transfer - gamma_I * nI_val + diff_I * lap_nI;
-}}
-"""
-
-_KERNEL_COMBINE_QDOUBLE = r"""
-extern "C" __global__ {LAUNCH_BOUNDS} void rk4_combine_qdouble(
-    const {REAL}* __restrict__ psi0,
-    const {REAL}* __restrict__ k1p, const {REAL}* __restrict__ k2p,
-    const {REAL}* __restrict__ k3p, const {REAL}* __restrict__ k4p,
-    const {REAL}* __restrict__ nR0,
-    const {REAL}* __restrict__ k1r, const {REAL}* __restrict__ k2r,
-    const {REAL}* __restrict__ k3r, const {REAL}* __restrict__ k4r,
-    const {REAL}* __restrict__ nI0,
-    const {REAL}* __restrict__ k1i, const {REAL}* __restrict__ k2i,
-    const {REAL}* __restrict__ k3i, const {REAL}* __restrict__ k4i,
-    {REAL}* __restrict__ psi_out,
-    {REAL}* __restrict__ nR_out,
-    {REAL}* __restrict__ nI_out,
-    const {REAL} dt6,
-    const int nx, const int ny,
-    const int N
-) {{
-    {COMBINE_PREAMBLE}
-    psi_out[2*tid]   = psi0[2*tid]   + dt6 * (k1p[2*tid]   + 2*k2p[2*tid]   + 2*k3p[2*tid]   + k4p[2*tid]);
-    psi_out[2*tid+1] = psi0[2*tid+1] + dt6 * (k1p[2*tid+1] + 2*k2p[2*tid+1] + 2*k3p[2*tid+1] + k4p[2*tid+1]);
-    {REAL} nR_new = nR0[tid] + dt6 * (k1r[tid] + 2*k2r[tid] + 2*k3r[tid] + k4r[tid]);
-    nR_out[tid] = (nR_new > 0) ? nR_new : 0;
-    {REAL} nI_new = nI0[tid] + dt6 * (k1i[tid] + 2*k2i[tid] + 2*k3i[tid] + k4i[tid]);
-    nI_out[tid] = (nI_new > 0) ? nI_new : 0;
+    {RESERVOIR_EPILOGUE}
 }}
 """
 
@@ -596,25 +514,41 @@ def build_kernel_source_1d(
     reservoir_type: str = "single",
     laplacian_type: str = "five-point",
     preamble: str = PREAMBLE_1D,
-    combine_preamble: str = COMBINE_PREAMBLE_1D,
+    combine_preamble: str = "",
     launch_bounds: str = "",
 ) -> tuple[str, str, str]:
-    """Build the 1D CUDA kernel source."""
+    """Build the RHS, intermediate stage, and final stage CUDA sources."""
     neighbor_code = (
         _NEUMANN_NEIGHBORS if bc_type == "closed-interval" else _PERIODIC_NEIGHBORS
     )
     if reservoir_type == "double":
         rhs_tmpl = _KERNEL_RHS_DOUBLE_TEMPLATE
         fused_tmpl = _KERNEL_FUSED_STAGE_RHS_DOUBLE_TEMPLATE
-        combine_tmpl = _KERNEL_COMBINE_DOUBLE
+        suffix = "_double"
+        reservoir_fields = (
+            ("a", "nA0", "k_nA", "dnA_dt", "nA_out",
+             "R_IA * nI_val - (gamma_A + R_AI + R_cond * rho) * nA_val + diff_A * lap_nA"),
+            ("i", "nI0", "k_nI", "dnI_dt", "nI_out",
+             "pump[tid] - (gamma_I + R_IA) * nI_val + R_AI * nA_val + diff_I * lap_nI"),
+        )
     elif reservoir_type == "quadratic-double":
         rhs_tmpl = _KERNEL_RHS_QDOUBLE_TEMPLATE
         fused_tmpl = _KERNEL_FUSED_STAGE_RHS_QDOUBLE_TEMPLATE
-        combine_tmpl = _KERNEL_COMBINE_QDOUBLE
+        suffix = "_qdouble"
+        reservoir_fields = (
+            ("r", "nR0", "k_nR", "dnR_dt", "nR_out",
+             "transfer - (gamma_R + R_cond * rho) * nR_val + diff_R * lap_nR"),
+            ("i", "nI0", "k_nI", "dnI_dt", "nI_out",
+             "pump[tid] - transfer - gamma_I * nI_val + diff_I * lap_nI"),
+        )
     else:
         rhs_tmpl = _KERNEL_RHS_TEMPLATE
         fused_tmpl = _KERNEL_FUSED_STAGE_RHS_TEMPLATE
-        combine_tmpl = _KERNEL_COMBINE
+        suffix = ""
+        reservoir_fields = (
+            ("n", "nR0", "k_nR", "dnR_dt", "nR_out",
+             "pump[tid] - (gamma_R + R_cond * rho) * nR_val + diff_R * lap_nR"),
+        )
 
     diag_neighbors, extra_psi_diag, lap_block_rhs, lap_block_fused = _build_laplacian_code(
         laplacian_type, bc_type, real_type
@@ -623,18 +557,57 @@ def build_kernel_source_1d(
         REAL=real_type,
         NEIGHBOR_CODE=neighbor_code,
         PREAMBLE=preamble,
-        COMBINE_PREAMBLE=combine_preamble,
         LAUNCH_BOUNDS=launch_bounds,
         DIAG_NEIGHBORS=diag_neighbors,
         EXTRA_PSI_DIAG=extra_psi_diag,
         LAP_BLOCK_RHS=lap_block_rhs,
         LAP_BLOCK_FUSED=lap_block_fused,
     )
-    return (
-        rhs_tmpl.format(**fmt),
-        fused_tmpl.format(**fmt),
-        combine_tmpl.format(**fmt),
-    )
+    # Keep the former combine_preamble argument for positional callers. The
+    # third returned source now computes stage 4 and writes the final state.
+    _ = combine_preamble
+    output_names = {"PSI_OUTPUT": "dpsi"}
+    final_output_names = {"PSI_OUTPUT": "psi_out"}
+    stage_reservoir = []
+    final_reservoir = []
+    extra_arguments = [
+        f"const {real_type}* __restrict__ k1p,",
+        f"const {real_type}* __restrict__ k2p,",
+    ]
+    for key, initial, derivative, stage_output, final_output, rhs in reservoir_fields:
+        output_names[{"a": "NA_OUTPUT", "i": "NI_OUTPUT", "r": "NR_OUTPUT", "n": "NR_OUTPUT"}[key]] = stage_output
+        final_output_names[{"a": "NA_OUTPUT", "i": "NI_OUTPUT", "r": "NR_OUTPUT", "n": "NR_OUTPUT"}[key]] = final_output
+        stage_reservoir.append(f"{stage_output}[tid] = {rhs};")
+        final_reservoir.extend((
+            f"const {real_type} k4{key} = {rhs};",
+            f"{real_type} {key}_new = {initial}[tid] + dt6 * (k1{key}[tid] + 2*k2{key}[tid] + 2*{derivative}[tid] + k4{key});",
+            f"{final_output}[tid] = ({key}_new > 0) ? {key}_new : 0;",
+        ))
+        extra_arguments.extend((
+            f"const {real_type}* __restrict__ k1{key},",
+            f"const {real_type}* __restrict__ k2{key},",
+        ))
+
+    stage_fmt = dict(fmt, KERNEL_NAME=f"fused_stage_rhs{suffix}",
+                     EXTRA_ARGUMENTS="", DT6_ARGUMENT="",
+                     PSI_EPILOGUE=(
+                         "dpsi[2*tid]   =  inv_hbar * A_im + gl * pre + relax * lap_re;\n"
+                         "    dpsi[2*tid+1] = -inv_hbar * A_re + gl * pim + relax * lap_im;"
+                     ),
+                     RESERVOIR_EPILOGUE="\n    ".join(stage_reservoir),
+                     **output_names)
+    final_fmt = dict(fmt, KERNEL_NAME=f"fused_final_stage{suffix}",
+                     EXTRA_ARGUMENTS="\n    ".join(extra_arguments),
+                     DT6_ARGUMENT=f"const {real_type} dt6,",
+                     PSI_EPILOGUE=(
+                         f"const {real_type} k4p_re = inv_hbar * A_im + gl * pre + relax * lap_re;\n"
+                         f"    const {real_type} k4p_im = -inv_hbar * A_re + gl * pim + relax * lap_im;\n"
+                         "    psi_out[2*tid]   = psi0[2*tid]   + dt6 * (k1p[2*tid]   + 2*k2p[2*tid]   + 2*k_psi[2*tid]   + k4p_re);\n"
+                         "    psi_out[2*tid+1] = psi0[2*tid+1] + dt6 * (k1p[2*tid+1] + 2*k2p[2*tid+1] + 2*k_psi[2*tid+1] + k4p_im);"
+                     ),
+                     RESERVOIR_EPILOGUE="\n    ".join(final_reservoir),
+                     **final_output_names)
+    return rhs_tmpl.format(**fmt), fused_tmpl.format(**stage_fmt), fused_tmpl.format(**final_fmt)
 
 
 def _auto_tune_block_size(kern_rhs, _N: int) -> int:
@@ -816,38 +789,38 @@ class RK4CudaSolver(AbstractSolver):
         """Compile the CUDA kernels."""
         import cupy as cp
 
-        rhs_src, fused_src, combine_src = self._build_kernel_source(
+        rhs_src, fused_src, final_src = self._build_kernel_source(
             self.grid_type, self._real_type, self._reservoir_type
         )
 
         if self._reservoir_type == "double":
             self._kern_rhs = cp.RawKernel(rhs_src, "gpe_rhs_double")
             self._kern_fused = cp.RawKernel(fused_src, "fused_stage_rhs_double")
-            self._kern_combine = cp.RawKernel(combine_src, "rk4_combine_double")
+            self._kern_final = cp.RawKernel(final_src, "fused_final_stage_double")
         elif self._reservoir_type == "quadratic-double":
             self._kern_rhs = cp.RawKernel(rhs_src, "gpe_rhs_qdouble")
             self._kern_fused = cp.RawKernel(fused_src, "fused_stage_rhs_qdouble")
-            self._kern_combine = cp.RawKernel(combine_src, "rk4_combine_qdouble")
+            self._kern_final = cp.RawKernel(final_src, "fused_final_stage_qdouble")
         else:
             self._kern_rhs = cp.RawKernel(rhs_src, "gpe_rhs")
             self._kern_fused = cp.RawKernel(fused_src, "fused_stage_rhs")
-            self._kern_combine = cp.RawKernel(combine_src, "rk4_combine")
+            self._kern_final = cp.RawKernel(final_src, "fused_final_stage")
 
         block = self._select_block_size()
         self._make_launch_dims(block)
 
     def _init_gpu_buffers(self) -> None:
-        """Allocate the four RK4 derivative stages and constant potential buffer."""
+        """Allocate three RK4 derivative stages and constant potential buffer."""
         xp = self.xp
         N = self.N
 
         self._complex_dtype = xp.complex64 if self._precision == "single" else xp.complex128
         self._real_dtype = xp.float32 if self._precision == "single" else xp.float64
         n_fields = 1 if self._reservoir_type == "single" else 2
-        self._k_psi = tuple(xp.empty(N, dtype=self._complex_dtype) for _ in range(4))
+        self._k_psi = tuple(xp.empty(N, dtype=self._complex_dtype) for _ in range(3))
         self._k_reservoir = tuple(
             tuple(xp.empty(N, dtype=self._real_dtype) for _ in range(n_fields))
-            for _ in range(4)
+            for _ in range(3)
         )
 
         self._V_im_zero = xp.zeros(N, dtype=self._real_dtype)
@@ -906,11 +879,7 @@ class RK4CudaSolver(AbstractSolver):
             (psi0, *reservoir0, V_re, V_im, pumps[0],
              k_psi[0], *k_reservoir[0], *dimensions, *parameters),
         )
-        for stage, c_dt, pump in (
-            (1, self._k_half_dt, pumps[1]),
-            (2, self._k_half_dt, pumps[1]),
-            (3, self._k_dt, pumps[2]),
-        ):
+        for stage in (1, 2):
             staged_reservoir = tuple(
                 value for field, derivative in zip(reservoir0, k_reservoir[stage - 1])
                 for value in (field, derivative)
@@ -918,19 +887,24 @@ class RK4CudaSolver(AbstractSolver):
             self._kern_fused(
                 grid, block,
                 (psi0, k_psi[stage - 1], *staged_reservoir,
-                 V_re, V_im, pump, k_psi[stage], *k_reservoir[stage],
-                 *dimensions, c_dt, *parameters),
+                 V_re, V_im, pumps[1], k_psi[stage], *k_reservoir[stage],
+                 *dimensions, self._k_half_dt, *parameters),
             )
 
-        combined_reservoir = tuple(
-            value for field, derivatives in zip(reservoir0, zip(*k_reservoir))
-            for value in (field, *derivatives)
+        staged_reservoir = tuple(
+            value for field, derivative in zip(reservoir0, k_reservoir[2])
+            for value in (field, derivative)
         )
-        self._kern_combine(
+        earlier_reservoir = tuple(
+            value for derivatives in zip(k_reservoir[0], k_reservoir[1])
+            for value in derivatives
+        )
+        self._kern_final(
             grid, block,
-            (psi0, *k_psi, *combined_reservoir,
-             psi_out, *reservoir_out, self._k_dt6,
-             *dimensions, self._k_N),
+            (psi0, k_psi[2], *staged_reservoir,
+             V_re, V_im, pumps[2], psi_out, *reservoir_out,
+             k_psi[0], k_psi[1], *earlier_reservoir,
+             *dimensions, self._k_dt, self._k_dt6, *parameters),
         )
 
     def _cpu_laplacian_9pt(self, psi, out) -> None:
