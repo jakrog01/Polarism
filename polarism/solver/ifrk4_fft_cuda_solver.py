@@ -160,14 +160,13 @@ class IFRK4FFTCudaSolver(AbstractSolver):
         psi_new_k = self._exp_L_full * (
             psi0_k + (dt / 6.0) * (k1_psi + 2.0 * k2_psi + 2.0 * k3_psi + k4_psi)
         )
-        state.psi_k = psi_new_k
         if self._can_skip_after_step(boundary_condition):
             state.psi = None
+            state.psi_k = psi_new_k
         else:
             state.psi = boundary_condition.after_step_action(
                 xp.fft.ifft2(psi_new_k, axes=(-2, -1))
             )
-            state.invalidate_psi_k()
 
         res_new = tuple(
             xp.maximum(r0 + (dt / 6.0) * (a + 2.0 * b + 2.0 * c + d), 0.0)

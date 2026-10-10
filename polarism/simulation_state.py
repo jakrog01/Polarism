@@ -63,6 +63,7 @@ class SimulationState:
     @psi.setter
     def psi(self, value: Union[np.ndarray, cp.ndarray] | None) -> None:
         self._psi = value
+        self.psi_k = None
 
     def materialize_psi(self, xp) -> None:
         """Materialize real-space psi from cached spectral state."""
