@@ -79,20 +79,17 @@ The data was produced by `tests/data/phoenix_benchmark/example.ipynb` inside the
 binary in `.gitattributes` so the byte-exact input checks stay valid regardless
 of the local `core.autocrlf` setting.
 
-## GitHub Actions deployment flow
+## GitHub Actions workflows
 
-The repository now includes a documentation workflow that:
-
-1. installs the project dependencies
-2. builds the MkDocs site
-3. deploys the built site to GitHub Pages on pushes to `master` or `main`
-
-The test workflow runs automatically for every push and pull request on Python
-3.12 and 3.13. It installs the `test` dependency extra and runs the CPU test
-selection, excluding slow, compliance, and GPU-only tests.
+- **Test** (`tests.yml`) runs for every push and pull request on Python 3.12
+  and 3.13. It installs the `test` dependency extra and runs the CPU test
+  selection, excluding slow, compliance, and GPU-only tests.
+- **Docs** (`docs.yml`) builds the MkDocs site in strict mode for every pull
+  request. It deploys to GitHub Pages only when called by the release workflow.
+- **Release** (`release.yml`) runs for pull requests into `master` and for
+  pushes to `master`; see [Branches and releases](contributing.md#branches-and-releases).
 
 ## Important limitation
 
-The Pages workflow intentionally avoids running the test suites. This keeps the
-deployment job focused on documentation publishing; heavier compliance and
-GPU-oriented validations remain separate from the hosted CPU CI suite.
+The hosted workflows do not run the slow, compliance, or GPU suites. Run those
+locally before opening a release pull request when solver behavior changed.
