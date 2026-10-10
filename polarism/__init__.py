@@ -2,6 +2,7 @@
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.config import Config
 from polarism.laser.laser_factory import LaserFactory
+from polarism.plugins import load_plugins
 from polarism.potential import create_potential
 from polarism.reservoir import create_reservoir
 from polarism.results import (
@@ -25,7 +26,7 @@ from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.simulation_state import SimulationState
 from polarism.solver import AbstractSolver, create_solver, RK4CudaSolver
 
-__version__ = "0.3.0"
+__version__ = "0.1.0"
 __all__ = [
     "BoundaryCondition",
     "Config",
@@ -35,6 +36,7 @@ __all__ = [
     "AbstractSolver",
     "RK4CudaSolver",
     "LaserFactory",
+    "load_plugins",
     "RealTimeVisualization",
     "ResultNode",
     "ResultProvider",

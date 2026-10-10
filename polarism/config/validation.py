@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from polarism.boundary_conditions.absorption.absorption_registry import (
     available_boundary_conditions,
 )
+from polarism.grid.create_grid import grid_boundary
 
 if TYPE_CHECKING:
     from polarism.config.simulation_parameters import Config
@@ -167,7 +168,7 @@ def _validate_laser(cfg: Config) -> None:
 
 def _dx_min(cfg: Config) -> float:
     g = cfg.grid
-    if g.grid_type == "periodic":
+    if grid_boundary(g.grid_type) == "periodic":
         dx = g.lx / g.nx
         dy = g.ly / g.ny
     else:

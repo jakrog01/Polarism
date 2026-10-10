@@ -17,6 +17,7 @@ nav:
       - Potentials and Pumps: user-guide/potentials-and-pumps.md
       - Time Evolution: user-guide/time-evolution.md
       - Output and Visualization: user-guide/output-and-visualization.md
+      - Plugins: user-guide/plugins.md
   - API Reference:
       - Overview: api/overview.md
       - Option Matrix: api/option-matrix.md

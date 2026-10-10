@@ -27,7 +27,7 @@ class RK4FDMSolver(AbstractSolver):
         self.dy = grid.dy
         self.nx = grid.nx
         self.ny = grid.ny
-        self.grid_type = getattr(config.grid, "grid_type", "periodic")
+        self.grid_type = grid.boundary
         self._laplacian_buf = None
 
     @staticmethod

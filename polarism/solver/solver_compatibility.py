@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 from polarism.compute_engine import has_cuda_device
+from polarism.grid.create_grid import grid_boundary
 
 if TYPE_CHECKING:
     from polarism.config.simulation_parameters import Config
@@ -19,6 +20,8 @@ class _SolverCaps(TypedDict):
 
     Fields
     ------
+    grid_types
+        Grid boundary semantics the solver supports (``grid.boundary``).
     reservoir_types
         All reservoir models the solver can technically run without crashing.
     reservoir_types_quantitative
@@ -27,6 +30,11 @@ class _SolverCaps(TypedDict):
         reservoir_types. For Lie splitting of psi and reservoir, linear
         single/double reservoirs remain acceptable because the coupling error
         is subdominant.
+    custom_reservoirs
+        How reservoirs registered by plugins are handled: ``"quantitative"``
+        for stage-coupled solvers that only use the AbstractReservoir
+        interface, ``"diagnostic"`` for Lie-split solvers, ``"unsupported"``
+        for solvers with hard-coded reservoir kernels.
     supports_kinetic_relaxation
         True if the solver evaluates kinetic_relaxation_eta*n_active*lap(psi)
         in the time loop.  False solvers silently ignore a non-zero eta,
@@ -36,6 +44,7 @@ class _SolverCaps(TypedDict):
     supports_potential: bool
     reservoir_types: set[str]
     reservoir_types_quantitative: set[str]
+    custom_reservoirs: Literal["quantitative", "diagnostic", "unsupported"]
     supports_kinetic_relaxation: bool
     description: str
 
@@ -46,6 +55,7 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
         "supports_potential": True,
         "reservoir_types": _ALL_RESERVOIR_TYPES,
         "reservoir_types_quantitative": _STAGE_COUPLED_RESERVOIR_TYPES,
+        "custom_reservoirs": "quantitative",
         "supports_kinetic_relaxation": True,
         "description": (
             "Reference FDM RK4. Stage-coupled reservoir (psi and reservoir "
@@ -57,6 +67,7 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
         "supports_potential": True,
         "reservoir_types": _ALL_RESERVOIR_TYPES,
         "reservoir_types_quantitative": _STAGE_COUPLED_RESERVOIR_TYPES,
+        "custom_reservoirs": "quantitative",
         "supports_kinetic_relaxation": True,
         "description": (
             "Optimized FDM RK4 with pre-allocated buffers. "
@@ -68,6 +79,7 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
         "supports_potential": True,
         "reservoir_types": _ALL_RESERVOIR_TYPES,
         "reservoir_types_quantitative": _STAGE_COUPLED_RESERVOIR_TYPES,
+        "custom_reservoirs": "unsupported",
         "supports_kinetic_relaxation": True,
         "description": (
             "GPU-fused CUDA RK4 solver. Stage-coupled reservoir. "
@@ -79,6 +91,7 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
         "supports_potential": False,
         "reservoir_types": _ALL_RESERVOIR_TYPES,
         "reservoir_types_quantitative": _LIE_SPLIT_RESERVOIR_TYPES,
+        "custom_reservoirs": "diagnostic",
         "supports_kinetic_relaxation": False,
         "description": (
             "Spectral split-step solver. Reservoir advanced sequentially after the "
@@ -96,6 +109,7 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
         "supports_potential": True,
         "reservoir_types": _ALL_RESERVOIR_TYPES,
         "reservoir_types_quantitative": _STAGE_COUPLED_RESERVOIR_TYPES,
+        "custom_reservoirs": "quantitative",
         "supports_kinetic_relaxation": True,
         "description": (
             "Interaction-picture RK4. Stage-coupled reservoir. FFT-only, "
@@ -109,6 +123,7 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
         "supports_potential": True,
         "reservoir_types": _ALL_RESERVOIR_TYPES,
         "reservoir_types_quantitative": _STAGE_COUPLED_RESERVOIR_TYPES,
+        "custom_reservoirs": "quantitative",
         "supports_kinetic_relaxation": False,
         "description": (
             "ETD-RK2 spectral solver. FFT-only, periodic grid only. Reservoir "
@@ -123,6 +138,7 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
         "supports_potential": True,
         "reservoir_types": _ALL_RESERVOIR_TYPES,
         "reservoir_types_quantitative": _STAGE_COUPLED_RESERVOIR_TYPES,
+        "custom_reservoirs": "quantitative",
         "supports_kinetic_relaxation": True,
         "description": (
             "GPU-native FFT interaction-picture RK4 solver. Stage-coupled reservoir. "
@@ -143,6 +159,7 @@ def check_solver_compatibility(cfg: Config) -> None:
     """Check whether the solver matches the config."""
     solver = cfg.solver.method
     grid_type = getattr(cfg.grid, "grid_type", "periodic")
+    boundary = grid_boundary(grid_type)
     potential_type = getattr(cfg.potential, "potential_type", "zero")
     reservoir_type = getattr(cfg.reservoir, "reservoir_type", "single")
 
@@ -150,14 +167,23 @@ def check_solver_compatibility(cfg: Config) -> None:
     if caps is None:
         return
 
-    if grid_type not in caps["grid_types"]:
+    if boundary not in caps["grid_types"]:
         raise SolverCompatibilityError(
-            f"Solver '{solver}' does not support grid_type='{grid_type}'. "
+            f"Solver '{solver}' does not support grid_type='{grid_type}' "
+            f"(boundary '{boundary}'). "
             f"Supported: {sorted(caps['grid_types'])}. "
             f"Hint: {caps['description']}"
         )
 
-    if reservoir_type not in caps["reservoir_types"]:
+    custom_reservoir = reservoir_type not in _ALL_RESERVOIR_TYPES
+    if custom_reservoir and caps["custom_reservoirs"] == "unsupported":
+        raise SolverCompatibilityError(
+            f"Solver '{solver}' does not support plugin reservoir_type='{reservoir_type}'. "
+            f"Supported: {sorted(caps['reservoir_types'])}. "
+            f"Hint: {caps['description']}"
+        )
+
+    if not custom_reservoir and reservoir_type not in caps["reservoir_types"]:
         raise SolverCompatibilityError(
             f"Solver '{solver}' does not support reservoir_type='{reservoir_type}'. "
             f"Supported: {sorted(caps['reservoir_types'])}. "
@@ -188,7 +214,11 @@ def check_solver_compatibility(cfg: Config) -> None:
             stacklevel=2,
         )
 
-    if reservoir_type not in caps["reservoir_types_quantitative"]:
+    if custom_reservoir:
+        quantitative = caps["custom_reservoirs"] == "quantitative"
+    else:
+        quantitative = reservoir_type in caps["reservoir_types_quantitative"]
+    if not quantitative:
         warnings.warn(
             f"Solver '{solver}' with reservoir_type='{reservoir_type}': "
             f"the reservoir is advanced sequentially after the full condensate step "
