@@ -5,6 +5,8 @@ import pytest
 
 from polarism.config.simulation_parameters import LaserParameters
 from polarism.laser.laser_factory import LaserFactory
+from polarism.laser.pump_field import PumpField
+from polarism.laser.uniform_laser import UniformLaser
 from polarism.simulation_controller import SimulationController
 from tests.unit.conftest import small_config
 
@@ -37,6 +39,40 @@ def test_total_pump_matches_zero_initialized_sum_without_mutating_lasers() -> No
     assert all(actual is not field for field in fields)
     assert controller.lasers[2].P is zero
     assert np.count_nonzero(zero) == 0
+
+
+def test_pump_field_matches_laser_sum_and_only_exposes_one_standard_laser() -> None:
+    controller = SimulationController(small_config())
+    X, Y = controller.grid.X, controller.grid.Y
+    first = LaserFactory.create_laser(
+        LaserParameters(laser_type="continuous-gaussian", P0=0.7), X, Y
+    )[0]
+    second = LaserFactory.create_laser(
+        LaserParameters(laser_type="uniform", P0=0.3), X, Y
+    )[0]
+    pump = PumpField([], controller.grid, "double")
+    np.testing.assert_array_equal(pump(0.2), np.zeros_like(X))
+    assert pump.separable_term() is None
+
+    pump.lasers = [first]
+    envelope, coefficient = pump.separable_term()
+    assert envelope is first._spatial_envelope
+    assert coefficient(0.2) == first.power_coefficient(0.2)
+    np.testing.assert_array_equal(pump(0.2), first.get_power(X, Y, 0.2))
+
+    pump.lasers = [first, second]
+    assert pump.separable_term() is None
+    expected = first.get_power(X, Y, 0.2) + second.get_power(X, Y, 0.2)
+    np.testing.assert_array_equal(pump(0.2), expected)
+
+    class PluginLaser(UniformLaser):
+        def get_power(self, X, Y, t):
+            return super().get_power(X, Y, t)
+
+    plugin = PluginLaser(LaserParameters(laser_type="uniform", P0=1.0), X, Y)
+    pump.lasers = [plugin]
+    assert pump.separable_term() is None
+    np.testing.assert_array_equal(pump(0.2), plugin.get_power(X, Y, 0.2))
 
 
 def test_single_laser_returns_its_field_directly() -> None:

@@ -68,6 +68,13 @@ class AbstractLaser(ABC):
         """Return the time profile of the pump."""
         raise NotImplementedError
 
+    def power_coefficient(self, t: float) -> float:
+        """Return the scalar time coefficient of the cached spatial envelope."""
+        if t < self.delay:
+            return 0.0
+        t_eff = t - self.delay
+        return self._amplitude(t_eff) * self._P_time(t_eff)
+
     def get_power(
         self,
         X: Union[np.ndarray, cp.ndarray],
@@ -75,11 +82,7 @@ class AbstractLaser(ABC):
         t: float,
     ) -> Union[np.ndarray, cp.ndarray]:
         """Return the full pump field at time t; callers must treat it as read-only."""
-        if t < self.delay:
-            self.P = self._zero_power
-            return self.P
-        t_eff = t - self.delay
-        coeff = self._amplitude(t_eff) * self._P_time(t_eff)
+        coeff = self.power_coefficient(t)
         if coeff == 0:
             self.P = self._zero_power
             return self.P

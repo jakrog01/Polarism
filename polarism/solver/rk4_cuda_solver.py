@@ -48,6 +48,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs(
     {REAL}* __restrict__ dpsi,
     {REAL}* __restrict__ dnR_dt,
     const int nx, const int ny,
+    const {REAL} pump_scale, const {REAL} v_im_scale,
     const {REAL} inv_dx2, const {REAL} inv_dy2,
     const {REAL} neg_hbar2_over_2m,
     const {REAL} inv_hbar,
@@ -68,7 +69,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs(
     const {REAL} rho = pre*pre + pim*pim;
     const {REAL} nR_val = nR[tid];
     const {REAL} eff = V_re[tid] + g_C * rho + g_R * nR_val;
-    const {REAL} gl = (R_cond * nR_val - gamma_C) * ({REAL})0.5 + V_im[tid] * inv_hbar;
+    const {REAL} gl = (R_cond * nR_val - gamma_C) * ({REAL})0.5 + v_im_scale * V_im[tid] * inv_hbar;
 
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
     const {REAL} A_im = neg_hbar2_over_2m * lap_im + eff * pim;
@@ -81,7 +82,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs(
 
     const {REAL} lap_nR = (nR[dn] - 2*nR_val + nR[up]) * inv_dy2
                         + (nR[rt] - 2*nR_val + nR[lt]) * inv_dx2;
-    dnR_dt[tid] = pump[tid] - (gamma_R + R_cond * rho) * nR_val + diff_R * lap_nR;
+    dnR_dt[tid] = pump_scale * pump[tid] - (gamma_R + R_cond * rho) * nR_val + diff_R * lap_nR;
 }}
 """
 
@@ -98,6 +99,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void {KERNEL_NAME}(
     {REAL}* __restrict__ {NR_OUTPUT},
     {EXTRA_ARGUMENTS}
     const int nx, const int ny,
+    const {REAL} pump_scale, const {REAL} v_im_scale,
     const {REAL} c_dt,
     {DT6_ARGUMENT}
     const {REAL} inv_dx2, const {REAL} inv_dy2,
@@ -131,7 +133,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void {KERNEL_NAME}(
 
     const {REAL} rho = pre*pre + pim*pim;
     const {REAL} eff = V_re[tid] + g_C * rho + g_R * nR_val;
-    const {REAL} gl = (R_cond * nR_val - gamma_C) * ({REAL})0.5 + V_im[tid] * inv_hbar;
+    const {REAL} gl = (R_cond * nR_val - gamma_C) * ({REAL})0.5 + v_im_scale * V_im[tid] * inv_hbar;
 
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
     const {REAL} A_im = neg_hbar2_over_2m * lap_im + eff * pim;
@@ -163,6 +165,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_double(
     {REAL}* __restrict__ dnA_dt,
     {REAL}* __restrict__ dnI_dt,
     const int nx, const int ny,
+    const {REAL} pump_scale, const {REAL} v_im_scale,
     const {REAL} inv_dx2, const {REAL} inv_dy2,
     const {REAL} neg_hbar2_over_2m,
     const {REAL} inv_hbar,
@@ -187,7 +190,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_double(
     const {REAL} nI_val = nI[tid];
 
     const {REAL} eff = V_re[tid] + g_C * rho + g_R * nA_val + g_I * nI_val;
-    const {REAL} gl = (R_cond * nA_val - gamma_C) * ({REAL})0.5 + V_im[tid] * inv_hbar;
+    const {REAL} gl = (R_cond * nA_val - gamma_C) * ({REAL})0.5 + v_im_scale * V_im[tid] * inv_hbar;
 
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
     const {REAL} A_im = neg_hbar2_over_2m * lap_im + eff * pim;
@@ -202,7 +205,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_double(
                         + (nI[rt] - 2*nI_val + nI[lt]) * inv_dx2;
     const {REAL} lap_nA = (nA[dn] - 2*nA_val + nA[up]) * inv_dy2
                         + (nA[rt] - 2*nA_val + nA[lt]) * inv_dx2;
-    dnI_dt[tid] = pump[tid] - (gamma_I + R_IA) * nI_val + R_AI * nA_val + diff_I * lap_nI;
+    dnI_dt[tid] = pump_scale * pump[tid] - (gamma_I + R_IA) * nI_val + R_AI * nA_val + diff_I * lap_nI;
     dnA_dt[tid] = R_IA * nI_val - (gamma_A + R_AI + R_cond * rho) * nA_val + diff_A * lap_nA;
 }}
 """
@@ -223,6 +226,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void {KERNEL_NAME}(
     {REAL}* __restrict__ {NI_OUTPUT},
     {EXTRA_ARGUMENTS}
     const int nx, const int ny,
+    const {REAL} pump_scale, const {REAL} v_im_scale,
     const {REAL} c_dt,
     {DT6_ARGUMENT}
     const {REAL} inv_dx2, const {REAL} inv_dy2,
@@ -258,7 +262,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void {KERNEL_NAME}(
 
     const {REAL} rho = pre*pre + pim*pim;
     const {REAL} eff = V_re[tid] + g_C * rho + g_R * nA_val + g_I * nI_val;
-    const {REAL} gl = (R_cond * nA_val - gamma_C) * ({REAL})0.5 + V_im[tid] * inv_hbar;
+    const {REAL} gl = (R_cond * nA_val - gamma_C) * ({REAL})0.5 + v_im_scale * V_im[tid] * inv_hbar;
 
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
     const {REAL} A_im = neg_hbar2_over_2m * lap_im + eff * pim;
@@ -298,6 +302,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_qdouble(
     {REAL}* __restrict__ dnR_dt,
     {REAL}* __restrict__ dnI_dt,
     const int nx, const int ny,
+    const {REAL} pump_scale, const {REAL} v_im_scale,
     const {REAL} inv_dx2, const {REAL} inv_dy2,
     const {REAL} neg_hbar2_over_2m,
     const {REAL} inv_hbar,
@@ -322,7 +327,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_qdouble(
     const {REAL} transfer = kappa * nI_val * nI_val;
 
     const {REAL} eff = V_re[tid] + g_C * rho + g_R * nR_val + g_I * nI_val;
-    const {REAL} gl = (R_cond * nR_val - gamma_C) * ({REAL})0.5 + V_im[tid] * inv_hbar;
+    const {REAL} gl = (R_cond * nR_val - gamma_C) * ({REAL})0.5 + v_im_scale * V_im[tid] * inv_hbar;
 
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
     const {REAL} A_im = neg_hbar2_over_2m * lap_im + eff * pim;
@@ -338,7 +343,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void gpe_rhs_qdouble(
     const {REAL} lap_nI = (nI[dn] - 2*nI_val + nI[up]) * inv_dy2
                         + (nI[rt] - 2*nI_val + nI[lt]) * inv_dx2;
     dnR_dt[tid] = transfer - (gamma_R + R_cond * rho) * nR_val + diff_R * lap_nR;
-    dnI_dt[tid] = pump[tid] - transfer - gamma_I * nI_val + diff_I * lap_nI;
+    dnI_dt[tid] = pump_scale * pump[tid] - transfer - gamma_I * nI_val + diff_I * lap_nI;
 }}
 """
 
@@ -358,6 +363,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void {KERNEL_NAME}(
     {REAL}* __restrict__ {NI_OUTPUT},
     {EXTRA_ARGUMENTS}
     const int nx, const int ny,
+    const {REAL} pump_scale, const {REAL} v_im_scale,
     const {REAL} c_dt,
     {DT6_ARGUMENT}
     const {REAL} inv_dx2, const {REAL} inv_dy2,
@@ -394,7 +400,7 @@ extern "C" __global__ {LAUNCH_BOUNDS} void {KERNEL_NAME}(
     const {REAL} transfer = kappa * nI_val * nI_val;
 
     const {REAL} eff = V_re[tid] + g_C * rho + g_R * nR_val + g_I * nI_val;
-    const {REAL} gl = (R_cond * nR_val - gamma_C) * ({REAL})0.5 + V_im[tid] * inv_hbar;
+    const {REAL} gl = (R_cond * nR_val - gamma_C) * ({REAL})0.5 + v_im_scale * V_im[tid] * inv_hbar;
 
     const {REAL} A_re = neg_hbar2_over_2m * lap_re + eff * pre;
     const {REAL} A_im = neg_hbar2_over_2m * lap_im + eff * pim;
@@ -529,7 +535,7 @@ def build_kernel_source_1d(
             ("a", "nA0", "k_nA", "dnA_dt", "nA_out",
              "R_IA * nI_val - (gamma_A + R_AI + R_cond * rho) * nA_val + diff_A * lap_nA"),
             ("i", "nI0", "k_nI", "dnI_dt", "nI_out",
-             "pump[tid] - (gamma_I + R_IA) * nI_val + R_AI * nA_val + diff_I * lap_nI"),
+             "pump_scale * pump[tid] - (gamma_I + R_IA) * nI_val + R_AI * nA_val + diff_I * lap_nI"),
         )
     elif reservoir_type == "quadratic-double":
         rhs_tmpl = _KERNEL_RHS_QDOUBLE_TEMPLATE
@@ -539,7 +545,7 @@ def build_kernel_source_1d(
             ("r", "nR0", "k_nR", "dnR_dt", "nR_out",
              "transfer - (gamma_R + R_cond * rho) * nR_val + diff_R * lap_nR"),
             ("i", "nI0", "k_nI", "dnI_dt", "nI_out",
-             "pump[tid] - transfer - gamma_I * nI_val + diff_I * lap_nI"),
+             "pump_scale * pump[tid] - transfer - gamma_I * nI_val + diff_I * lap_nI"),
         )
     else:
         rhs_tmpl = _KERNEL_RHS_TEMPLATE
@@ -547,7 +553,7 @@ def build_kernel_source_1d(
         suffix = ""
         reservoir_fields = (
             ("n", "nR0", "k_nR", "dnR_dt", "nR_out",
-             "pump[tid] - (gamma_R + R_cond * rho) * nR_val + diff_R * lap_nR"),
+             "pump_scale * pump[tid] - (gamma_R + R_cond * rho) * nR_val + diff_R * lap_nR"),
         )
 
     diag_neighbors, extra_psi_diag, lap_block_rhs, lap_block_fused = _build_laplacian_code(
@@ -607,7 +613,11 @@ def build_kernel_source_1d(
                      ),
                      RESERVOIR_EPILOGUE="\n    ".join(final_reservoir),
                      **final_output_names)
-    return rhs_tmpl.format(**fmt), fused_tmpl.format(**stage_fmt), fused_tmpl.format(**final_fmt)
+    # Round the pump product on its own (no FMA contraction) so the scaled
+    # envelope is bitwise equal to the pump array computed by the laser.
+    mul = "__fmul_rn" if real_type == "float" else "__dmul_rn"
+    sources = (rhs_tmpl.format(**fmt), fused_tmpl.format(**stage_fmt), fused_tmpl.format(**final_fmt))
+    return tuple(s.replace("pump_scale * pump[tid]", f"{mul}(pump_scale, pump[tid])") for s in sources)
 
 
 def _auto_tune_block_size(kern_rhs, _N: int) -> int:
@@ -823,8 +833,6 @@ class RK4CudaSolver(AbstractSolver):
             for _ in range(3)
         )
 
-        self._V_im_zero = xp.zeros(N, dtype=self._real_dtype)
-
         self._potential_cached = None
         self._V_re_flat = None
         self._V_im_flat = None
@@ -855,7 +863,7 @@ class RK4CudaSolver(AbstractSolver):
         else:
             V_re = potential if potential.flags["C_CONTIGUOUS"] else xp.ascontiguousarray(potential)
             self._V_re_flat = self._cast_to_precision(V_re).ravel()
-            self._V_im_flat = self._V_im_zero
+            self._V_im_flat = self._V_re_flat
 
         self._potential_cached = potential
         return self._V_re_flat, self._V_im_flat
@@ -866,7 +874,8 @@ class RK4CudaSolver(AbstractSolver):
             array = array.astype(dtype)
         return self.xp.ascontiguousarray(array).ravel()
 
-    def _step_gpu(self, psi0, reservoir0, V_re, V_im, pumps, psi_out, reservoir_out):
+    def _step_gpu(self, psi0, reservoir0, V_re, V_im, pumps, pump_scales,
+                  v_im_scale, psi_out, reservoir_out):
         """Launch the same RK4 kernels for each supported reservoir model."""
         grid, block = self._k_grid, self._k_block
         dimensions = (self._k_nx, self._k_ny)
@@ -877,7 +886,8 @@ class RK4CudaSolver(AbstractSolver):
         self._kern_rhs(
             grid, block,
             (psi0, *reservoir0, V_re, V_im, pumps[0],
-             k_psi[0], *k_reservoir[0], *dimensions, *parameters),
+             k_psi[0], *k_reservoir[0], *dimensions,
+             pump_scales[0], v_im_scale, *parameters),
         )
         for stage in (1, 2):
             staged_reservoir = tuple(
@@ -888,7 +898,8 @@ class RK4CudaSolver(AbstractSolver):
                 grid, block,
                 (psi0, k_psi[stage - 1], *staged_reservoir,
                  V_re, V_im, pumps[1], k_psi[stage], *k_reservoir[stage],
-                 *dimensions, self._k_half_dt, *parameters),
+                 *dimensions, pump_scales[1], v_im_scale,
+                 self._k_half_dt, *parameters),
             )
 
         staged_reservoir = tuple(
@@ -904,7 +915,8 @@ class RK4CudaSolver(AbstractSolver):
             (psi0, k_psi[2], *staged_reservoir,
              V_re, V_im, pumps[2], psi_out, *reservoir_out,
              k_psi[0], k_psi[1], *earlier_reservoir,
-             *dimensions, self._k_dt, self._k_dt6, *parameters),
+             *dimensions, pump_scales[2], v_im_scale,
+             self._k_dt, self._k_dt6, *parameters),
         )
 
     def _cpu_laplacian_9pt(self, psi, out) -> None:
@@ -1199,10 +1211,21 @@ class RK4CudaSolver(AbstractSolver):
         V_re_flat, V_im_flat = self._prepare_potential_buffers(potential)
         t = state.t
         dt = self._dt
-        pumps = tuple(
-            self._flat_gpu_input(pump(stage_time), self._real_dtype)
-            for stage_time in (t, t + 0.5 * dt, t + dt)
-        )
+        stage_times = (t, t + 0.5 * dt, t + dt)
+        separable = pump.separable_term() if hasattr(pump, "separable_term") else None
+        if separable is None:
+            pumps = tuple(
+                self._flat_gpu_input(pump(stage_time), self._real_dtype)
+                for stage_time in stage_times
+            )
+            pump_scales = (self._np_real(1),) * 3
+        else:
+            envelope, coefficient = separable
+            pump_flat = self._flat_gpu_input(envelope, self._real_dtype)
+            pumps = (pump_flat,) * 3
+            pump_scales = tuple(self._np_real(coefficient(stage_time))
+                                for stage_time in stage_times)
+        v_im_scale = self._np_real(1 if self.xp.iscomplexobj(potential) else 0)
 
         psi0 = self._flat_gpu_input(state.psi, self._complex_dtype)
         reservoir_state = reservoir.get_state()
@@ -1218,7 +1241,8 @@ class RK4CudaSolver(AbstractSolver):
 
         # All producers, RK4 kernels, and consumers use the caller's current stream.
         self._step_gpu(
-            psi0, reservoir0, V_re_flat, V_im_flat, pumps, psi_out, reservoir_out
+            psi0, reservoir0, V_re_flat, V_im_flat, pumps, pump_scales,
+            v_im_scale, psi_out, reservoir_out
         )
         state.psi = boundary_condition.after_step_action(psi_out.reshape(shape))
         reservoir.set_state(tuple(field.reshape(shape) for field in reservoir_out))
