@@ -29,6 +29,7 @@ nav:
       - Results: api/results.md
   - Development and Theory:
       - Physics Background: development/physics-background.md
+      - GPU Profiling: development/profiling.md
       - Testing and CI: development/testing-and-ci.md
       - Contributing: development/contributing.md
 

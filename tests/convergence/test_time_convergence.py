@@ -16,6 +16,7 @@ TOL_ORDER_SLOPE = 0.15  # Log-log convergence-slope fit tolerance.
 ORDER_EXPECTED = {
     "rk4-fdm": 4.0,
     "rk4-fdm-fused": 4.0,
+    "rk4-cuda": 4.0,
     "ip-rk4": 4.0,
     "ifrk4-fft-cuda": 4.0,
     "split-step-fft": 2.0,
@@ -24,7 +25,7 @@ ORDER_EXPECTED = {
 
 
 def _run(solver: str, reservoir: str, dt: float) -> np.ndarray:
-    use_gpu = solver == "ifrk4-fft-cuda"
+    use_gpu = solver in {"ifrk4-fft-cuda", "rk4-cuda"}
     reservoir_overrides = (
         {
             "physics__gamma_C": 0.0,
@@ -55,7 +56,7 @@ def _run(solver: str, reservoir: str, dt: float) -> np.ndarray:
         **reservoir_overrides,
     )
     controller = SimulationController(cfg)
-    packet_scale = 1000.0 if solver in {"rk4-fdm", "rk4-fdm-fused", "ip-rk4", "ifrk4-fft-cuda"} else 100.0
+    packet_scale = 1000.0 if solver in {"rk4-fdm", "rk4-fdm-fused", "rk4-cuda", "ip-rk4", "ifrk4-fft-cuda"} else 100.0
     controller.state.psi[:] = packet_scale * initial_packet(controller.grid, sigma=4.0, kx=3.0)
     controller.run()
     return compute_engine.to_cpu(controller.state.psi)
@@ -67,10 +68,12 @@ def _richardson_reference(fields: list[np.ndarray]) -> np.ndarray:
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("solver", ["rk4-fdm", "rk4-fdm-fused", "ip-rk4", "split-step-fft", "etd-rk2", "ifrk4-fft-cuda"])
+@pytest.mark.parametrize("solver", ["rk4-fdm", "rk4-fdm-fused", pytest.param("rk4-cuda", marks=pytest.mark.gpu), "ip-rk4", "split-step-fft", "etd-rk2", "ifrk4-fft-cuda"])
 @pytest.mark.parametrize("reservoir", ["single", "quadratic-double"])
 def test_time_convergence_and_artifact(solver: str, reservoir: str) -> None:
-    compute_engine.configure(ComputeEngineParameters(use_gpu=solver == "ifrk4-fft-cuda"))
+    compute_engine.configure(ComputeEngineParameters(use_gpu=solver in {"ifrk4-fft-cuda", "rk4-cuda"}))
+    if solver == "rk4-cuda" and not compute_engine.use_gpu:
+        pytest.skip("CUDA device unavailable")
     dts = [4e-3 / 2**k for k in range(6)]
     fields = [_run(solver, reservoir, dt) for dt in dts]
     reference = _richardson_reference([
@@ -88,5 +91,5 @@ def test_time_convergence_and_artifact(solver: str, reservoir: str) -> None:
     (path / f"time_{solver}_{reservoir}.json").write_text(json.dumps({"entries": [{"dt": dt, "error": error} for dt, error in zip(dts, errors)], "order": order}))
     assert np.isfinite(order)
     assert abs(order - ORDER_EXPECTED[solver]) <= TOL_ORDER_SLOPE, f"{solver} {reservoir}: order={order:.3f}"
-    if solver in {"rk4-fdm", "rk4-fdm-fused", "ip-rk4", "ifrk4-fft-cuda"}:
+    if solver in {"rk4-fdm", "rk4-fdm-fused", "rk4-cuda", "ip-rk4", "ifrk4-fft-cuda"}:
         assert max(errors) / min(errors) >= 1e4

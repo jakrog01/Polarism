@@ -768,10 +768,30 @@ class RK4CudaSolver(AbstractSolver):
             self._compile_kernels()
             self._init_gpu_buffers()
 
-            import cupy as _cp
-            self._stream_compute = _cp.cuda.Stream(non_blocking=True)
-            self._stream_transfer = _cp.cuda.Stream(non_blocking=True)
-            self._transfer_event = _cp.cuda.Event()
+            common = (
+                self._k_inv_dx2, self._k_inv_dy2,
+                self._k_neg_hbar2_over_2m, self._k_inv_hbar,
+                self._k_g_C, self._k_g_R,
+            )
+            if self._reservoir_type == "single":
+                model = (
+                    self._k_R, self._k_gamma_C, self._k_gamma_R,
+                    self._k_kinetic_relaxation_eta, self._k_diff_R,
+                )
+            elif self._reservoir_type == "double":
+                model = (
+                    self._k_g_I, self._k_R, self._k_gamma_C,
+                    self._k_gamma_I, self._k_gamma_A,
+                    self._k_R_IA, self._k_R_AI,
+                    self._k_kinetic_relaxation_eta, self._k_diff_I, self._k_diff_A,
+                )
+            else:
+                model = (
+                    self._k_g_I, self._k_R, self._k_gamma_C,
+                    self._k_gamma_R, self._k_gamma_I, self._k_kappa,
+                    self._k_kinetic_relaxation_eta, self._k_diff_I, self._k_diff_R,
+                )
+            self._k_rhs_parameters = common + model
 
     def _build_kernel_source(
         self, bc_type: str, real_type: str, reservoir_type: str
@@ -817,42 +837,24 @@ class RK4CudaSolver(AbstractSolver):
         self._make_launch_dims(block)
 
     def _init_gpu_buffers(self) -> None:
-        """Allocate GPU work buffers."""
+        """Allocate the four RK4 derivative stages and constant potential buffer."""
         xp = self.xp
         N = self.N
 
-        cdtype = xp.complex64 if self._precision == "single" else xp.complex128
-        rdtype = xp.float32 if self._precision == "single" else xp.float64
+        self._complex_dtype = xp.complex64 if self._precision == "single" else xp.complex128
+        self._real_dtype = xp.float32 if self._precision == "single" else xp.float64
+        n_fields = 1 if self._reservoir_type == "single" else 2
+        self._k_psi = tuple(xp.empty(N, dtype=self._complex_dtype) for _ in range(4))
+        self._k_reservoir = tuple(
+            tuple(xp.empty(N, dtype=self._real_dtype) for _ in range(n_fields))
+            for _ in range(4)
+        )
 
-        self._k1_psi = xp.empty(N, dtype=cdtype)
-        self._k2_psi = xp.empty(N, dtype=cdtype)
-        self._k3_psi = xp.empty(N, dtype=cdtype)
-        self._k4_psi = xp.empty(N, dtype=cdtype)
+        self._V_im_zero = xp.zeros(N, dtype=self._real_dtype)
 
-        self._k1_nA = xp.empty(N, dtype=rdtype)
-        self._k2_nA = xp.empty(N, dtype=rdtype)
-        self._k3_nA = xp.empty(N, dtype=rdtype)
-        self._k4_nA = xp.empty(N, dtype=rdtype)
-
-        self._psi_tmp = xp.empty(N, dtype=cdtype)
-        self._nA_tmp = xp.empty(N, dtype=rdtype)
-
-        self._psi0 = xp.empty(N, dtype=cdtype)
-        self._nA0 = xp.empty(N, dtype=rdtype)
-
-        self._V_im_zero = xp.zeros(N, dtype=rdtype)
-
-        self._potential_cache_key: tuple | None = None
+        self._potential_cached = None
         self._V_re_flat = None
         self._V_im_flat = None
-
-        if self._reservoir_type in ("double", "quadratic-double"):
-            self._k1_nI = xp.empty(N, dtype=rdtype)
-            self._k2_nI = xp.empty(N, dtype=rdtype)
-            self._k3_nI = xp.empty(N, dtype=rdtype)
-            self._k4_nI = xp.empty(N, dtype=rdtype)
-            self._nI_tmp = xp.empty(N, dtype=rdtype)
-            self._nI0 = xp.empty(N, dtype=rdtype)
 
     def _cast_to_precision(self, arr):
         """Cast array to solver precision if needed (no-op when types match)."""
@@ -869,8 +871,7 @@ class RK4CudaSolver(AbstractSolver):
     def _prepare_potential_buffers(self, potential):
         """Return contiguous real/imag flattened potential buffers, cached by identity."""
         xp = self.xp
-        key = (id(potential), potential.shape, potential.dtype)
-        if key == self._potential_cache_key:
+        if potential is self._potential_cached:
             return self._V_re_flat, self._V_im_flat
 
         if xp.iscomplexobj(potential):
@@ -883,274 +884,53 @@ class RK4CudaSolver(AbstractSolver):
             self._V_re_flat = self._cast_to_precision(V_re).ravel()
             self._V_im_flat = self._V_im_zero
 
-        self._potential_cache_key = key
+        self._potential_cached = potential
         return self._V_re_flat, self._V_im_flat
 
-    def _gpu_rhs(self, psi, nR, V_re, V_im, pump, out_dpsi, out_dnR):
-        """Compute the right-hand side."""
+    def _flat_gpu_input(self, array, dtype):
+        """Return a contiguous flat input, preserving an already matching array."""
+        if array.dtype != dtype:
+            array = array.astype(dtype)
+        return self.xp.ascontiguousarray(array).ravel()
+
+    def _step_gpu(self, psi0, reservoir0, V_re, V_im, pumps, psi_out, reservoir_out):
+        """Launch the same RK4 kernels for each supported reservoir model."""
+        grid, block = self._k_grid, self._k_block
+        dimensions = (self._k_nx, self._k_ny)
+        parameters = self._k_rhs_parameters
+        k_psi = self._k_psi
+        k_reservoir = self._k_reservoir
+
         self._kern_rhs(
-            self._k_grid, self._k_block,
-            (
-                psi, nR, V_re, V_im, pump, out_dpsi, out_dnR,
-                self._k_nx, self._k_ny,
-                self._k_inv_dx2, self._k_inv_dy2,
-                self._k_neg_hbar2_over_2m, self._k_inv_hbar,
-                self._k_g_C, self._k_g_R,
-                self._k_R, self._k_gamma_C, self._k_gamma_R,
-                self._k_kinetic_relaxation_eta, self._k_diff_R,
-            ),
+            grid, block,
+            (psi0, *reservoir0, V_re, V_im, pumps[0],
+             k_psi[0], *k_reservoir[0], *dimensions, *parameters),
         )
+        for stage, c_dt, pump in (
+            (1, self._k_half_dt, pumps[1]),
+            (2, self._k_half_dt, pumps[1]),
+            (3, self._k_dt, pumps[2]),
+        ):
+            staged_reservoir = tuple(
+                value for field, derivative in zip(reservoir0, k_reservoir[stage - 1])
+                for value in (field, derivative)
+            )
+            self._kern_fused(
+                grid, block,
+                (psi0, k_psi[stage - 1], *staged_reservoir,
+                 V_re, V_im, pump, k_psi[stage], *k_reservoir[stage],
+                 *dimensions, c_dt, *parameters),
+            )
 
-    def _gpu_fused_stage_rhs(self, psi0, k_psi, nR0, k_nR, c_dt, V_re, V_im, pump, out_dpsi, out_dnR):
-        """Compute one staged right-hand side on the GPU."""
-        self._kern_fused(
-            self._k_grid, self._k_block,
-            (
-                psi0, k_psi, nR0, k_nR, V_re, V_im, pump, out_dpsi, out_dnR,
-                self._k_nx, self._k_ny,
-                c_dt,
-                self._k_inv_dx2, self._k_inv_dy2,
-                self._k_neg_hbar2_over_2m, self._k_inv_hbar,
-                self._k_g_C, self._k_g_R,
-                self._k_R, self._k_gamma_C, self._k_gamma_R,
-                self._k_kinetic_relaxation_eta, self._k_diff_R,
-            ),
+        combined_reservoir = tuple(
+            value for field, derivatives in zip(reservoir0, zip(*k_reservoir))
+            for value in (field, *derivatives)
         )
-
-    def _gpu_combine(
-        self, psi0, k1p, k2p, k3p, k4p, nR0, k1n, k2n, k3n, k4n, psi_out, nR_out
-    ):
-        """Combine RK4 stages on the GPU."""
         self._kern_combine(
-            self._k_grid, self._k_block,
-            (
-                psi0, k1p, k2p, k3p, k4p,
-                nR0, k1n, k2n, k3n, k4n,
-                psi_out, nR_out,
-                self._k_dt6,
-                self._k_nx, self._k_ny, self._k_N,
-            ),
-        )
-
-    def _step_gpu(self, V_re, V_im, p0, p_half, p1, nR_buf, psi_buf):
-        """Run one RK4 step on the GPU."""
-        psi0 = self._psi0
-        nR0 = self._nA0
-
-        psi0[:] = psi_buf
-        nR0[:] = nR_buf
-
-        self._gpu_rhs(psi0, nR0, V_re, V_im, p0, self._k1_psi, self._k1_nA)
-
-        self._gpu_fused_stage_rhs(
-            psi0, self._k1_psi, nR0, self._k1_nA,
-            self._k_half_dt, V_re, V_im, p_half, self._k2_psi, self._k2_nA,
-        )
-        self._gpu_fused_stage_rhs(
-            psi0, self._k2_psi, nR0, self._k2_nA,
-            self._k_half_dt, V_re, V_im, p_half, self._k3_psi, self._k3_nA,
-        )
-        self._gpu_fused_stage_rhs(
-            psi0, self._k3_psi, nR0, self._k3_nA,
-            self._k_dt, V_re, V_im, p1, self._k4_psi, self._k4_nA,
-        )
-
-        self._gpu_combine(
-            psi0, self._k1_psi, self._k2_psi, self._k3_psi, self._k4_psi,
-            nR0, self._k1_nA, self._k2_nA, self._k3_nA, self._k4_nA,
-            psi_buf, nR_buf,
-        )
-
-    def _gpu_rhs_double(self, psi, nA, nI, V_re, V_im, pump, out_dpsi, out_dnA, out_dnI):
-        """Compute the right-hand side."""
-        self._kern_rhs(
-            self._k_grid, self._k_block,
-            (
-                psi, nA, nI, V_re, V_im, pump, out_dpsi, out_dnA, out_dnI,
-                self._k_nx, self._k_ny,
-                self._k_inv_dx2, self._k_inv_dy2,
-                self._k_neg_hbar2_over_2m, self._k_inv_hbar,
-                self._k_g_C, self._k_g_R, self._k_g_I,
-                self._k_R, self._k_gamma_C,
-                self._k_gamma_I, self._k_gamma_A,
-                self._k_R_IA, self._k_R_AI,
-                self._k_kinetic_relaxation_eta, self._k_diff_I, self._k_diff_A,
-            ),
-        )
-
-    def _gpu_fused_stage_rhs_double(
-        self, psi0, k_psi, nA0, k_nA, nI0, k_nI, c_dt, V_re, V_im, pump,
-        out_dpsi, out_dnA, out_dnI,
-    ):
-        """Compute one staged right-hand side on the GPU."""
-        self._kern_fused(
-            self._k_grid, self._k_block,
-            (
-                psi0, k_psi, nA0, k_nA, nI0, k_nI, V_re, V_im, pump,
-                out_dpsi, out_dnA, out_dnI,
-                self._k_nx, self._k_ny,
-                c_dt,
-                self._k_inv_dx2, self._k_inv_dy2,
-                self._k_neg_hbar2_over_2m, self._k_inv_hbar,
-                self._k_g_C, self._k_g_R, self._k_g_I,
-                self._k_R, self._k_gamma_C,
-                self._k_gamma_I, self._k_gamma_A,
-                self._k_R_IA, self._k_R_AI,
-                self._k_kinetic_relaxation_eta, self._k_diff_I, self._k_diff_A,
-            ),
-        )
-
-    def _gpu_combine_double(
-        self, psi0, k1p, k2p, k3p, k4p,
-        nA0, k1a, k2a, k3a, k4a,
-        nI0, k1i, k2i, k3i, k4i,
-        psi_out, nA_out, nI_out,
-    ):
-        """Combine RK4 stages on the GPU."""
-        self._kern_combine(
-            self._k_grid, self._k_block,
-            (
-                psi0, k1p, k2p, k3p, k4p,
-                nA0, k1a, k2a, k3a, k4a,
-                nI0, k1i, k2i, k3i, k4i,
-                psi_out, nA_out, nI_out,
-                self._k_dt6,
-                self._k_nx, self._k_ny, self._k_N,
-            ),
-        )
-
-    def _step_gpu_double(self, V_re, V_im, p0, p_half, p1, nA_buf, nI_buf, psi_buf):
-        """Run one RK4 step on the GPU."""
-        psi0 = self._psi0
-        nA0 = self._nA0
-        nI0 = self._nI0
-
-        psi0[:] = psi_buf
-        nA0[:] = nA_buf
-        nI0[:] = nI_buf
-
-        self._gpu_rhs_double(psi0, nA0, nI0, V_re, V_im, p0,
-                              self._k1_psi, self._k1_nA, self._k1_nI)
-
-        self._gpu_fused_stage_rhs_double(
-            psi0, self._k1_psi, nA0, self._k1_nA, nI0, self._k1_nI,
-            self._k_half_dt, V_re, V_im, p_half,
-            self._k2_psi, self._k2_nA, self._k2_nI,
-        )
-        self._gpu_fused_stage_rhs_double(
-            psi0, self._k2_psi, nA0, self._k2_nA, nI0, self._k2_nI,
-            self._k_half_dt, V_re, V_im, p_half,
-            self._k3_psi, self._k3_nA, self._k3_nI,
-        )
-        self._gpu_fused_stage_rhs_double(
-            psi0, self._k3_psi, nA0, self._k3_nA, nI0, self._k3_nI,
-            self._k_dt, V_re, V_im, p1,
-            self._k4_psi, self._k4_nA, self._k4_nI,
-        )
-
-        self._gpu_combine_double(
-            psi0,
-            self._k1_psi, self._k2_psi, self._k3_psi, self._k4_psi,
-            nA0,
-            self._k1_nA, self._k2_nA, self._k3_nA, self._k4_nA,
-            nI0,
-            self._k1_nI, self._k2_nI, self._k3_nI, self._k4_nI,
-            psi_buf, nA_buf, nI_buf,
-        )
-
-    def _gpu_rhs_qdouble(self, psi, nR, nI, V_re, V_im, pump, out_dpsi, out_dnR, out_dnI):
-        """Compute the right-hand side for quadratic-double reservoir."""
-        self._kern_rhs(
-            self._k_grid, self._k_block,
-            (
-                psi, nR, nI, V_re, V_im, pump, out_dpsi, out_dnR, out_dnI,
-                self._k_nx, self._k_ny,
-                self._k_inv_dx2, self._k_inv_dy2,
-                self._k_neg_hbar2_over_2m, self._k_inv_hbar,
-                self._k_g_C, self._k_g_R, self._k_g_I,
-                self._k_R, self._k_gamma_C,
-                self._k_gamma_R, self._k_gamma_I, self._k_kappa,
-                self._k_kinetic_relaxation_eta, self._k_diff_I, self._k_diff_R,
-            ),
-        )
-
-    def _gpu_fused_stage_rhs_qdouble(
-        self, psi0, k_psi, nR0, k_nR, nI0, k_nI, c_dt, V_re, V_im, pump,
-        out_dpsi, out_dnR, out_dnI,
-    ):
-        """Compute one staged right-hand side for quadratic-double on the GPU."""
-        self._kern_fused(
-            self._k_grid, self._k_block,
-            (
-                psi0, k_psi, nR0, k_nR, nI0, k_nI, V_re, V_im, pump,
-                out_dpsi, out_dnR, out_dnI,
-                self._k_nx, self._k_ny,
-                c_dt,
-                self._k_inv_dx2, self._k_inv_dy2,
-                self._k_neg_hbar2_over_2m, self._k_inv_hbar,
-                self._k_g_C, self._k_g_R, self._k_g_I,
-                self._k_R, self._k_gamma_C,
-                self._k_gamma_R, self._k_gamma_I, self._k_kappa,
-                self._k_kinetic_relaxation_eta, self._k_diff_I, self._k_diff_R,
-            ),
-        )
-
-    def _gpu_combine_qdouble(
-        self, psi0, k1p, k2p, k3p, k4p,
-        nR0, k1r, k2r, k3r, k4r,
-        nI0, k1i, k2i, k3i, k4i,
-        psi_out, nR_out, nI_out,
-    ):
-        """Combine RK4 stages for quadratic-double on the GPU."""
-        self._kern_combine(
-            self._k_grid, self._k_block,
-            (
-                psi0, k1p, k2p, k3p, k4p,
-                nR0, k1r, k2r, k3r, k4r,
-                nI0, k1i, k2i, k3i, k4i,
-                psi_out, nR_out, nI_out,
-                self._k_dt6,
-                self._k_nx, self._k_ny, self._k_N,
-            ),
-        )
-
-    def _step_gpu_qdouble(self, V_re, V_im, p0, p_half, p1, nR_buf, nI_buf, psi_buf):
-        """Run one RK4 step on the GPU for quadratic-double reservoir."""
-        psi0 = self._psi0
-        nR0 = self._nA0
-        nI0 = self._nI0
-
-        psi0[:] = psi_buf
-        nR0[:] = nR_buf
-        nI0[:] = nI_buf
-
-        self._gpu_rhs_qdouble(psi0, nR0, nI0, V_re, V_im, p0,
-                               self._k1_psi, self._k1_nA, self._k1_nI)
-
-        self._gpu_fused_stage_rhs_qdouble(
-            psi0, self._k1_psi, nR0, self._k1_nA, nI0, self._k1_nI,
-            self._k_half_dt, V_re, V_im, p_half,
-            self._k2_psi, self._k2_nA, self._k2_nI,
-        )
-        self._gpu_fused_stage_rhs_qdouble(
-            psi0, self._k2_psi, nR0, self._k2_nA, nI0, self._k2_nI,
-            self._k_half_dt, V_re, V_im, p_half,
-            self._k3_psi, self._k3_nA, self._k3_nI,
-        )
-        self._gpu_fused_stage_rhs_qdouble(
-            psi0, self._k3_psi, nR0, self._k3_nA, nI0, self._k3_nI,
-            self._k_dt, V_re, V_im, p1,
-            self._k4_psi, self._k4_nA, self._k4_nI,
-        )
-
-        self._gpu_combine_qdouble(
-            psi0,
-            self._k1_psi, self._k2_psi, self._k3_psi, self._k4_psi,
-            nR0,
-            self._k1_nA, self._k2_nA, self._k3_nA, self._k4_nA,
-            nI0,
-            self._k1_nI, self._k2_nI, self._k3_nI, self._k4_nI,
-            psi_buf, nR_buf, nI_buf,
+            grid, block,
+            (psi0, *k_psi, *combined_reservoir,
+             psi_out, *reservoir_out, self._k_dt6,
+             *dimensions, self._k_N),
         )
 
     def _cpu_laplacian_9pt(self, psi, out) -> None:
@@ -1442,95 +1222,29 @@ class RK4CudaSolver(AbstractSolver):
             return
 
         shape = state.psi.shape
-
         V_re_flat, V_im_flat = self._prepare_potential_buffers(potential)
         t = state.t
-        dt = self.config.solver.dt
-        p0 = self._cast_to_precision(pump(t)).ravel()
-        p_half = self._cast_to_precision(pump(t + 0.5 * dt)).ravel()
-        p1 = self._cast_to_precision(pump(t + dt)).ravel()
+        dt = self._dt
+        pumps = tuple(
+            self._flat_gpu_input(pump(stage_time), self._real_dtype)
+            for stage_time in (t, t + 0.5 * dt, t + dt)
+        )
 
-        with self._stream_compute:
-            if self._reservoir_type == "double":
-                nA, nI = reservoir.get_state()
-                psi_buf = self._psi_tmp
-                psi_buf[:] = self._cast_to_precision(state.psi).ravel()
-                nA_buf = self._nA_tmp
-                nA_buf[:] = self._cast_to_precision(nA).ravel()
-                nI_buf = self._nI_tmp
-                nI_buf[:] = self._cast_to_precision(nI).ravel()
+        psi0 = self._flat_gpu_input(state.psi, self._complex_dtype)
+        reservoir_state = reservoir.get_state()
+        reservoir0 = tuple(
+            self._flat_gpu_input(field, self._real_dtype)
+            for field in reservoir_state
+        )
+        psi_out = self.xp.empty(self.N, dtype=self._complex_dtype)
+        reservoir_out = tuple(
+            self.xp.empty(self.N, dtype=self._real_dtype)
+            for _ in reservoir0
+        )
 
-                self._step_gpu_double(V_re_flat, V_im_flat, p0, p_half, p1, nA_buf, nI_buf, psi_buf)
-                self._transfer_event.record(self._stream_compute)
-            elif self._reservoir_type == "quadratic-double":
-                nR, nI = reservoir.get_state()
-                psi_buf = self._psi_tmp
-                psi_buf[:] = self._cast_to_precision(state.psi).ravel()
-                nR_buf = self._nA_tmp
-                nR_buf[:] = self._cast_to_precision(nR).ravel()
-                nI_buf = self._nI_tmp
-                nI_buf[:] = self._cast_to_precision(nI).ravel()
-
-                self._step_gpu_qdouble(V_re_flat, V_im_flat, p0, p_half, p1, nR_buf, nI_buf, psi_buf)
-                self._transfer_event.record(self._stream_compute)
-            else:
-                psi_buf = self._psi_tmp
-                psi_buf[:] = self._cast_to_precision(state.psi).ravel()
-                nR_buf = self._nA_tmp
-                nR_buf[:] = self._cast_to_precision(
-                    reservoir.get_reservoir_density()
-                ).ravel()
-
-                self._step_gpu(V_re_flat, V_im_flat, p0, p_half, p1, nR_buf, psi_buf)
-                self._transfer_event.record(self._stream_compute)
-
-        self._stream_transfer.wait_event(self._transfer_event)
-        with self._stream_transfer:
-            if self._reservoir_type == "double":
-                psi_result = psi_buf.reshape(shape)
-                if state.psi.dtype != psi_result.dtype:
-                    psi_result = psi_result.astype(state.psi.dtype)
-                state.psi = psi_result
-                state.psi = boundary_condition.after_step_action(state.psi)
-
-                nA_result = nA_buf.reshape(shape)
-                nI_result = nI_buf.reshape(shape)
-                if nA.dtype != nA_result.dtype:
-                    nA_result = nA_result.astype(nA.dtype)
-                    nI_result = nI_result.astype(nI.dtype)
-                reservoir.set_state((
-                    self.xp.maximum(nA_result, 0),
-                    self.xp.maximum(nI_result, 0),
-                ))
-            elif self._reservoir_type == "quadratic-double":
-                psi_result = psi_buf.reshape(shape)
-                if state.psi.dtype != psi_result.dtype:
-                    psi_result = psi_result.astype(state.psi.dtype)
-                state.psi = psi_result
-                state.psi = boundary_condition.after_step_action(state.psi)
-
-                res_shape = (self.ny, self.nx)
-                nR_result = nR_buf.reshape(res_shape)
-                nI_result = nI_buf.reshape(res_shape)
-                if nR.dtype != nR_result.dtype:
-                    nR_result = nR_result.astype(nR.dtype)
-                    nI_result = nI_result.astype(nI.dtype)
-                reservoir.set_state((
-                    self.xp.maximum(nR_result, 0),
-                    self.xp.maximum(nI_result, 0),
-                ))
-            else:
-                psi_result = psi_buf.reshape(shape)
-                if state.psi.dtype != psi_result.dtype:
-                    psi_result = psi_result.astype(state.psi.dtype)
-                state.psi = psi_result
-                state.psi = boundary_condition.after_step_action(state.psi)
-
-                nR_result = nR_buf.reshape(shape)
-                if reservoir.get_reservoir_density().dtype != nR_result.dtype:
-                    nR_result = nR_result.astype(
-                        reservoir.get_reservoir_density().dtype
-                    )
-                reservoir.set_state((self.xp.maximum(nR_result, 0),))
-
-        self._stream_transfer.synchronize()
+        # All producers, RK4 kernels, and consumers use the caller's current stream.
+        self._step_gpu(
+            psi0, reservoir0, V_re_flat, V_im_flat, pumps, psi_out, reservoir_out
+        )
+        state.psi = boundary_condition.after_step_action(psi_out.reshape(shape))
+        reservoir.set_state(tuple(field.reshape(shape) for field in reservoir_out))
