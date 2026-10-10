@@ -1,6 +1,7 @@
 """Laser factory helpers."""
 from __future__ import annotations
 
+from dataclasses import fields
 from typing import TYPE_CHECKING, Union
 
 import yaml
@@ -75,7 +76,17 @@ class LaserFactory:
                     f"'{laser_config.config_file}'. "
                     f"Available: {list(available_lasers.keys())}"
                 )
-            individual_config = LaserParameters(**{**vars(laser_config), **item})
+            known = {f.name for f in fields(LaserParameters)}
+            extra = {
+                **laser_config.extra,
+                **item.get("extra", {}),
+                **{k: v for k, v in item.items() if k not in known},
+            }
+            individual_config = LaserParameters(**{
+                **vars(laser_config),
+                **{k: v for k, v in item.items() if k in known},
+                "extra": extra,
+            })
             lasers.append(available_lasers[laser_type](individual_config, X, Y, precision))
         return lasers
 

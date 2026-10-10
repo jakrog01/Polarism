@@ -27,7 +27,7 @@ class ETDRK2Solver(AbstractSolver):
         hbar = self.config.physics.hbar
         m_eff = self.config.physics.m_eff
 
-        grid_type = getattr(config.grid, "grid_type", "periodic")
+        grid_type = grid.boundary
         if grid_type != "periodic":
             import warnings
 

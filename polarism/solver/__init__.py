@@ -8,6 +8,7 @@ from polarism.solver.rk4_cuda_solver import RK4CudaSolver
 from polarism.solver.etd_rk2_solver import ETDRK2Solver
 from polarism.solver.ip_rk4_solver import IPRK4Solver
 from polarism.solver.ifrk4_fft_cuda_solver import IFRK4FFTCudaSolver
+from polarism.solver.solver_registry import register_solver
 
 __all__ = [
     "create_solver",
@@ -19,4 +20,5 @@ __all__ = [
     "IPRK4Solver",
     "IFRK4FFTCudaSolver",
     "AbstractSolver",
+    "register_solver",
 ]

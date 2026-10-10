@@ -663,11 +663,16 @@ class RK4CudaSolver(AbstractSolver):
         self.nx = grid.nx
         self.ny = grid.ny
         self.N = grid.nx * grid.ny
-        self.grid_type = getattr(config.grid, "grid_type", "periodic")
+        self.grid_type = grid.boundary
         _res_cfg = getattr(config, "reservoir", None)
         self._reservoir_type = (
             getattr(_res_cfg, "reservoir_type", "single") if _res_cfg else "single"
         )
+        if self._reservoir_type not in ("single", "double", "quadratic-double"):
+            raise ValueError(
+                f"rk4-cuda has hard-coded reservoir kernels and does not support "
+                f"reservoir_type='{self._reservoir_type}'."
+            )
 
         import numpy as _np
 

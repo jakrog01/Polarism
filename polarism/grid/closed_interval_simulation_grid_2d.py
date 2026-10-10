@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Union
 
 from polarism.compute_engine import compute_engine
+from polarism.grid.grid_registry import register_grid
 
 if TYPE_CHECKING:
     import cupy as cp
@@ -12,8 +13,10 @@ if TYPE_CHECKING:
     from polarism.config.simulation_parameters import GridParameters
 
 
+@register_grid("closed-interval")
 class ClosedIntervalSimulationGrid2D:
     """Store a closed-interval 2D simulation grid."""
+    boundary = "closed-interval"
     nx: int
     ny: int
     lx: float

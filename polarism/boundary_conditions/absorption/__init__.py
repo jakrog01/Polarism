@@ -2,6 +2,9 @@
 from polarism.boundary_conditions.absorption.absorption_cap_strategy import (
     AbsorptionCapStrategy,
 )
+from polarism.boundary_conditions.absorption.absorption_registry import (
+    register_absorption,
+)
 from polarism.boundary_conditions.absorption.absorption_mask_strategy import (
     AbsorptionMaskStrategy,
 )
@@ -17,4 +20,5 @@ __all__ = [
     "AbsorptionMaskStrategy",
     "create_absorption_strategy",
     "NoAbsorptionStrategy",
+    "register_absorption",
 ]

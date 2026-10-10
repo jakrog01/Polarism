@@ -25,6 +25,7 @@ from polarism.config.simulation_parameters import PhysicsConstants, ReservoirPar
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
 from polarism.reservoir.laplacian import real_laplacian
+from polarism.reservoir.reservoir_registry import register_reservoir
 from polarism.results.result_node import ResultNode
 from polarism.results.result_provider import ResultProvider
 
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
 _QDOUBLE_RHS_KERNELS: dict[tuple[str, int], object] = {}
 
 
+@register_reservoir("quadratic-double")
 class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
     """Two-reservoir model with quadratic inactive→active transfer."""
 
@@ -70,7 +72,7 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
         self.reservoir_diffusion_R = getattr(physics, "reservoir_diffusion_R", 0.0)
         self.dx = grid.dx
         self.dy = grid.dy
-        self.grid_type = getattr(grid, "grid_type", "periodic")
+        self.grid_type = grid.boundary
         rdtype = real_dtype(self.xp, precision)
         self.nR = self.xp.zeros((grid.ny, grid.nx), dtype=rdtype)
         self.nI = self.xp.zeros((grid.ny, grid.nx), dtype=rdtype)

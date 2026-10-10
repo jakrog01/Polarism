@@ -1,5 +1,6 @@
 """Simulation config dataclasses."""
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -10,6 +11,7 @@ class GridParameters:
     lx: float = 100.0
     ly: float = 100.0
     grid_type: str = "periodic"
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 
@@ -82,6 +84,7 @@ class LaserParameters:
     delay: float = 0.0
     n_pulses: int = 0
     power_definition: str = "peak_amplitude"
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -89,6 +92,7 @@ class ReservoirParameters:
     """Store reservoir settings."""
     expose_results: bool = True
     reservoir_type: str = "double"
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

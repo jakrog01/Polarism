@@ -28,7 +28,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         self.dy = grid.dy
         self.nx = grid.nx
         self.ny = grid.ny
-        self.grid_type = getattr(config.grid, "grid_type", "periodic")
+        self.grid_type = grid.boundary
 
         self._hbar = config.physics.hbar
         self._m_eff = config.physics.m_eff

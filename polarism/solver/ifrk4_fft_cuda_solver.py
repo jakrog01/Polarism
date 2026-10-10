@@ -53,7 +53,7 @@ class IFRK4FFTCudaSolver(AbstractSolver):
         """Initialise precomputed propagators and physics constants."""
         super().__init__(config)
 
-        grid_type = getattr(config.grid, "grid_type", "periodic")
+        grid_type = grid.boundary
         if grid_type != "periodic":
             raise ValueError(
                 f"ifrk4-fft-cuda requires grid_type='periodic', got '{grid_type}'. "

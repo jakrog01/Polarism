@@ -12,6 +12,7 @@ from polarism.config.validation import validate_config
 from polarism.grid.create_grid import create_grid
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.laser.laser_factory import LaserFactory
+from polarism.plugins import load_plugins
 from polarism.potential.create_potential import create_potential
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
 from polarism.reservoir.create_reservoir import create_reservoir
@@ -74,6 +75,7 @@ class SimulationController:
         compute_engine.configure(cfg.compute_engine)
         self.xp = compute_engine.xp
 
+        load_plugins()
         validate_config(cfg)
         check_solver_compatibility(cfg)
 

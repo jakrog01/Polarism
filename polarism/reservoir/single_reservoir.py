@@ -9,6 +9,7 @@ from polarism.config.simulation_parameters import PhysicsConstants, ReservoirPar
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
 from polarism.reservoir.laplacian import real_laplacian
+from polarism.reservoir.reservoir_registry import register_reservoir
 from polarism.results.result_node import ResultNode
 from polarism.results.result_provider import ResultProvider
 
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     import numpy as np
 
 
+@register_reservoir("single")
 class SingleReservoir(AbstractReservoir, ResultProvider):
     """Model a single active reservoir."""
     config: ReservoirParameters
@@ -43,7 +45,7 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         self.reservoir_diffusion_R = getattr(physics, "reservoir_diffusion_R", 0.0)
         self.dx = grid.dx
         self.dy = grid.dy
-        self.grid_type = getattr(grid, "grid_type", "periodic")
+        self.grid_type = grid.boundary
         self.nR = self.xp.zeros((grid.ny, grid.nx), dtype=real_dtype(self.xp, precision))
 
     def get_state(self) -> tuple[Union[np.ndarray, cp.ndarray]]:
