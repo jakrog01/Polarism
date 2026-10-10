@@ -280,7 +280,7 @@ class SimulationController:
     def run(self) -> None:
         """Run the simulation loop."""
         dt = self.cfg.solver.dt
-        n_steps = int(self.cfg.solver.total_time / dt)
+        n_steps = round(self.cfg.solver.total_time / dt)
 
         try:
             for step in trange(n_steps, desc="Simulating"):
