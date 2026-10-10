@@ -8,7 +8,7 @@ This project already carries the documentation dependencies needed to build the 
 pip install "git+https://github.com/jakrog01/Polarism.git"
 ```
 
-Pin a release with `@v0.2.1` at the end of the URL.
+Pin a release with `@v0.2.2` at the end of the URL.
 
 ## Development setup
 
