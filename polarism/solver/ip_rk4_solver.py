@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Union
 
+from polarism.config.dtype_utils import complex_dtype, real_dtype
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -29,13 +30,16 @@ class IPRK4Solver(AbstractSolver):
 
         self._eta = getattr(config.physics, "kinetic_relaxation_eta", 0.0)
 
-        self._L_eig = grid.k_squared
-        self._L = -1j * hbar * self._L_eig / (2 * m_eff)
+        precision = getattr(config.solver, "precision", "double")
+        cdtype = complex_dtype(self.xp, precision)
+        self._L_eig = grid.k_squared.astype(real_dtype(self.xp, precision))
+        self._L = -1j * hbar * grid.k_squared / (2 * m_eff)
 
-        self._exp_L_half = self.xp.exp(self._L * (dt / 2))
-        self._exp_L_full = self.xp.exp(self._L * dt)
-        self._exp_L_neg_half = self.xp.exp(-self._L * (dt / 2))
-        self._exp_L_neg_full = self.xp.exp(-self._L * dt)
+        # Propagators follow the solver precision so float32 runs stay float32.
+        self._exp_L_half = self.xp.exp(self._L * (dt / 2)).astype(cdtype)
+        self._exp_L_full = self.xp.exp(self._L * dt).astype(cdtype)
+        self._exp_L_neg_half = self.xp.exp(-self._L * (dt / 2)).astype(cdtype)
+        self._exp_L_neg_full = self.xp.exp(-self._L * dt).astype(cdtype)
         self._hbar_over_2m = hbar / (2.0 * m_eff)
 
     def _forward(self, psi):

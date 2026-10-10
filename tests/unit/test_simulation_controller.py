@@ -151,16 +151,13 @@ def test_assigning_psi_discards_cached_spectrum() -> None:
     assert np.abs(controller.state.psi).max() == 0.0
 
 
-_FLOAT64_PROPAGATORS = pytest.mark.xfail(strict=True, reason="spectral propagators are built in float64")
-
-
 @pytest.mark.parametrize("method", [
     "rk4-fdm",
     "rk4-fdm-fused",
     "rk4-cuda",
     "split-step-fft",
-    pytest.param("ip-rk4", marks=_FLOAT64_PROPAGATORS),
-    pytest.param("etd-rk2", marks=_FLOAT64_PROPAGATORS),
+    "ip-rk4",
+    "etd-rk2",
     "ifrk4-fft-cuda",
 ])
 def test_mask_absorption_keeps_single_precision(method: str) -> None:

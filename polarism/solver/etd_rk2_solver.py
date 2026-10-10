@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Callable, Union
 
+from polarism.config.dtype_utils import complex_dtype
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -46,9 +47,11 @@ class ETDRK2Solver(AbstractSolver):
         self._L = -1j * hbar * grid.k_squared / (2 * m_eff)
         L_dt = self._L * dt
 
-        self._exp_L = self.xp.exp(L_dt)
-        self._phi1 = self._compute_phi1(L_dt)
-        self._phi2 = self._compute_phi2(L_dt)
+        # Coefficients are evaluated in float64, then stored in solver precision.
+        cdtype = complex_dtype(self.xp, getattr(config.solver, "precision", "double"))
+        self._exp_L = self.xp.exp(L_dt).astype(cdtype)
+        self._phi1 = self._compute_phi1(L_dt).astype(cdtype)
+        self._phi2 = self._compute_phi2(L_dt).astype(cdtype)
 
     def _phi_taylor(self, z, offset):
         """Return sum_k z**k / (k + offset)! for small ``|z|``."""
