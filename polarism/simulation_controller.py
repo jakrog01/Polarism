@@ -347,9 +347,14 @@ class SimulationController:
         )
 
     def _compute_total_pump(self, t: float) -> Union[np.ndarray, cp.ndarray]:
-        """Sum the pump from all lasers at time t."""
-        P_total = self.xp.zeros(self.grid.X.shape, dtype=real_dtype(self.xp, self.cfg.solver.precision))
-        for laser in self.lasers:
+        """Sum laser fields at time t; callers must treat the result as read-only."""
+        if not self.lasers:
+            return self.xp.zeros(self.grid.X.shape, dtype=real_dtype(self.xp, self.cfg.solver.precision))
+        first = self.lasers[0].get_power(self.grid.X, self.grid.Y, t)
+        if len(self.lasers) == 1:
+            return first
+        P_total = first + self.lasers[1].get_power(self.grid.X, self.grid.Y, t)
+        for laser in self.lasers[2:]:
             P_total += laser.get_power(self.grid.X, self.grid.Y, t)
         return P_total
 

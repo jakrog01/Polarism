@@ -36,7 +36,8 @@ class AbstractLaser(ABC):
         self.x0 = laser_config.x0
         self.y0 = laser_config.y0
         self.delay = laser_config.delay
-        self.P = self.xp.zeros(X.shape, dtype=self._real_dtype)
+        self._zero_power = self.xp.zeros(X.shape, dtype=self._real_dtype)
+        self.P = self._zero_power
 
     def _finalize_spatial_envelope(
         self,
@@ -73,10 +74,14 @@ class AbstractLaser(ABC):
         Y: Union[np.ndarray, cp.ndarray],
         t: float,
     ) -> Union[np.ndarray, cp.ndarray]:
-        """Return the full pump field at time t."""
+        """Return the full pump field at time t; callers must treat it as read-only."""
         if t < self.delay:
-            self.P = self.xp.zeros(X.shape, dtype=self._real_dtype)
+            self.P = self._zero_power
             return self.P
         t_eff = t - self.delay
-        self.P = self._amplitude(t_eff) * self._spatial_envelope * self._P_time(t_eff)
+        coeff = self._amplitude(t_eff) * self._P_time(t_eff)
+        if coeff == 0:
+            self.P = self._zero_power
+            return self.P
+        self.P = self._spatial_envelope * coeff
         return self.P
