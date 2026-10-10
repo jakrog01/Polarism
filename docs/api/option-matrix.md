@@ -65,7 +65,7 @@ For pulsed Gaussian studies:
 | `rk4-cuda` | you want FDM GPU production runs on periodic or closed-interval grids | FDM production/reference; stage-coupled quadratic-double |
 | `ifrk4-fft-cuda` | you want GPU-native spectral production on a periodic grid | requires `periodic`; use CAP absorber for open boundaries; stage-coupled quadratic-double |
 | `split-step-fft` | second-order spectral evolution on a periodic grid | Strang splitting with two reservoir half-steps; supports potentials and CAP; does not evaluate `kinetic_relaxation_eta` |
-| `etd-rk2` | low-order exponential time-differencing on a periodic grid | periodic only; reservoir not stage-coupled; diagnostic use |
+| `etd-rk2` | second-order exponential time differencing on a periodic grid | periodic only; second-order midpoint reservoir coupling; does not evaluate `kinetic_relaxation_eta` |
 | `ip-rk4` | spectral-style RK4 reference | requires `periodic`; stage-coupled reservoir; for GPU production use `ifrk4-fft-cuda` |
 
 ## RK4 CUDA Laplacian
