@@ -20,12 +20,13 @@ ORDER_EXPECTED = {
     "ip-rk4": 4.0,
     "ifrk4-fft-cuda": 4.0,
     "split-step-fft": 2.0,
+    "split-step-fft-cuda": 2.0,
     "etd-rk2": 2.0,
 }
 
 
 def _run(solver: str, reservoir: str, dt: float) -> np.ndarray:
-    use_gpu = solver in {"ifrk4-fft-cuda", "rk4-cuda"}
+    use_gpu = solver in {"ifrk4-fft-cuda", "rk4-cuda", "split-step-fft-cuda"}
     reservoir_overrides = (
         {
             "physics__gamma_C": 0.0,
@@ -68,11 +69,11 @@ def _richardson_reference(fields: list[np.ndarray]) -> np.ndarray:
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("solver", ["rk4-fdm", "rk4-fdm-fused", pytest.param("rk4-cuda", marks=pytest.mark.gpu), "ip-rk4", "split-step-fft", "etd-rk2", "ifrk4-fft-cuda"])
+@pytest.mark.parametrize("solver", ["rk4-fdm", "rk4-fdm-fused", pytest.param("rk4-cuda", marks=pytest.mark.gpu), "ip-rk4", "split-step-fft", pytest.param("split-step-fft-cuda", marks=pytest.mark.gpu), "etd-rk2", "ifrk4-fft-cuda"])
 @pytest.mark.parametrize("reservoir", ["single", "quadratic-double"])
 def test_time_convergence_and_artifact(solver: str, reservoir: str) -> None:
-    compute_engine.configure(ComputeEngineParameters(use_gpu=solver in {"ifrk4-fft-cuda", "rk4-cuda"}))
-    if solver == "rk4-cuda" and not compute_engine.use_gpu:
+    compute_engine.configure(ComputeEngineParameters(use_gpu=solver in {"ifrk4-fft-cuda", "rk4-cuda", "split-step-fft-cuda"}))
+    if solver in {"rk4-cuda", "split-step-fft-cuda"} and not compute_engine.use_gpu:
         pytest.skip("CUDA device unavailable")
     dts = [4e-3 / 2**k for k in range(6)]
     fields = [_run(solver, reservoir, dt) for dt in dts]

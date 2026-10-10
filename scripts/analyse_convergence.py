@@ -30,16 +30,18 @@ SOLVERS = (
     "ip-rk4",
     "ifrk4-fft-cuda",
     "split-step-fft",
+    "split-step-fft-cuda",
     "etd-rk2",
 )
-SPECTRAL_SOLVERS = {"ip-rk4", "ifrk4-fft-cuda", "split-step-fft", "etd-rk2"}
+SPECTRAL_SOLVERS = {"ip-rk4", "ifrk4-fft-cuda", "split-step-fft", "split-step-fft-cuda", "etd-rk2"}
 RESERVOIRS = ("single", "quadratic-double")
 TIME_BANDS = {
     "rk4-fdm": ([3.5, 4.5], [3.5, 4.5]),
     "rk4-fdm-fused": ([3.5, 4.5], [3.5, 4.5]),
     "ip-rk4": ([3.5, 4.5], [3.5, 4.5]),
     "ifrk4-fft-cuda": ([3.5, 4.5], [3.5, 4.5]),
-    "split-step-fft": ([1.5, 2.5], [0.5, 1.5]),
+    "split-step-fft": ([1.5, 2.5], [1.5, 2.5]),
+    "split-step-fft-cuda": ([1.5, 2.5], [1.5, 2.5]),
     "etd-rk2": ([1.5, 2.5], [1.5, 2.5]),
 }
 SPACE_CASES = ("bandlimited", "broadband")

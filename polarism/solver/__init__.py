@@ -2,6 +2,7 @@
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.create_solver import create_solver
 from polarism.solver.split_step_fft_solver import SplitStepFFTSolver
+from polarism.solver.split_step_fft_cuda_solver import SplitStepFFTCudaSolver
 from polarism.solver.rk4_fdm_solver import RK4FDMSolver
 from polarism.solver.rk4_fdm_fused_solver import RK4FDMFusedSolver
 from polarism.solver.rk4_cuda_solver import RK4CudaSolver
@@ -13,6 +14,7 @@ from polarism.solver.solver_registry import register_solver
 __all__ = [
     "create_solver",
     "SplitStepFFTSolver",
+    "SplitStepFFTCudaSolver",
     "RK4FDMSolver",
     "RK4FDMFusedSolver",
     "RK4CudaSolver",

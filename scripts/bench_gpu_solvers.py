@@ -19,7 +19,7 @@ import cupy as cp
 from polarism.config.simulation_parameters import Config
 from polarism.simulation_controller import SimulationController
 
-SOLVERS = ("rk4-cuda", "ifrk4-fft-cuda")
+SOLVERS = ("rk4-cuda", "ifrk4-fft-cuda", "split-step-fft-cuda")
 RESERVOIRS = ("single", "double", "quadratic-double")
 PRECISIONS = ("single", "double")
 COLUMNS = ("solver", "grid", "reservoir", "precision", "ms/step (median)",
@@ -28,7 +28,7 @@ COLUMNS = ("solver", "grid", "reservoir", "precision", "ms/step (median)",
 
 
 def model_bytes_per_step(solver: str, grid: int, reservoir: str, precision: str) -> int:
-    """Fixed reference traffic: cached stencil neighbors or nine FFT read/write pairs.
+    """Fixed reference traffic: cached stencil neighbors or FFT read/write pairs.
 
     This model deliberately stays constant across solver optimizations. FFT traffic
     is only a lower bound and omits pointwise operations and FFT scratch traffic.
@@ -41,7 +41,8 @@ def model_bytes_per_step(solver: str, grid: int, reservoir: str, precision: str)
         stage = (2 * complex_size + 2 * fields * real + 3 * real) + (complex_size + fields * real)
         combine = (5 * complex_size + 5 * fields * real) + (complex_size + fields * real)
         return grid * grid * (rhs + 3 * stage + combine)
-    return grid * grid * (9 * 2 * complex_size)
+    transforms = 2 if solver == "split-step-fft-cuda" else 9
+    return grid * grid * (transforms * 2 * complex_size)
 
 
 class AllocationHook(cp.cuda.MemoryHook):
@@ -302,7 +303,7 @@ def benchmark_case(args: argparse.Namespace, solver: str, grid: int,
                               "min_ms_per_step": min(samples),
                               "mpoints_steps_per_second": grid * grid / (median_ms / 1000) / 1e6,
                               "model_bytes_per_step": traffic,
-                              "model_is_lower_bound": solver == "ifrk4-fft-cuda",
+                              "model_is_lower_bound": solver in {"ifrk4-fft-cuda", "split-step-fft-cuda"},
                               "effective_gbps": effective,
                               "theoretical_peak_gbps": peak,
                               "pct_theoretical": 100 * effective / peak if peak else None,

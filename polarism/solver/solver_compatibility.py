@@ -96,6 +96,18 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
             "grid only. Does not evaluate kinetic_relaxation_eta."
         ),
     },
+    "split-step-fft-cuda": {
+        "grid_types": {"periodic"},
+        "supports_potential": True,
+        "reservoir_types": _ALL_RESERVOIR_TYPES,
+        "reservoir_types_quantitative": _ALL_RESERVOIR_TYPES,
+        "custom_reservoirs": "quantitative",
+        "supports_kinetic_relaxation": False,
+        "description": (
+            "GPU-only, two-transform spectral Strang splitting with symmetric "
+            "reservoir half-steps. Periodic grids only; no kinetic relaxation."
+        ),
+    },
     "ip-rk4": {
         "grid_types": {"periodic"},
         "supports_potential": True,
