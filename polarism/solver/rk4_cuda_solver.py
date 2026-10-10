@@ -1002,14 +1002,11 @@ class RK4CudaSolver(AbstractSolver):
             + 2 * (psi[-1, -2] - psi[-1, -1]) * inv_dx2
         )
 
-    def _cpu_psi_rhs(self, psi, n_active, V, n_inactive=None):
+    def _cpu_psi_rhs(self, psi, n_active, V, n_inactive, rho):
         """Compute the psi right-hand side on the CPU."""
         xp = self.xp
         lap = xp.empty_like(psi)
         self._cpu_laplacian(psi, lap)
-        rho = xp.abs(psi) ** 2
-        if n_inactive is None:
-            n_inactive = n_active * 0.0
         eff = V + self._g_C * rho + self._g_R * n_active + self._g_I * n_inactive
         gl = (self._R * n_active - self._gamma_C) * 0.5
         kinetic = self._neg_hbar2_over_2m * lap
@@ -1017,177 +1014,45 @@ class RK4CudaSolver(AbstractSolver):
         relax = self._kinetic_relaxation_eta * n_active * hbar_over_2m
         return (-1j * self._inv_hbar) * (kinetic + eff * psi) + gl * psi + relax * lap
 
-    def _cpu_laplacian_real(self, n):
-        """Compute Laplacian of a real-valued 2D field on the CPU."""
-        xp = self.xp
-        out = xp.empty_like(n)
-        inv_dx2 = self._inv_dx2
-        inv_dy2 = self._inv_dy2
-        if self.grid_type == "periodic":
-            out[:] = (
-                xp.roll(n, -1, axis=0) - 2 * n + xp.roll(n, 1, axis=0)
-            ) * inv_dy2 + (
-                xp.roll(n, -1, axis=1) - 2 * n + xp.roll(n, 1, axis=1)
-            ) * inv_dx2
-            return out
-        ny, nx = self.ny, self.nx
-        out.fill(0)
-        if ny > 2 and nx > 2:
-            out[1:-1, 1:-1] = (
-                n[2:, 1:-1] - 2 * n[1:-1, 1:-1] + n[:-2, 1:-1]
-            ) * inv_dy2 + (
-                n[1:-1, 2:] - 2 * n[1:-1, 1:-1] + n[1:-1, :-2]
-            ) * inv_dx2
-        if nx > 2:
-            out[0, 1:-1] = (
-                2 * (n[1, 1:-1] - n[0, 1:-1]) * inv_dy2
-                + (n[0, 2:] - 2 * n[0, 1:-1] + n[0, :-2]) * inv_dx2
-            )
-            out[-1, 1:-1] = (
-                2 * (n[-2, 1:-1] - n[-1, 1:-1]) * inv_dy2
-                + (n[-1, 2:] - 2 * n[-1, 1:-1] + n[-1, :-2]) * inv_dx2
-            )
-        if ny > 2:
-            out[1:-1, 0] = (
-                n[2:, 0] - 2 * n[1:-1, 0] + n[:-2, 0]
-            ) * inv_dy2 + 2 * (n[1:-1, 1] - n[1:-1, 0]) * inv_dx2
-            out[1:-1, -1] = (
-                n[2:, -1] - 2 * n[1:-1, -1] + n[:-2, -1]
-            ) * inv_dy2 + 2 * (n[1:-1, -2] - n[1:-1, -1]) * inv_dx2
-        out[0, 0] = (
-            2 * (n[1, 0] - n[0, 0]) * inv_dy2 + 2 * (n[0, 1] - n[0, 0]) * inv_dx2
-        )
-        out[0, -1] = (
-            2 * (n[1, -1] - n[0, -1]) * inv_dy2 + 2 * (n[0, -2] - n[0, -1]) * inv_dx2
-        )
-        out[-1, 0] = (
-            2 * (n[-2, 0] - n[-1, 0]) * inv_dy2 + 2 * (n[-1, 1] - n[-1, 0]) * inv_dx2
-        )
-        out[-1, -1] = (
-            2 * (n[-2, -1] - n[-1, -1]) * inv_dy2 + 2 * (n[-1, -2] - n[-1, -1]) * inv_dx2
-        )
-        return out
-
-    def _cpu_rhs(self, psi, nR, V, pump):
-        """Compute the right-hand side."""
-        dpsi = self._cpu_psi_rhs(psi, nR, V)
-        rho = self.xp.abs(psi) ** 2
-        dnR = (
-            pump - (self._gamma_R + self._R * rho) * nR
-            + self._reservoir_diffusion_R * self._cpu_laplacian_real(nR)
-        )
-        return dpsi, dnR
-
-    def _cpu_rhs_double(self, psi, nA, nI, V, pump):
-        """Compute the right-hand side."""
-        dpsi = self._cpu_psi_rhs(psi, nA, V, nI)
-        rho = self.xp.abs(psi) ** 2
-        dnI = (
-            pump - (self._gamma_I + self._R_IA) * nI + self._R_AI * nA
-            + self._reservoir_diffusion_I * self._cpu_laplacian_real(nI)
-        )
-        dnA = (
-            self._R_IA * nI - (self._gamma_A + self._R_AI + self._R * rho) * nA
-            + self._reservoir_diffusion_A * self._cpu_laplacian_real(nA)
-        )
-        return dpsi, dnA, dnI
-
-    def _cpu_rhs_quadratic_double(self, psi, nR, nI, V, pump):
-        """Compute the right-hand side for quadratic-double reservoir."""
-        dpsi = self._cpu_psi_rhs(psi, nR, V, nI)
-        rho = self.xp.abs(psi) ** 2
-        transfer = self._kappa * nI ** 2
-        dnR = (
-            transfer - (self._gamma_R + self._R * rho) * nR
-            + self._reservoir_diffusion_R * self._cpu_laplacian_real(nR)
-        )
-        dnI = (
-            pump - transfer - self._gamma_I * nI
-            + self._reservoir_diffusion_I * self._cpu_laplacian_real(nI)
-        )
-        return dpsi, dnR, dnI
-
-    def _step_cpu_quadratic_double(self, V, pump, reservoir, boundary_condition, state):
-        """Run one RK4 step on the CPU for quadratic-double reservoir."""
-        dt = self._dt
-        t = state.t
-        p0 = pump(t)
-        p_half = pump(t + 0.5 * dt)
-        p1 = pump(t + dt)
-        xp = self.xp
-        psi0 = state.psi.copy()
-        nR0, nI0 = reservoir.get_state()
-        nR0 = nR0.copy()
-        nI0 = nI0.copy()
-
-        k1p, k1r, k1i = self._cpu_rhs_quadratic_double(psi0, nR0, nI0, V, p0)
-        k2p, k2r, k2i = self._cpu_rhs_quadratic_double(
-            psi0 + 0.5 * dt * k1p, nR0 + 0.5 * dt * k1r, nI0 + 0.5 * dt * k1i, V, p_half
-        )
-        k3p, k3r, k3i = self._cpu_rhs_quadratic_double(
-            psi0 + 0.5 * dt * k2p, nR0 + 0.5 * dt * k2r, nI0 + 0.5 * dt * k2i, V, p_half
-        )
-        k4p, k4r, k4i = self._cpu_rhs_quadratic_double(
-            psi0 + dt * k3p, nR0 + dt * k3r, nI0 + dt * k3i, V, p1
-        )
-
-        dt6 = dt / 6.0
-        state.psi = psi0 + dt6 * (k1p + 2 * k2p + 2 * k3p + k4p)
-        state.psi = boundary_condition.after_step_action(state.psi)
-        nR_new = nR0 + dt6 * (k1r + 2 * k2r + 2 * k3r + k4r)
-        nI_new = nI0 + dt6 * (k1i + 2 * k2i + 2 * k3i + k4i)
-        reservoir.set_state((xp.maximum(nR_new, 0), xp.maximum(nI_new, 0)))
-
     def _step_cpu(self, V, pump, reservoir, boundary_condition, state):
-        """Run one RK4 step on the CPU."""
+        """Advance psi and the reservoir with one classic RK4 CPU step."""
         dt = self._dt
         t = state.t
         p0 = pump(t)
         p_half = pump(t + 0.5 * dt)
         p1 = pump(t + dt)
         psi0 = state.psi.copy()
-        nR0 = reservoir.get_reservoir_density().copy()
+        res0 = tuple(field.copy() for field in reservoir.get_state())
 
-        k1p, k1n = self._cpu_rhs(psi0, nR0, V, p0)
-        k2p, k2n = self._cpu_rhs(psi0 + 0.5 * dt * k1p, nR0 + 0.5 * dt * k1n, V, p_half)
-        k3p, k3n = self._cpu_rhs(psi0 + 0.5 * dt * k2p, nR0 + 0.5 * dt * k2n, V, p_half)
-        k4p, k4n = self._cpu_rhs(psi0 + dt * k3p, nR0 + dt * k3n, V, p1)
+        def rhs(psi, res_state, pump_t):
+            rho = self.xp.abs(psi) ** 2
+            dpsi = self._cpu_psi_rhs(
+                psi, reservoir.get_active_density(res_state), V,
+                reservoir.get_inactive_density(res_state), rho,
+            )
+            dres = reservoir.get_derivatives(psi, pump_t, res_state, rho)
+            return dpsi, dres
 
-        state.psi = psi0 + (dt / 6.0) * (k1p + 2 * k2p + 2 * k3p + k4p)
-        state.psi = boundary_condition.after_step_action(state.psi)
-        nR_new = nR0 + (dt / 6.0) * (k1n + 2 * k2n + 2 * k3n + k4n)
-        reservoir.set_state((nR_new,))
+        def staged_reservoir(derivatives, scale):
+            return tuple(r0 + scale * derivative for r0, derivative in zip(res0, derivatives))
 
-    def _step_cpu_double(self, V, pump, reservoir, boundary_condition, state):
-        """Run one RK4 step on the CPU."""
-        dt = self._dt
-        t = state.t
-        p0 = pump(t)
-        p_half = pump(t + 0.5 * dt)
-        p1 = pump(t + dt)
-        xp = self.xp
-        psi0 = state.psi.copy()
-        nA0, nI0 = reservoir.get_state()
-        nA0 = nA0.copy()
-        nI0 = nI0.copy()
-
-        k1p, k1a, k1i = self._cpu_rhs_double(psi0, nA0, nI0, V, p0)
-        k2p, k2a, k2i = self._cpu_rhs_double(
-            psi0 + 0.5 * dt * k1p, nA0 + 0.5 * dt * k1a, nI0 + 0.5 * dt * k1i, V, p_half
+        k1p, k1r = rhs(psi0, res0, p0)
+        k2p, k2r = rhs(
+            psi0 + 0.5 * dt * k1p, staged_reservoir(k1r, 0.5 * dt), p_half
         )
-        k3p, k3a, k3i = self._cpu_rhs_double(
-            psi0 + 0.5 * dt * k2p, nA0 + 0.5 * dt * k2a, nI0 + 0.5 * dt * k2i, V, p_half
+        k3p, k3r = rhs(
+            psi0 + 0.5 * dt * k2p, staged_reservoir(k2r, 0.5 * dt), p_half
         )
-        k4p, k4a, k4i = self._cpu_rhs_double(
-            psi0 + dt * k3p, nA0 + dt * k3a, nI0 + dt * k3i, V, p1
-        )
+        k4p, k4r = rhs(psi0 + dt * k3p, staged_reservoir(k3r, dt), p1)
 
         dt6 = dt / 6.0
-        state.psi = psi0 + dt6 * (k1p + 2 * k2p + 2 * k3p + k4p)
-        state.psi = boundary_condition.after_step_action(state.psi)
-        nA_new = nA0 + dt6 * (k1a + 2 * k2a + 2 * k3a + k4a)
-        nI_new = nI0 + dt6 * (k1i + 2 * k2i + 2 * k3i + k4i)
-        reservoir.set_state((xp.maximum(nA_new, 0), xp.maximum(nI_new, 0)))
+        state.psi = boundary_condition.after_step_action(
+            psi0 + dt6 * (k1p + 2 * k2p + 2 * k3p + k4p)
+        )
+        reservoir.set_state(tuple(
+            r0 + dt6 * (r1 + 2 * r2 + 2 * r3 + r4)
+            for r0, r1, r2, r3, r4 in zip(res0, k1r, k2r, k3r, k4r)
+        ))
 
     def step(
         self,
@@ -1199,12 +1064,7 @@ class RK4CudaSolver(AbstractSolver):
     ) -> None:
         """Advance the solver by one time step."""
         if not self._use_gpu:
-            if self._reservoir_type == "double":
-                self._step_cpu_double(potential, pump, reservoir, boundary_condition, state)
-            elif self._reservoir_type == "quadratic-double":
-                self._step_cpu_quadratic_double(potential, pump, reservoir, boundary_condition, state)
-            else:
-                self._step_cpu(potential, pump, reservoir, boundary_condition, state)
+            self._step_cpu(potential, pump, reservoir, boundary_condition, state)
             return
 
         shape = state.psi.shape
