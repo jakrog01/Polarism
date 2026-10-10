@@ -44,7 +44,7 @@ _FLOAT64_PROPAGATORS = pytest.mark.xfail(strict=True, reason="spectral propagato
     "split-step-fft",
     pytest.param("ip-rk4", marks=_FLOAT64_PROPAGATORS),
     pytest.param("etd-rk2", marks=_FLOAT64_PROPAGATORS),
-    pytest.param("ifrk4-fft-cuda", marks=_FLOAT64_PROPAGATORS),
+    "ifrk4-fft-cuda",
 ])
 def test_mask_absorption_keeps_single_precision(method: str) -> None:
     cfg = small_config(solver__method=method, solver__precision="single", boundary_condition__absorption="mask")
