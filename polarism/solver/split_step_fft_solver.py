@@ -1,7 +1,7 @@
 """Split-step FFT solver."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
@@ -45,7 +45,7 @@ class SplitStepFFTSolver(AbstractSolver):
     def step(
         self,
         potential: Union[np.ndarray, cp.ndarray],
-        pump: Union[np.ndarray, cp.ndarray],
+        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
         reservoir: AbstractReservoir,
         boundary_condition: BoundaryCondition,
         state: SimulationState,
@@ -73,4 +73,4 @@ class SplitStepFFTSolver(AbstractSolver):
         state.psi = self._kinetic_half_step_fft(state.psi)
 
         state.psi = boundary_condition.after_step_action(state.psi)
-        reservoir.step(dt, state.psi, pump)
+        reservoir.step(dt, state.psi, pump(state.t + 0.5 * dt))

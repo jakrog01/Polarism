@@ -284,13 +284,9 @@ class SimulationController:
 
         try:
             for step in trange(n_steps, desc="Simulating"):
-                t = step * dt
-
-                P_total = self._compute_total_pump(t)
-
                 self.solver.step(
                     self.potential,
-                    P_total,
+                    self._compute_total_pump,
                     self.reservoir,
                     self.boundary_condition,
                     self.state,

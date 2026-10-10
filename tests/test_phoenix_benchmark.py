@@ -553,7 +553,7 @@ def run_benchmark_simulation(
         for step in range(n_steps):
             sim.state.t = step * dt
             sim.solver.step(
-                sim.potential, P0, sim.reservoir, sim.boundary_condition, sim.state
+                sim.potential, lambda t: P0, sim.reservoir, sim.boundary_condition, sim.state
             )
             if (step + 1) in sample_steps:
                 memory_monitor.sample_gpu()

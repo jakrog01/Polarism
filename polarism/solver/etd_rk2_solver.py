@@ -1,7 +1,7 @@
 """ETD-RK2 solver."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
@@ -86,7 +86,7 @@ class ETDRK2Solver(AbstractSolver):
     def step(
         self,
         potential: Union[np.ndarray, cp.ndarray],
-        pump: Union[np.ndarray, cp.ndarray],
+        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
         reservoir: AbstractReservoir,
         boundary_condition: BoundaryCondition,
         state: SimulationState,
@@ -107,7 +107,7 @@ class ETDRK2Solver(AbstractSolver):
         a = self.xp.fft.ifft2(a_k)
 
         psi_mid = (state.psi + a) / 2
-        reservoir.step(dt, psi_mid, pump)
+        reservoir.step(dt, psi_mid, pump(state.t + 0.5 * dt))
         res_new = reservoir.get_state()
         nR_new = reservoir.get_active_density(res_new)
         nI_new = reservoir.get_inactive_density(res_new)

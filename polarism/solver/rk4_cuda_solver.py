@@ -1,7 +1,7 @@
 """CUDA RK4 solver kernels and driver code."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
@@ -932,7 +932,7 @@ class RK4CudaSolver(AbstractSolver):
             ),
         )
 
-    def _step_gpu(self, V_re, V_im, pump, nR_buf, psi_buf):
+    def _step_gpu(self, V_re, V_im, p0, p_half, p1, nR_buf, psi_buf):
         """Run one RK4 step on the GPU."""
         psi0 = self._psi0
         nR0 = self._nA0
@@ -940,19 +940,19 @@ class RK4CudaSolver(AbstractSolver):
         psi0[:] = psi_buf
         nR0[:] = nR_buf
 
-        self._gpu_rhs(psi0, nR0, V_re, V_im, pump, self._k1_psi, self._k1_nA)
+        self._gpu_rhs(psi0, nR0, V_re, V_im, p0, self._k1_psi, self._k1_nA)
 
         self._gpu_fused_stage_rhs(
             psi0, self._k1_psi, nR0, self._k1_nA,
-            self._k_half_dt, V_re, V_im, pump, self._k2_psi, self._k2_nA,
+            self._k_half_dt, V_re, V_im, p_half, self._k2_psi, self._k2_nA,
         )
         self._gpu_fused_stage_rhs(
             psi0, self._k2_psi, nR0, self._k2_nA,
-            self._k_half_dt, V_re, V_im, pump, self._k3_psi, self._k3_nA,
+            self._k_half_dt, V_re, V_im, p_half, self._k3_psi, self._k3_nA,
         )
         self._gpu_fused_stage_rhs(
             psi0, self._k3_psi, nR0, self._k3_nA,
-            self._k_dt, V_re, V_im, pump, self._k4_psi, self._k4_nA,
+            self._k_dt, V_re, V_im, p1, self._k4_psi, self._k4_nA,
         )
 
         self._gpu_combine(
@@ -1019,7 +1019,7 @@ class RK4CudaSolver(AbstractSolver):
             ),
         )
 
-    def _step_gpu_double(self, V_re, V_im, pump, nA_buf, nI_buf, psi_buf):
+    def _step_gpu_double(self, V_re, V_im, p0, p_half, p1, nA_buf, nI_buf, psi_buf):
         """Run one RK4 step on the GPU."""
         psi0 = self._psi0
         nA0 = self._nA0
@@ -1029,22 +1029,22 @@ class RK4CudaSolver(AbstractSolver):
         nA0[:] = nA_buf
         nI0[:] = nI_buf
 
-        self._gpu_rhs_double(psi0, nA0, nI0, V_re, V_im, pump,
+        self._gpu_rhs_double(psi0, nA0, nI0, V_re, V_im, p0,
                               self._k1_psi, self._k1_nA, self._k1_nI)
 
         self._gpu_fused_stage_rhs_double(
             psi0, self._k1_psi, nA0, self._k1_nA, nI0, self._k1_nI,
-            self._k_half_dt, V_re, V_im, pump,
+            self._k_half_dt, V_re, V_im, p_half,
             self._k2_psi, self._k2_nA, self._k2_nI,
         )
         self._gpu_fused_stage_rhs_double(
             psi0, self._k2_psi, nA0, self._k2_nA, nI0, self._k2_nI,
-            self._k_half_dt, V_re, V_im, pump,
+            self._k_half_dt, V_re, V_im, p_half,
             self._k3_psi, self._k3_nA, self._k3_nI,
         )
         self._gpu_fused_stage_rhs_double(
             psi0, self._k3_psi, nA0, self._k3_nA, nI0, self._k3_nI,
-            self._k_dt, V_re, V_im, pump,
+            self._k_dt, V_re, V_im, p1,
             self._k4_psi, self._k4_nA, self._k4_nI,
         )
 
@@ -1114,7 +1114,7 @@ class RK4CudaSolver(AbstractSolver):
             ),
         )
 
-    def _step_gpu_qdouble(self, V_re, V_im, pump, nR_buf, nI_buf, psi_buf):
+    def _step_gpu_qdouble(self, V_re, V_im, p0, p_half, p1, nR_buf, nI_buf, psi_buf):
         """Run one RK4 step on the GPU for quadratic-double reservoir."""
         psi0 = self._psi0
         nR0 = self._nA0
@@ -1124,22 +1124,22 @@ class RK4CudaSolver(AbstractSolver):
         nR0[:] = nR_buf
         nI0[:] = nI_buf
 
-        self._gpu_rhs_qdouble(psi0, nR0, nI0, V_re, V_im, pump,
+        self._gpu_rhs_qdouble(psi0, nR0, nI0, V_re, V_im, p0,
                                self._k1_psi, self._k1_nA, self._k1_nI)
 
         self._gpu_fused_stage_rhs_qdouble(
             psi0, self._k1_psi, nR0, self._k1_nA, nI0, self._k1_nI,
-            self._k_half_dt, V_re, V_im, pump,
+            self._k_half_dt, V_re, V_im, p_half,
             self._k2_psi, self._k2_nA, self._k2_nI,
         )
         self._gpu_fused_stage_rhs_qdouble(
             psi0, self._k2_psi, nR0, self._k2_nA, nI0, self._k2_nI,
-            self._k_half_dt, V_re, V_im, pump,
+            self._k_half_dt, V_re, V_im, p_half,
             self._k3_psi, self._k3_nA, self._k3_nI,
         )
         self._gpu_fused_stage_rhs_qdouble(
             psi0, self._k3_psi, nR0, self._k3_nA, nI0, self._k3_nI,
-            self._k_dt, V_re, V_im, pump,
+            self._k_dt, V_re, V_im, p1,
             self._k4_psi, self._k4_nA, self._k4_nI,
         )
 
@@ -1344,21 +1344,25 @@ class RK4CudaSolver(AbstractSolver):
     def _step_cpu_quadratic_double(self, V, pump, reservoir, boundary_condition, state):
         """Run one RK4 step on the CPU for quadratic-double reservoir."""
         dt = self._dt
+        t = state.t
+        p0 = pump(t)
+        p_half = pump(t + 0.5 * dt)
+        p1 = pump(t + dt)
         xp = self.xp
         psi0 = state.psi.copy()
         nR0, nI0 = reservoir.get_state()
         nR0 = nR0.copy()
         nI0 = nI0.copy()
 
-        k1p, k1r, k1i = self._cpu_rhs_quadratic_double(psi0, nR0, nI0, V, pump)
+        k1p, k1r, k1i = self._cpu_rhs_quadratic_double(psi0, nR0, nI0, V, p0)
         k2p, k2r, k2i = self._cpu_rhs_quadratic_double(
-            psi0 + 0.5 * dt * k1p, nR0 + 0.5 * dt * k1r, nI0 + 0.5 * dt * k1i, V, pump
+            psi0 + 0.5 * dt * k1p, nR0 + 0.5 * dt * k1r, nI0 + 0.5 * dt * k1i, V, p_half
         )
         k3p, k3r, k3i = self._cpu_rhs_quadratic_double(
-            psi0 + 0.5 * dt * k2p, nR0 + 0.5 * dt * k2r, nI0 + 0.5 * dt * k2i, V, pump
+            psi0 + 0.5 * dt * k2p, nR0 + 0.5 * dt * k2r, nI0 + 0.5 * dt * k2i, V, p_half
         )
         k4p, k4r, k4i = self._cpu_rhs_quadratic_double(
-            psi0 + dt * k3p, nR0 + dt * k3r, nI0 + dt * k3i, V, pump
+            psi0 + dt * k3p, nR0 + dt * k3r, nI0 + dt * k3i, V, p1
         )
 
         dt6 = dt / 6.0
@@ -1371,13 +1375,17 @@ class RK4CudaSolver(AbstractSolver):
     def _step_cpu(self, V, pump, reservoir, boundary_condition, state):
         """Run one RK4 step on the CPU."""
         dt = self._dt
+        t = state.t
+        p0 = pump(t)
+        p_half = pump(t + 0.5 * dt)
+        p1 = pump(t + dt)
         psi0 = state.psi.copy()
         nR0 = reservoir.get_reservoir_density().copy()
 
-        k1p, k1n = self._cpu_rhs(psi0, nR0, V, pump)
-        k2p, k2n = self._cpu_rhs(psi0 + 0.5 * dt * k1p, nR0 + 0.5 * dt * k1n, V, pump)
-        k3p, k3n = self._cpu_rhs(psi0 + 0.5 * dt * k2p, nR0 + 0.5 * dt * k2n, V, pump)
-        k4p, k4n = self._cpu_rhs(psi0 + dt * k3p, nR0 + dt * k3n, V, pump)
+        k1p, k1n = self._cpu_rhs(psi0, nR0, V, p0)
+        k2p, k2n = self._cpu_rhs(psi0 + 0.5 * dt * k1p, nR0 + 0.5 * dt * k1n, V, p_half)
+        k3p, k3n = self._cpu_rhs(psi0 + 0.5 * dt * k2p, nR0 + 0.5 * dt * k2n, V, p_half)
+        k4p, k4n = self._cpu_rhs(psi0 + dt * k3p, nR0 + dt * k3n, V, p1)
 
         state.psi = psi0 + (dt / 6.0) * (k1p + 2 * k2p + 2 * k3p + k4p)
         state.psi = boundary_condition.after_step_action(state.psi)
@@ -1387,21 +1395,25 @@ class RK4CudaSolver(AbstractSolver):
     def _step_cpu_double(self, V, pump, reservoir, boundary_condition, state):
         """Run one RK4 step on the CPU."""
         dt = self._dt
+        t = state.t
+        p0 = pump(t)
+        p_half = pump(t + 0.5 * dt)
+        p1 = pump(t + dt)
         xp = self.xp
         psi0 = state.psi.copy()
         nA0, nI0 = reservoir.get_state()
         nA0 = nA0.copy()
         nI0 = nI0.copy()
 
-        k1p, k1a, k1i = self._cpu_rhs_double(psi0, nA0, nI0, V, pump)
+        k1p, k1a, k1i = self._cpu_rhs_double(psi0, nA0, nI0, V, p0)
         k2p, k2a, k2i = self._cpu_rhs_double(
-            psi0 + 0.5 * dt * k1p, nA0 + 0.5 * dt * k1a, nI0 + 0.5 * dt * k1i, V, pump
+            psi0 + 0.5 * dt * k1p, nA0 + 0.5 * dt * k1a, nI0 + 0.5 * dt * k1i, V, p_half
         )
         k3p, k3a, k3i = self._cpu_rhs_double(
-            psi0 + 0.5 * dt * k2p, nA0 + 0.5 * dt * k2a, nI0 + 0.5 * dt * k2i, V, pump
+            psi0 + 0.5 * dt * k2p, nA0 + 0.5 * dt * k2a, nI0 + 0.5 * dt * k2i, V, p_half
         )
         k4p, k4a, k4i = self._cpu_rhs_double(
-            psi0 + dt * k3p, nA0 + dt * k3a, nI0 + dt * k3i, V, pump
+            psi0 + dt * k3p, nA0 + dt * k3a, nI0 + dt * k3i, V, p1
         )
 
         dt6 = dt / 6.0
@@ -1414,7 +1426,7 @@ class RK4CudaSolver(AbstractSolver):
     def step(
         self,
         potential: Union[np.ndarray, cp.ndarray],
-        pump: Union[np.ndarray, cp.ndarray],
+        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
         reservoir: AbstractReservoir,
         boundary_condition: BoundaryCondition,
         state: SimulationState,
@@ -1432,7 +1444,11 @@ class RK4CudaSolver(AbstractSolver):
         shape = state.psi.shape
 
         V_re_flat, V_im_flat = self._prepare_potential_buffers(potential)
-        pump_flat = self._cast_to_precision(pump).ravel()
+        t = state.t
+        dt = self.config.solver.dt
+        p0 = self._cast_to_precision(pump(t)).ravel()
+        p_half = self._cast_to_precision(pump(t + 0.5 * dt)).ravel()
+        p1 = self._cast_to_precision(pump(t + dt)).ravel()
 
         with self._stream_compute:
             if self._reservoir_type == "double":
@@ -1444,7 +1460,7 @@ class RK4CudaSolver(AbstractSolver):
                 nI_buf = self._nI_tmp
                 nI_buf[:] = self._cast_to_precision(nI).ravel()
 
-                self._step_gpu_double(V_re_flat, V_im_flat, pump_flat, nA_buf, nI_buf, psi_buf)
+                self._step_gpu_double(V_re_flat, V_im_flat, p0, p_half, p1, nA_buf, nI_buf, psi_buf)
                 self._transfer_event.record(self._stream_compute)
             elif self._reservoir_type == "quadratic-double":
                 nR, nI = reservoir.get_state()
@@ -1455,7 +1471,7 @@ class RK4CudaSolver(AbstractSolver):
                 nI_buf = self._nI_tmp
                 nI_buf[:] = self._cast_to_precision(nI).ravel()
 
-                self._step_gpu_qdouble(V_re_flat, V_im_flat, pump_flat, nR_buf, nI_buf, psi_buf)
+                self._step_gpu_qdouble(V_re_flat, V_im_flat, p0, p_half, p1, nR_buf, nI_buf, psi_buf)
                 self._transfer_event.record(self._stream_compute)
             else:
                 psi_buf = self._psi_tmp
@@ -1465,7 +1481,7 @@ class RK4CudaSolver(AbstractSolver):
                     reservoir.get_reservoir_density()
                 ).ravel()
 
-                self._step_gpu(V_re_flat, V_im_flat, pump_flat, nR_buf, psi_buf)
+                self._step_gpu(V_re_flat, V_im_flat, p0, p_half, p1, nR_buf, psi_buf)
                 self._transfer_event.record(self._stream_compute)
 
         self._stream_transfer.wait_event(self._transfer_event)

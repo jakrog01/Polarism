@@ -23,7 +23,7 @@ def test_assigning_psi_discards_cached_spectrum() -> None:
         laser__P0=0.0,
     )
     controller = SimulationController(cfg)
-    step_args = (controller.potential, controller._compute_total_pump(0.0), controller.reservoir, controller.boundary_condition, controller.state)
+    step_args = (controller.potential, lambda t: controller._compute_total_pump(0.0), controller.reservoir, controller.boundary_condition, controller.state)
     controller.solver.step(*step_args)
     assert controller.state.psi_k is not None
 

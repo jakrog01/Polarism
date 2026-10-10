@@ -65,6 +65,15 @@ Then select it like any built-in laser:
 cfg.laser.laser_type = "ring"
 ```
 
+## Solvers
+
+Plugin solvers implement `step(potential, pump, reservoir, boundary_condition,
+state)`. The `pump` argument is now a callable `pump(t) -> array`, replacing the
+former array argument. Use `state.t` as the step start time and evaluate the
+pump at the integration stage times. The caller updates `state.t` after the
+step. See the [solver interface](../api/solvers.md#solver-interface) for the
+built-in stage schedules.
+
 ## Reservoirs
 
 Subclass `AbstractReservoir` (or a built-in reservoir) and register it:

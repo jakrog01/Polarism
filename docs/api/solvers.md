@@ -7,8 +7,21 @@ All solver backends implement the `AbstractSolver` interface: they accept a conf
 At the abstraction level, every solver must:
 
 - be constructible from the simulation config and grid
-- implement `step(...)`
-- consume the current potential, pump field, reservoir, boundary condition, and simulation state
+- implement `step(potential, pump, reservoir, boundary_condition, state)`
+- consume the current potential, pump callable, reservoir, boundary condition, and simulation state
+
+`pump` is a callable `pump(t) -> array`, returning the pump field at the
+requested time. The step starts at `state.t` and advances the fields by
+`config.solver.dt`; the caller updates `state.t` afterward.
+
+RK4 solvers evaluate the pump once at each of `t`, `t + dt/2`, and `t + dt`,
+using the midpoint value for both middle stages. `etd-rk2` and `split-step-fft`
+pass `pump(t + dt/2)` to `reservoir.step`; the reservoir interface still accepts
+an array. For a constant field, pass `lambda t: pump_array`.
+
+This replaces the former pump-array argument and intentionally breaks the
+plugin solver interface. Plugin solvers must evaluate the callable at their
+integration stage times.
 
 ## Available solver methods
 
