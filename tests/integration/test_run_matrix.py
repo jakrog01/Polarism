@@ -12,13 +12,21 @@ from polarism.solver.solver_compatibility import _SOLVER_CAPABILITIES
 from tests.unit.conftest import small_config
 
 TOL_INTEG_FINITE = 1e-12  # No NaN/Inf; buffer arithmetic identity.
-CASES = [(solver, grid_type, reservoir) for solver, caps in _SOLVER_CAPABILITIES.items() for grid_type in caps["grid_types"] for reservoir in caps["reservoir_types"]]
+CASES = [
+    pytest.param(solver, grid_type, reservoir,
+                 marks=pytest.mark.gpu if solver == "split-step-fft-cuda" else ())
+    for solver, caps in _SOLVER_CAPABILITIES.items()
+    for grid_type in caps["grid_types"]
+    for reservoir in caps["reservoir_types"]
+]
 
 
 @pytest.mark.parametrize("solver,grid_type,reservoir", CASES)
 def test_solver_run_matrix(tmp_path, solver: str, grid_type: str, reservoir: str) -> None:
-    requires_gpu = solver in {"rk4-cuda", "ifrk4-fft-cuda"}
+    requires_gpu = solver in {"rk4-cuda", "ifrk4-fft-cuda", "split-step-fft-cuda"}
     compute_engine.configure(ComputeEngineParameters(use_gpu=requires_gpu))
+    if solver == "split-step-fft-cuda" and not compute_engine.use_gpu:
+        pytest.skip("CUDA device unavailable")
     cfg = small_config(grid__nx=32, grid__ny=32, grid__lx=40.0, grid__ly=40.0, grid__grid_type=grid_type, solver__method=solver, solver__dt=0.01, solver__total_time=0.5, reservoir__reservoir_type=reservoir, result__save_results=True, result__save_hdf5=True, result__save_interval=7, result__batch_size=10, result__output_directory=str(tmp_path), compute_engine=ComputeEngineParameters(use_gpu=requires_gpu))
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UserWarning)
