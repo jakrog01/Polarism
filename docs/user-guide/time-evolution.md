@@ -9,7 +9,7 @@ The codebase supports several real-time integration strategies. The best choice 
 | Reference finite difference RK4 | `rk4-fdm` | Baseline correctness and convergence studies |
 | Fused finite difference RK4 | `rk4-fdm-fused` | Faster CPU or backend-agnostic finite-difference runs |
 | CUDA fused RK4 | `rk4-cuda` | GPU production runs |
-| Split-step FFT | `split-step-fft` | Spectral runs on simple periodic-like setups |
+| Split-step FFT | `split-step-fft` | Second-order Strang splitting on periodic grids |
 | Interaction-picture RK4 | `ip-rk4` | Spectral-style evolution when its assumptions fit |
 | ETD-RK2 | `etd-rk2` | Periodic spectral evolution with exponential differencing |
 | GPU-native FFT IP-RK4 | `ifrk4-fft-cuda` | GPU-native spectral production runs with stage-coupled reservoirs |
@@ -22,7 +22,7 @@ Recommended order:
 2. Confirm time-step and grid convergence.
 3. Move to `rk4-fdm-fused` or `rk4-cuda` (FDM production) once the physics setup is stable.
 4. For periodic-grid spectral campaigns, use `ifrk4-fft-cuda` (GPU-native, stage-coupled quadratic-double).
-5. Use `split-step-fft`, `ip-rk4`, or `etd-rk2` only as diagnostic or reference spectral paths.
+5. Use `split-step-fft` for second-order spectral evolution on periodic grids, including reservoir-coupled cases. It does not evaluate `kinetic_relaxation_eta`.
 
 ## Spectral solver limitations
 

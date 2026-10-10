@@ -55,6 +55,7 @@ def _run(method: str, dt: float) -> tuple[np.ndarray, np.ndarray]:
     ("ip-rk4", 3.7),
     ("ifrk4-fft-cuda", 3.7),
     ("etd-rk2", 1.8),
+    ("split-step-fft", 1.8),
 ])
 def test_pump_time_order(method: str, min_order: float) -> None:
     fields = [_run(method, dt) for dt in (0.02, 0.01, 0.005)]

@@ -90,8 +90,8 @@ class MyReservoir(SingleReservoir):
 
 Plugin reservoirs work with every solver that drives the reservoir through the
 `AbstractReservoir` interface. `rk4-cuda` has hard-coded reservoir kernels and
-rejects them; `split-step-fft` accepts them with a warning that the
-psi/reservoir coupling is only first order.
+rejects them; `split-step-fft` accepts them with second-order Strang
+coupling between the condensate and reservoir.
 
 ## Grids
 

@@ -15,9 +15,11 @@ requested time. The step starts at `state.t` and advances the fields by
 `config.solver.dt`; the caller updates `state.t` afterward.
 
 RK4 solvers evaluate the pump once at each of `t`, `t + dt/2`, and `t + dt`,
-using the midpoint value for both middle stages. `etd-rk2` and `split-step-fft`
-pass `pump(t + dt/2)` to `reservoir.step`; the reservoir interface still accepts
-an array. For a constant field, pass `lambda t: pump_array`.
+using the midpoint value for both middle stages. `etd-rk2` passes
+`pump(t + dt/2)` to `reservoir.step`. `split-step-fft` advances the reservoir
+in two half-steps, sampling the pump at `t + dt/4` and `t + 3dt/4`. The
+reservoir interface still accepts an array. For a constant field, pass
+`lambda t: pump_array`.
 
 This replaces the former pump-array argument and intentionally breaks the
 plugin solver interface. Plugin solvers must evaluate the callable at their
@@ -30,7 +32,7 @@ integration stage times.
 | `rk4-fdm` | finite-difference RK4 | reference solver, broadest baseline |
 | `rk4-fdm-fused` | optimized finite-difference RK4 | lower-overhead FDM path |
 | `rk4-cuda` | fused CUDA RK4 | GPU-oriented production runs |
-| `split-step-fft` | spectral split-step | efficient spectral solver when assumptions match |
+| `split-step-fft` | spectral Strang split-step | second-order periodic-grid solver |
 | `etd-rk2` | exponential time differencing | spectral periodic-grid path |
 | `ip-rk4` | interaction-picture RK4 | spectral-style RK4 variant |
 | `ifrk4-fft-cuda` | GPU-native FFT interaction-picture RK4 | production spectral solver with stage-coupled reservoirs |
@@ -61,8 +63,7 @@ Key properties:
   `closed-interval`.  Open-boundary problems should use a wide CAP absorber on a
   periodic grid.
 - **Quadratic-double is stage-coupled**: `(nR, nI)` are advanced through the same four
-  RK4 stages as `psi`, eliminating the O(dt) operator-splitting error present in
-  split-step-based approaches.
+  RK4 stages as `psi`.
 - **No hard k-space filter**: high-k content is visible in `high_k_frac_0p8_nyq`
   diagnostics without artificial suppression.
 - **Energy relaxation**: `kinetic_relaxation_eta != 0` adds
@@ -85,8 +86,8 @@ not a new physical term.  It is useful when high-k modes expose the angular
 anisotropy of the five-point stencil.  It does not replace grid-convergence or
 time-step checks.
 
-For `quadratic-double` campaigns there are two production paths depending on
-grid topology:
+For `quadratic-double` campaigns, choose a solver based on grid topology and
+the desired time integrator:
 
 - **`rk4-cuda`** is the FDM production and reference path.  It supports both
   periodic and closed-interval grids and integrates `psi`, `nR`, `nI` in the same
@@ -94,12 +95,13 @@ grid topology:
   especially on closed-interval grids.
 - **`ifrk4-fft-cuda`** is the spectral production path for periodic grids (or
   periodic + CAP open-boundary problems).  It stage-couples `(nR, nI)` inside the
-  same FFT RK4 scheme as `psi`, eliminating the O(dt) splitting error.  Use it
+  same FFT RK4 scheme as `psi`. Use it
   for large periodic-grid campaigns where spectral kinetics are preferred.
-- **`split-step-fft`** is diagnostic only for `quadratic-double`. Its Lie
-  splitting advances the reservoir with a separate RK2 step at the end of each
-  full split-step cycle, introducing a global O(dt) coupling error. It is not a
-  production reference for threshold or amplitude comparisons.
+- **`split-step-fft`** uses second-order Strang splitting for all built-in
+  reservoir types, including `quadratic-double`. Two reservoir half-steps
+  surround the kinetic and exact local condensate steps. It supports a
+  non-zero potential and CAP absorption on periodic grids, but does not
+  evaluate `kinetic_relaxation_eta`.
 
 `etd-rk2` inserts its reservoir sub-step between the predictor and corrector and
 drives it with the midpoint condensate estimate `(psi_n + a) / 2`. This retains
