@@ -27,7 +27,7 @@ The grid layer is defined by the `SimulationGrid2D` protocol. Concrete grids mus
 | `absorption` | Meaning |
 | --- | --- |
 | `no-absorption` | no damping near the boundary |
-| `mask` | multiplicative damping mask applied near the edges; its per-step multiplier is `(1 - profile) ** strength` |
+| `mask` | multiplicative damping mask applied after each step near the edges; its per-step multiplier is `exp(-strength * profile * dt / 2)`, the exact step of the `cap` potential with the same `strength`. Applied as a separate step, it limits the solver to first order in time. |
 | `cap` | complex absorbing potential added near the edges; `strength` scales its imaginary component |
 
 ## Potential factory

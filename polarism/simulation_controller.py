@@ -81,7 +81,7 @@ class SimulationController:
 
         self.grid = create_grid(cfg.grid)
         self.boundary_condition = BoundaryCondition(
-            self.grid, cfg.boundary_condition, cfg.physics
+            self.grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt
         )
         self.potential = create_potential(cfg.potential, self.grid)
         self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self.grid.Y, cfg.solver.precision)

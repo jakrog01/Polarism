@@ -64,7 +64,7 @@ coefficient so that the corrective action is unambiguous.
 | --- | --- | --- |
 | `absorption` | absorbing-boundary strategy | `no-absorption`, `mask`, `cap` |
 | `profile_type` | absorption profile shape | `sin2`, `parabolic` |
-| `strength` | boundary damping strength; `0` disables damping. For `mask`, the per-step multiplier is `(1 - profile) ** strength`; for `cap`, it scales the imaginary absorbing potential. | nonnegative float |
+| `strength` | boundary damping strength; `0` disables damping. Both `cap` and `mask` damp `|psi|^2` at the rate `strength * profile` (1/ps); `mask` applies it after each step as `exp(-strength * profile * dt / 2)`. | nonnegative float |
 | `mask_width_percent` | boundary-layer width as fraction of domain | float in `[0, 0.5]` |
 
 ## Potential options

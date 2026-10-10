@@ -36,8 +36,11 @@ def test_absorption_strategies(absorption: str) -> None:
         assert np.all(potential.real == 0.0) and np.all(potential.imag <= 0.0)
         assert strategy.apply_absorption(psi) is psi and strategy.after_step_is_noop is True
     elif absorption == "mask":
+        dt = 0.01
+        strategy.set_time_step(dt)
+        expected = np.exp(-0.5 * strategy.strength * strategy.absorption_profile * dt)
         assert strategy.get_potential_distribution() == 0.0
-        assert np.allclose(strategy.apply_absorption(psi), 1.0 - strategy.absorption_profile, rtol=TOL_MACHINE_F64)
+        assert np.allclose(strategy.apply_absorption(psi), expected, rtol=TOL_MACHINE_F64)
         assert strategy.after_step_is_noop is False
     else:
         assert strategy.get_potential_distribution() == 0.0
@@ -68,11 +71,23 @@ def test_mask_strength_controls_boundary_damping() -> None:
         ),
         PhysicsConstants(),
     )
+    for strategy in (weak, strong, disabled):
+        strategy.set_time_step(0.01)
     interior = weak.absorption_profile == 0.0
     transition = (weak.absorption_profile > 0.0) & (weak.absorption_profile < 1.0)
     assert np.allclose(disabled.mask, 1.0, rtol=TOL_MACHINE_F64)
     assert np.allclose(weak.mask[interior], 1.0, rtol=TOL_MACHINE_F64)
     assert np.all(strong.mask[transition] < weak.mask[transition])
+
+
+def test_mask_requires_time_step_and_keeps_field_dtype() -> None:
+    compute_engine.xp = np
+    strategy = create_absorption_strategy(grid(), BoundaryConditionParameters(absorption="mask"), PhysicsConstants())
+    psi = np.ones(strategy.absorption_profile.shape, dtype=np.complex64)
+    with pytest.raises(RuntimeError, match="set_time_step"):
+        strategy.apply_absorption(psi)
+    strategy.set_time_step(0.01)
+    assert strategy.apply_absorption(psi).dtype == np.complex64
 
 
 def test_unknown_absorption_configuration_errors() -> None:
