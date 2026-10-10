@@ -1,7 +1,7 @@
 """Interaction-picture RK4 solver."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
@@ -71,13 +71,17 @@ class IPRK4Solver(AbstractSolver):
     def step(
         self,
         potential: Union[np.ndarray, cp.ndarray],
-        pump: Union[np.ndarray, cp.ndarray],
+        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
         reservoir: AbstractReservoir,
         boundary_condition: BoundaryCondition,
         state: SimulationState,
     ) -> None:
         """Advance the solver by one time step."""
         dt = self.config.solver.dt
+        t = state.t
+        p0 = pump(t)
+        p_half = pump(t + 0.5 * dt)
+        p1 = pump(t + dt)
 
         psi0 = state.psi
         res0 = reservoir.get_state()
@@ -88,7 +92,7 @@ class IPRK4Solver(AbstractSolver):
         N1 = self._nonlinear_rhs(psi0, nR_0, nI_0, potential, psi0_k)
         N1_k = self._forward(N1)
         k1_u = N1_k
-        k1_res = reservoir.get_derivatives(psi0, pump, res0)
+        k1_res = reservoir.get_derivatives(psi0, p0, res0)
 
         u_mid = psi0_k + (dt / 2) * k1_u
         psi_mid_k = self._exp_L_half * u_mid
@@ -99,7 +103,7 @@ class IPRK4Solver(AbstractSolver):
         N2 = self._nonlinear_rhs(psi_mid, nR_mid, nI_mid, potential, psi_mid_k)
         N2_k = self._forward(N2)
         k2_u = self._exp_L_neg_half * N2_k
-        k2_res = reservoir.get_derivatives(psi_mid, pump, res_mid)
+        k2_res = reservoir.get_derivatives(psi_mid, p_half, res_mid)
 
         u_mid2 = psi0_k + (dt / 2) * k2_u
         psi_mid2_k = self._exp_L_half * u_mid2
@@ -110,7 +114,7 @@ class IPRK4Solver(AbstractSolver):
         N3 = self._nonlinear_rhs(psi_mid2, nR_mid2, nI_mid2, potential, psi_mid2_k)
         N3_k = self._forward(N3)
         k3_u = self._exp_L_neg_half * N3_k
-        k3_res = reservoir.get_derivatives(psi_mid2, pump, res_mid2)
+        k3_res = reservoir.get_derivatives(psi_mid2, p_half, res_mid2)
 
         u_end = psi0_k + dt * k3_u
         psi_end_k = self._exp_L_full * u_end
@@ -121,7 +125,7 @@ class IPRK4Solver(AbstractSolver):
         N4 = self._nonlinear_rhs(psi_end, nR_end, nI_end, potential, psi_end_k)
         N4_k = self._forward(N4)
         k4_u = self._exp_L_neg_full * N4_k
-        k4_res = reservoir.get_derivatives(psi_end, pump, res_end)
+        k4_res = reservoir.get_derivatives(psi_end, p1, res_end)
 
         u_new = psi0_k + (dt / 6.0) * (k1_u + 2 * k2_u + 2 * k3_u + k4_u)
         psi_new_k = self._exp_L_full * u_new

@@ -1,7 +1,7 @@
 """Split-step FFT solver."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
@@ -45,7 +45,7 @@ class SplitStepFFTSolver(AbstractSolver):
     def step(
         self,
         potential: Union[np.ndarray, cp.ndarray],
-        pump: Union[np.ndarray, cp.ndarray],
+        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
         reservoir: AbstractReservoir,
         boundary_condition: BoundaryCondition,
         state: SimulationState,
@@ -59,6 +59,7 @@ class SplitStepFFTSolver(AbstractSolver):
         R = self.config.physics.R
         gamma_C = self.config.physics.gamma_C
 
+        reservoir.step(dt / 2, state.psi, pump(state.t + dt / 4))
         res_state = reservoir.get_state()
         nR = reservoir.get_active_density(res_state)
         nI = reservoir.get_inactive_density(res_state)
@@ -66,11 +67,21 @@ class SplitStepFFTSolver(AbstractSolver):
         state.psi = self._kinetic_half_step_fft(state.psi)
 
         rho = self.xp.abs(state.psi) ** 2
-        eff_energy = potential + g_C * rho + g_R * nR + g_I * nI
-        gain_loss = (R * nR - gamma_C) / 2.0
-        state.psi = state.psi * self.xp.exp((-1j * eff_energy / hbar + gain_loss) * dt)
+        gain_loss = (R * nR - gamma_C) / 2.0 + self.xp.imag(potential) / hbar
+        x = 2 * gain_loss * dt
+        small = self.xp.abs(x) < 1e-6
+        phase_time = dt * self.xp.where(
+            small,
+            1 + x / 2 + x * x / 6,
+            self.xp.expm1(x) / self.xp.where(small, 1, x),
+        )
+        phase = (
+            (self.xp.real(potential) + g_R * nR + g_I * nI) * dt
+            + g_C * rho * phase_time
+        ) / hbar
+        state.psi = state.psi * self.xp.exp(gain_loss * dt - 1j * phase)
 
         state.psi = self._kinetic_half_step_fft(state.psi)
 
+        reservoir.step(dt / 2, state.psi, pump(state.t + 3 * dt / 4))
         state.psi = boundary_condition.after_step_action(state.psi)
-        reservoir.step(dt, state.psi, pump)

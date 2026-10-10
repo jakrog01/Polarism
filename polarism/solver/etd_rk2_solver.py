@@ -1,7 +1,8 @@
 """ETD-RK2 solver."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union
+import math
+from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
@@ -15,6 +16,11 @@ if TYPE_CHECKING:
     from polarism.config.simulation_parameters import Config
     from polarism.grid.simulation_grid_2d import SimulationGrid2D
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
+
+# The direct phi formulas lose about eps/|z|**2 to cancellation, so small |z|
+# uses the Taylor series; ten terms keep its truncation error below 1e-16.
+_PHI_TAYLOR_RADIUS = 0.1
+_PHI_TAYLOR_TERMS = 10
 
 
 @register_solver("etd-rk2")
@@ -44,23 +50,26 @@ class ETDRK2Solver(AbstractSolver):
         self._phi1 = self._compute_phi1(L_dt)
         self._phi2 = self._compute_phi2(L_dt)
 
+    def _phi_taylor(self, z, offset):
+        """Return sum_k z**k / (k + offset)! for small ``|z|``."""
+        result = self.xp.zeros_like(z)
+        for k in range(_PHI_TAYLOR_TERMS - 1, -1, -1):
+            result = result * z + 1.0 / math.factorial(k + offset)
+        return result
+
     def _compute_phi1(self, z):
         """Compute the phi1 coefficient."""
-        exp_z = self.xp.exp(z)
-        z_safe = self.xp.where(self.xp.abs(z) > 1e-12, z, 1e-12)
-        direct = (exp_z - 1) / z_safe
-        taylor = 1 + z / 2 + z**2 / 6 + z**3 / 24
-        result = self.xp.where(self.xp.abs(z) > 1e-10, direct, taylor)
-        return result
+        small = self.xp.abs(z) < _PHI_TAYLOR_RADIUS
+        z_safe = self.xp.where(small, 1.0, z)
+        direct = (self.xp.exp(z_safe) - 1) / z_safe
+        return self.xp.where(small, self._phi_taylor(z, 1), direct)
 
     def _compute_phi2(self, z):
         """Compute the phi2 coefficient."""
-        exp_z = self.xp.exp(z)
-        z_safe = self.xp.where(self.xp.abs(z) > 1e-12, z, 1e-12)
-        direct = (exp_z - 1 - z_safe) / (z_safe**2)
-        taylor = 0.5 + z / 6 + z**2 / 24 + z**3 / 120
-        result = self.xp.where(self.xp.abs(z) > 1e-10, direct, taylor)
-        return result
+        small = self.xp.abs(z) < _PHI_TAYLOR_RADIUS
+        z_safe = self.xp.where(small, 1.0, z)
+        direct = (self.xp.exp(z_safe) - 1 - z_safe) / (z_safe**2)
+        return self.xp.where(small, self._phi_taylor(z, 2), direct)
 
     def _nonlinear_rhs(
         self,
@@ -86,7 +95,7 @@ class ETDRK2Solver(AbstractSolver):
     def step(
         self,
         potential: Union[np.ndarray, cp.ndarray],
-        pump: Union[np.ndarray, cp.ndarray],
+        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
         reservoir: AbstractReservoir,
         boundary_condition: BoundaryCondition,
         state: SimulationState,
@@ -107,7 +116,7 @@ class ETDRK2Solver(AbstractSolver):
         a = self.xp.fft.ifft2(a_k)
 
         psi_mid = (state.psi + a) / 2
-        reservoir.step(dt, psi_mid, pump)
+        reservoir.step(dt, psi_mid, pump(state.t + 0.5 * dt))
         res_new = reservoir.get_state()
         nR_new = reservoir.get_active_density(res_new)
         nI_new = reservoir.get_inactive_density(res_new)

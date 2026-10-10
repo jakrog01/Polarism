@@ -22,9 +22,17 @@ class StorageVisitor(ResultVisitor):
     def __init__(self, cfg: Config):
         """Set up the storage backends for the config."""
         self.cfg = cfg
-        self.output_dir = Path(
-            self.cfg.result.output_directory, time.strftime("%Y%m%d-%H%M%S")
-        )
+        root = Path(self.cfg.result.output_directory)
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        suffix = 0
+        while True:
+            name = timestamp if suffix == 0 else f"{timestamp}-{suffix}"
+            self.output_dir = root / name
+            try:
+                self.output_dir.mkdir(parents=True, exist_ok=False)
+                break
+            except FileExistsError:
+                suffix += 1
         self.batch_size = self.cfg.result.batch_size
 
         self.storages = []

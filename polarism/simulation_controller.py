@@ -81,7 +81,7 @@ class SimulationController:
 
         self.grid = create_grid(cfg.grid)
         self.boundary_condition = BoundaryCondition(
-            self.grid, cfg.boundary_condition, cfg.physics
+            self.grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt
         )
         self.potential = create_potential(cfg.potential, self.grid)
         self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self.grid.Y, cfg.solver.precision)
@@ -283,14 +283,15 @@ class SimulationController:
         n_steps = round(self.cfg.solver.total_time / dt)
 
         try:
+            if any((self.storage_visitor, self.animation_visitor, self.visualizer)):
+                self._record_results(self.state.t)
+                if self.visualizer is not None:
+                    self.next_viz_time += self.cfg.result.real_time_refresh_interval
+
             for step in trange(n_steps, desc="Simulating"):
-                t = step * dt
-
-                P_total = self._compute_total_pump(t)
-
                 self.solver.step(
                     self.potential,
-                    P_total,
+                    self._compute_total_pump,
                     self.reservoir,
                     self.boundary_condition,
                     self.state,
@@ -302,7 +303,7 @@ class SimulationController:
                 save_interval = max(1, self.cfg.result.save_interval)
                 should_save = (
                     self.storage_visitor is not None
-                    and step % save_interval == 0
+                    and (step + 1) % save_interval == 0
                 )
                 should_viz = (
                     self.visualizer is not None and t_after >= self.next_viz_time
@@ -317,18 +318,11 @@ class SimulationController:
 
                 should_animate = (
                     self.animation_visitor is not None
-                    and step % save_interval == 0
+                    and (step + 1) % save_interval == 0
                 )
 
                 if should_save or should_viz or should_animate:
-                    P_total = self._compute_total_pump(t_after)
-                    self.results_manager.step(
-                        t_after,
-                        state=self.state,
-                        grid=self.grid,
-                        P_total=P_total,
-                        scalar_groups=self._get_scalar_groups(),
-                    )
+                    self._record_results(t_after)
                     if should_viz:
                         self.next_viz_time += self.cfg.result.real_time_refresh_interval
         finally:
@@ -340,6 +334,17 @@ class SimulationController:
                 except Exception as exc:
                     import sys
                     print(f"WARNING: animation finalize failed: {exc}", file=sys.stderr)
+
+    def _record_results(self, t: float) -> None:
+        """Evaluate the pump and send the current state to result visitors."""
+        P_total = self._compute_total_pump(t)
+        self.results_manager.step(
+            t,
+            state=self.state,
+            grid=self.grid,
+            P_total=P_total,
+            scalar_groups=self._get_scalar_groups(),
+        )
 
     def _compute_total_pump(self, t: float) -> Union[np.ndarray, cp.ndarray]:
         """Sum the pump from all lasers at time t."""

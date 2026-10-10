@@ -13,8 +13,14 @@ from tests._helpers import initial_packet, rel_l2_err
 from tests.unit.conftest import small_config
 
 TOL_ORDER_SLOPE = 0.15  # Log-log convergence-slope fit tolerance.
-ORDER_EXPECTED = {"rk4": 4.0, "iprk4": 4.0, "split": 2.0, "etdrk2": 2.0}
-ORDER_QDOUBLE_DROP = 1.0  # Split-coupled solvers degrade to first-order coupling.
+ORDER_EXPECTED = {
+    "rk4-fdm": 4.0,
+    "rk4-fdm-fused": 4.0,
+    "ip-rk4": 4.0,
+    "ifrk4-fft-cuda": 4.0,
+    "split-step-fft": 2.0,
+    "etd-rk2": 2.0,
+}
 
 
 def _run(solver: str, reservoir: str, dt: float) -> np.ndarray:
@@ -75,10 +81,12 @@ def test_time_convergence_and_artifact(solver: str, reservoir: str) -> None:
         rel_l2_err(np.abs(field) ** 2, reference)
         for field in fields
     ]
-    usable = np.maximum(errors[1:5], np.finfo(float).tiny)
-    order = -np.polyfit(np.arange(1, 5), np.log2(usable), 1)[0]
+    # Fit the four finest steps; the coarsest RK4 steps are pre-asymptotic.
+    usable = np.maximum(errors[2:6], np.finfo(float).tiny)
+    order = -np.polyfit(np.arange(2, 6), np.log2(usable), 1)[0]
     path = Path("artifacts/convergence"); path.mkdir(parents=True, exist_ok=True)
     (path / f"time_{solver}_{reservoir}.json").write_text(json.dumps({"entries": [{"dt": dt, "error": error} for dt, error in zip(dts, errors)], "order": order}))
     assert np.isfinite(order)
+    assert abs(order - ORDER_EXPECTED[solver]) <= TOL_ORDER_SLOPE, f"{solver} {reservoir}: order={order:.3f}"
     if solver in {"rk4-fdm", "rk4-fdm-fused", "ip-rk4", "ifrk4-fft-cuda"}:
         assert max(errors) / min(errors) >= 1e4

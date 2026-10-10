@@ -26,11 +26,13 @@ class BoundaryCondition:
         grid: SimulationGrid2D,
         boundary_conditions_config: BoundaryConditionParameters,
         physics_constants: PhysicsConstants,
+        dt: float,
     ):
         """Set up the boundary absorption strategy."""
         self.absorption = create_absorption_strategy(
             grid, boundary_conditions_config, physics_constants
         )
+        self.absorption.set_time_step(dt)
 
     def before_step_action(self) -> Union[np.ndarray, cp.ndarray]:
         """Return the boundary potential term."""

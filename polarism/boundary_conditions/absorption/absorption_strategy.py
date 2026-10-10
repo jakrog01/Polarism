@@ -28,6 +28,9 @@ class AbsorptionStrategy(ABC):
         """Return potential distribution."""
         pass
 
+    def set_time_step(self, dt: float) -> None:
+        """Receive the solver time step before the first ``apply_absorption`` call."""
+
     @abstractmethod
     def apply_absorption(
         self, psi: Union[np.ndarray, cp.ndarray]

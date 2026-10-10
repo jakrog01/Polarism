@@ -191,7 +191,8 @@ def test_plugin_reservoir_compatibility(grid_and_reservoir_plugins) -> None:
         check_solver_compatibility(small_config(reservoir__reservoir_type="plugin-res", solver__method="rk4-fdm"))
     with pytest.raises(SolverCompatibilityError, match="plugin reservoir_type"):
         check_solver_compatibility(small_config(reservoir__reservoir_type="plugin-res", solver__method="rk4-cuda"))
-    with pytest.warns(UserWarning, match="Lie splitting"):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         check_solver_compatibility(small_config(reservoir__reservoir_type="plugin-res", solver__method="split-step-fft"))
 
 

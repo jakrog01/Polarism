@@ -23,7 +23,7 @@ def test_assigning_psi_discards_cached_spectrum() -> None:
         laser__P0=0.0,
     )
     controller = SimulationController(cfg)
-    step_args = (controller.potential, controller._compute_total_pump(0.0), controller.reservoir, controller.boundary_condition, controller.state)
+    step_args = (controller.potential, lambda t: controller._compute_total_pump(0.0), controller.reservoir, controller.boundary_condition, controller.state)
     controller.solver.step(*step_args)
     assert controller.state.psi_k is not None
 
@@ -32,3 +32,42 @@ def test_assigning_psi_discards_cached_spectrum() -> None:
 
     controller.solver.step(*step_args)
     assert np.abs(controller.state.psi).max() == 0.0
+
+
+_FLOAT64_PROPAGATORS = pytest.mark.xfail(strict=True, reason="spectral propagators are built in float64")
+
+
+@pytest.mark.parametrize("method", [
+    "rk4-fdm",
+    "rk4-fdm-fused",
+    "rk4-cuda",
+    "split-step-fft",
+    pytest.param("ip-rk4", marks=_FLOAT64_PROPAGATORS),
+    pytest.param("etd-rk2", marks=_FLOAT64_PROPAGATORS),
+    pytest.param("ifrk4-fft-cuda", marks=_FLOAT64_PROPAGATORS),
+])
+def test_mask_absorption_keeps_single_precision(method: str) -> None:
+    cfg = small_config(solver__method=method, solver__precision="single", boundary_condition__absorption="mask")
+    controller = SimulationController(cfg)
+    controller.run()
+    assert controller.state.psi.dtype == np.complex64
+
+
+def test_mask_absorption_converges_to_cap() -> None:
+    def final_psi(absorption: str, dt: float) -> np.ndarray:
+        cfg = small_config(
+            solver__dt=dt,
+            solver__total_time=0.5,
+            boundary_condition__absorption=absorption,
+            boundary_condition__strength=2.0,
+            laser__P0=0.0,
+        )
+        controller = SimulationController(cfg)
+        controller.state.psi = np.ones_like(controller.state.psi)
+        controller.run()
+        return controller.state.psi
+
+    cap = final_psi("cap", 1e-3)
+    errors = [np.linalg.norm(final_psi("mask", dt) - cap) for dt in (4e-3, 2e-3, 1e-3)]
+    assert errors[0] / errors[1] == pytest.approx(2.0, rel=0.1)
+    assert errors[1] / errors[2] == pytest.approx(2.0, rel=0.1)

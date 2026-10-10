@@ -27,6 +27,13 @@ cfg.result.batch_size = 1000
 cfg.result.output_directory = "simulation_results"
 ```
 
+The initial state is recorded at its starting time. After that, storage and
+animation receive a frame every `save_interval` solver steps, at times
+`save_interval * dt`, `2 * save_interval * dt`, and so on. Stored results go
+into a run directory named `<output_directory>/<YYYYmmdd-HHMMSS>`. If that
+name already exists, a numeric suffix (`-1`, `-2`, ...) gives the new run its
+own directory.
+
 Format guidance:
 
 - `save_hdf5`: best default for long runs and large field data.

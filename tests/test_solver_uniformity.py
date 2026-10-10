@@ -48,7 +48,7 @@ def test_uniform_pump_does_not_create_spatial_structure(
     t = 0.0
 
     for _ in range(5000):
-        solver.step(V, P, reservoir, bc, state)
+        solver.step(V, lambda t: P, reservoir, bc, state)
         t += cfg.solver.dt
 
         ux = uniformity_error(state.psi)

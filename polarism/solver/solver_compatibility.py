@@ -12,7 +12,6 @@ if TYPE_CHECKING:
 
 _ALL_RESERVOIR_TYPES = {"single", "double", "quadratic-double"}
 _STAGE_COUPLED_RESERVOIR_TYPES = {"single", "double", "quadratic-double"}
-_LIE_SPLIT_RESERVOIR_TYPES = {"single", "double"}
 
 
 class _SolverCaps(TypedDict):
@@ -26,14 +25,12 @@ class _SolverCaps(TypedDict):
         All reservoir models the solver can technically run without crashing.
     reservoir_types_quantitative
         Reservoir models for which the solver is suitable for production
-        threshold/amplitude comparisons. For stage-coupled solvers this equals
-        reservoir_types. For Lie splitting of psi and reservoir, linear
-        single/double reservoirs remain acceptable because the coupling error
-        is subdominant.
+        threshold/amplitude comparisons. Stage-coupled and symmetric-split
+        solvers support all built-in reservoir types quantitatively.
     custom_reservoirs
         How reservoirs registered by plugins are handled: ``"quantitative"``
-        for stage-coupled solvers that only use the AbstractReservoir
-        interface, ``"diagnostic"`` for Lie-split solvers, ``"unsupported"``
+        for solvers that only use the AbstractReservoir interface,
+        ``"diagnostic"`` for Lie-split solvers, ``"unsupported"``
         for solvers with hard-coded reservoir kernels.
     supports_kinetic_relaxation
         True if the solver evaluates kinetic_relaxation_eta*n_active*lap(psi)
@@ -88,20 +85,15 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
     },
     "split-step-fft": {
         "grid_types": {"periodic"},
-        "supports_potential": False,
+        "supports_potential": True,
         "reservoir_types": _ALL_RESERVOIR_TYPES,
-        "reservoir_types_quantitative": _LIE_SPLIT_RESERVOIR_TYPES,
-        "custom_reservoirs": "diagnostic",
+        "reservoir_types_quantitative": _ALL_RESERVOIR_TYPES,
+        "custom_reservoirs": "quantitative",
         "supports_kinetic_relaxation": False,
         "description": (
-            "Spectral split-step solver. Reservoir advanced sequentially after the "
-            "full-step Strang split of the condensate (Lie splitting of psi and "
-            "reservoir), giving O(dt) global coupling error whenever the reservoir "
-            "dynamics are non-trivial (measured p≈1.06 on quadratic-double, per "
-            "convergence study). Acceptable for single/double reservoirs where the "
-            "reservoir is linear in n_R and the coupling error is subdominant; "
-            "diagnostic-only for quadratic-double. FFT-only, periodic grid only. "
-            "Does not evaluate kinetic_relaxation_eta."
+            "Spectral Strang splitting, second order in time. Reservoir advances "
+            "in two half-steps around the condensate step. FFT-only, periodic "
+            "grid only. Does not evaluate kinetic_relaxation_eta."
         ),
     },
     "ip-rk4": {

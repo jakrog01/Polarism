@@ -73,7 +73,7 @@ def _run_solver(solver_cls, grid_cfg, physics, dt, n_steps, P0):
     times = []
     rho_max = []
     for step in range(n_steps):
-        solver.step(V, P, reservoir, bc, state)
+        solver.step(V, lambda t: P, reservoir, bc, state)
         if (step + 1) % sample_stride == 0:
             times.append((step + 1) * dt)
             rho_max.append(float(np.max(np.abs(state.psi) ** 2)))
@@ -220,8 +220,8 @@ def test_double_reservoir_matches_single(solver_cls):
     rho_single = []
     rho_double = []
     for step in range(n_steps):
-        solver_s.step(V, P, res_s, bc, state_s)
-        solver_d.step(V, P, res_d, bc, state_d)
+        solver_s.step(V, lambda t: P, res_s, bc, state_s)
+        solver_d.step(V, lambda t: P, res_d, bc, state_d)
         if (step + 1) % sample_stride == 0:
             times.append((step + 1) * dt)
             rho_single.append(float(np.max(np.abs(state_s.psi) ** 2)))

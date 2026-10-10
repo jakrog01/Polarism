@@ -63,7 +63,7 @@ def _run_checkpoint_trajectory(
         controller.state.t = step * dt
         controller.solver.step(
             controller.potential,
-            pump,
+            lambda t: pump,
             controller.reservoir,
             controller.boundary_condition,
             controller.state,

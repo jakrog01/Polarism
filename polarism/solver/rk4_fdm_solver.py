@@ -1,7 +1,7 @@
 """Finite-difference RK4 solver."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
@@ -107,32 +107,36 @@ class RK4FDMSolver(AbstractSolver):
     def step(
         self,
         potential: Union[np.ndarray, cp.ndarray],
-        pump: Union[np.ndarray, cp.ndarray],
+        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
         reservoir: AbstractReservoir,
         boundary_condition: BoundaryCondition,
         state: SimulationState,
     ) -> None:
         """Advance the solver by one time step."""
         dt = self.config.solver.dt
+        t = state.t
+        p0 = pump(t)
+        p_half = pump(t + 0.5 * dt)
+        p1 = pump(t + dt)
 
         psi0 = state.psi
         self._ensure_buffers(psi0)
 
         res0 = reservoir.get_state()
 
-        k1_psi, k1_res = self._rhs(psi0, res0, potential, pump, reservoir)
+        k1_psi, k1_res = self._rhs(psi0, res0, potential, p0, reservoir)
 
         psi2 = psi0 + 0.5 * dt * k1_psi
         res2 = self._tuple_add(res0, k1_res, 0.5 * dt)
-        k2_psi, k2_res = self._rhs(psi2, res2, potential, pump, reservoir)
+        k2_psi, k2_res = self._rhs(psi2, res2, potential, p_half, reservoir)
 
         psi3 = psi0 + 0.5 * dt * k2_psi
         res3 = self._tuple_add(res0, k2_res, 0.5 * dt)
-        k3_psi, k3_res = self._rhs(psi3, res3, potential, pump, reservoir)
+        k3_psi, k3_res = self._rhs(psi3, res3, potential, p_half, reservoir)
 
         psi4 = psi0 + dt * k3_psi
         res4 = self._tuple_add(res0, k3_res, dt)
-        k4_psi, k4_res = self._rhs(psi4, res4, potential, pump, reservoir)
+        k4_psi, k4_res = self._rhs(psi4, res4, potential, p1, reservoir)
 
         psi_new = psi0 + (dt / 6.0) * (k1_psi + 2 * k2_psi + 2 * k3_psi + k4_psi)
         psi_new = boundary_condition.after_step_action(psi_new)

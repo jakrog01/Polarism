@@ -49,7 +49,7 @@ def test_pure_decay_rate_fit() -> None:
     controller = SimulationController(cfg); controller.state.psi.fill(1.0 + 0j)
     norms, times = [], []
     for _ in range(20):
-        controller.solver.step(controller.potential, np.zeros_like(controller.grid.X), controller.reservoir, controller.boundary_condition, controller.state)
+        controller.solver.step(controller.potential, lambda t: np.zeros_like(controller.grid.X), controller.reservoir, controller.boundary_condition, controller.state)
         controller.state.t += cfg.solver.dt; times.append(controller.state.t); norms.append(float(np.sum(np.abs(controller.state.psi) ** 2)))
     slope = np.polyfit(times, np.log(norms), 1)[0]
     assert abs(slope + cfg.physics.gamma_C) < TOL_DECAY_FIT
@@ -131,7 +131,7 @@ def test_free_wave_packet_broadens_analytically() -> None:
     for step in range(n_steps):
         controller.solver.step(
             controller.potential,
-            pump,
+            lambda t: pump,
             controller.reservoir,
             controller.boundary_condition,
             controller.state,

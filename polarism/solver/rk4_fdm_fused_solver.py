@@ -1,7 +1,7 @@
 """Fused finite-difference RK4 solver."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
@@ -207,7 +207,7 @@ class RK4FDMFusedSolver(AbstractSolver):
     def step(
         self,
         potential: Union[np.ndarray, cp.ndarray],
-        pump: Union[np.ndarray, cp.ndarray],
+        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
         reservoir: AbstractReservoir,
         boundary_condition: BoundaryCondition,
         state: SimulationState,
@@ -219,6 +219,10 @@ class RK4FDMFusedSolver(AbstractSolver):
         must copy it.
         """
         dt = self._dt
+        t = state.t
+        p0 = pump(t)
+        p_half = pump(t + 0.5 * dt)
+        p1 = pump(t + dt)
         psi0 = state.psi
         self._ensure_buffers(psi0)
 
@@ -227,7 +231,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         nR_0 = reservoir.get_active_density(res0)
         nI_0 = reservoir.get_inactive_density(res0)
         self._rhs_into(psi0, nR_0, nI_0, potential, self._k1_psi)
-        k1_res = reservoir.get_derivatives(psi0, pump, res0)
+        k1_res = reservoir.get_derivatives(psi0, p0, res0)
 
         self._tmp_psi[:] = psi0
         self._tmp_psi += 0.5 * dt * self._k1_psi
@@ -235,7 +239,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         nR_2 = reservoir.get_active_density(res2)
         nI_2 = reservoir.get_inactive_density(res2)
         self._rhs_into(self._tmp_psi, nR_2, nI_2, potential, self._k2_psi)
-        k2_res = reservoir.get_derivatives(self._tmp_psi, pump, res2)
+        k2_res = reservoir.get_derivatives(self._tmp_psi, p_half, res2)
 
         self._tmp_psi[:] = psi0
         self._tmp_psi += 0.5 * dt * self._k2_psi
@@ -243,7 +247,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         nR_3 = reservoir.get_active_density(res3)
         nI_3 = reservoir.get_inactive_density(res3)
         self._rhs_into(self._tmp_psi, nR_3, nI_3, potential, self._k3_psi)
-        k3_res = reservoir.get_derivatives(self._tmp_psi, pump, res3)
+        k3_res = reservoir.get_derivatives(self._tmp_psi, p_half, res3)
 
         self._tmp_psi[:] = psi0
         self._tmp_psi += dt * self._k3_psi
@@ -251,7 +255,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         nR_4 = reservoir.get_active_density(res4)
         nI_4 = reservoir.get_inactive_density(res4)
         self._rhs_into(self._tmp_psi, nR_4, nI_4, potential, self._k4_psi)
-        k4_res = reservoir.get_derivatives(self._tmp_psi, pump, res4)
+        k4_res = reservoir.get_derivatives(self._tmp_psi, p1, res4)
 
         dt6 = dt / 6.0
         self._combine_rk4_into(psi0, dt6)

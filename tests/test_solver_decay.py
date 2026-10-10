@@ -45,7 +45,7 @@ def test_zero_pump_exponential_decay(solver_cls, reservoir_cls, output_dir):
     norm0 = float(np.sum(np.abs(state.psi) ** 2))
 
     for _ in range(1200):
-        solver.step(V, P, reservoir, bc, state)
+        solver.step(V, lambda t: P, reservoir, bc, state)
         t += cfg.solver.dt
 
         norm = float(np.sum(np.abs(state.psi) ** 2))

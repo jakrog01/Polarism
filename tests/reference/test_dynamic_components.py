@@ -110,7 +110,7 @@ def _pulse_response_error(dt: float) -> tuple[float, SimulationController]:
         pump = np.asarray(controller._compute_total_pump(time))
         controller.solver.step(
             controller.potential,
-            pump,
+            lambda t: pump,
             controller.reservoir,
             controller.boundary_condition,
             controller.state,
@@ -173,7 +173,7 @@ def _reflected_fraction(
     for _ in range(int(total_time / cfg.solver.dt)):
         controller.solver.step(
             controller.potential,
-            zero_pump,
+            lambda t: zero_pump,
             controller.reservoir,
             controller.boundary_condition,
             controller.state,

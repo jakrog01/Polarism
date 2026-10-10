@@ -1,7 +1,7 @@
 """GPU-native interaction-picture RK4 solver with cuFFT spectral kinetics."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
@@ -112,7 +112,7 @@ class IFRK4FFTCudaSolver(AbstractSolver):
     def step(
         self,
         potential: Union[np.ndarray, cp.ndarray],
-        pump: Union[np.ndarray, cp.ndarray],
+        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
         reservoir: AbstractReservoir,
         boundary_condition: BoundaryCondition,
         state: SimulationState,
@@ -120,6 +120,10 @@ class IFRK4FFTCudaSolver(AbstractSolver):
         """Advance the system by one timestep with Lawson/IP-RK4."""
         xp = self.xp
         dt = self.config.solver.dt
+        t = state.t
+        p0 = pump(t)
+        p_half = pump(t + 0.5 * dt)
+        p1 = pump(t + dt)
 
         psi0 = state.psi
         res0 = reservoir.get_state()
@@ -131,7 +135,7 @@ class IFRK4FFTCudaSolver(AbstractSolver):
 
         N1 = self._rhs_psi(psi0, res0, potential, reservoir, rho0, psi0_k)
         k1_psi = xp.fft.fft2(N1, axes=(-2, -1))
-        k1_res = reservoir.get_derivatives(psi0, pump, res0, rho0)
+        k1_res = reservoir.get_derivatives(psi0, p0, res0, rho0)
 
         psi2_k = self._exp_L_half * (psi0_k + 0.5 * dt * k1_psi)
         psi2 = xp.fft.ifft2(psi2_k, axes=(-2, -1))
@@ -139,7 +143,7 @@ class IFRK4FFTCudaSolver(AbstractSolver):
         rho2 = psi2.real * psi2.real + psi2.imag * psi2.imag
         N2 = self._rhs_psi(psi2, res2, potential, reservoir, rho2, psi2_k)
         k2_psi = self._exp_L_neg_half * xp.fft.fft2(N2, axes=(-2, -1))
-        k2_res = reservoir.get_derivatives(psi2, pump, res2, rho2)
+        k2_res = reservoir.get_derivatives(psi2, p_half, res2, rho2)
 
         psi3_k = self._exp_L_half * (psi0_k + 0.5 * dt * k2_psi)
         psi3 = xp.fft.ifft2(psi3_k, axes=(-2, -1))
@@ -147,7 +151,7 @@ class IFRK4FFTCudaSolver(AbstractSolver):
         rho3 = psi3.real * psi3.real + psi3.imag * psi3.imag
         N3 = self._rhs_psi(psi3, res3, potential, reservoir, rho3, psi3_k)
         k3_psi = self._exp_L_neg_half * xp.fft.fft2(N3, axes=(-2, -1))
-        k3_res = reservoir.get_derivatives(psi3, pump, res3, rho3)
+        k3_res = reservoir.get_derivatives(psi3, p_half, res3, rho3)
 
         psi4_k = self._exp_L_full * (psi0_k + dt * k3_psi)
         psi4 = xp.fft.ifft2(psi4_k, axes=(-2, -1))
@@ -155,7 +159,7 @@ class IFRK4FFTCudaSolver(AbstractSolver):
         rho4 = psi4.real * psi4.real + psi4.imag * psi4.imag
         N4 = self._rhs_psi(psi4, res4, potential, reservoir, rho4, psi4_k)
         k4_psi = self._exp_L_neg_full * xp.fft.fft2(N4, axes=(-2, -1))
-        k4_res = reservoir.get_derivatives(psi4, pump, res4, rho4)
+        k4_res = reservoir.get_derivatives(psi4, p1, res4, rho4)
 
         psi_new_k = self._exp_L_full * (
             psi0_k + (dt / 6.0) * (k1_psi + 2.0 * k2_psi + 2.0 * k3_psi + k4_psi)
