@@ -144,9 +144,9 @@ with reduced grid-direction anisotropy.
 | `real_time_refresh_interval` | UI refresh cadence | positive float |
 | `save_results` | enable result processing | boolean |
 | `save_hdf5`, `save_json`, `save_npy` | storage backends | booleans |
-| `save_interval` | number of steps between writes | positive integer |
+| `save_interval` | number of solver steps between writes after the initial state | positive integer |
 | `batch_size` | buffered result chunk size | positive integer |
-| `output_directory` | output path | directory string |
+| `output_directory` | parent directory for uniquely named run directories | directory string |
 | `animate` | stream an online animation during the run | boolean |
 | `animation_fps` | encoded movie frame rate | positive integer |
 | `animation_target_seconds` | nominal target duration used for logging | positive integer |

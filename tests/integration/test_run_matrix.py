@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import warnings
 
 import numpy as np
@@ -30,4 +29,6 @@ def test_solver_run_matrix(tmp_path, solver: str, grid_type: str, reservoir: str
     assert int(controller.state.t / cfg.solver.dt) == int(cfg.solver.total_time / cfg.solver.dt)
     assert controller.storage_visitor is not None
     with __import__("h5py").File(controller.storage_visitor.output_dir / "results.h5") as result:
-        assert result["time"].shape[0] == math.ceil(int(cfg.solver.total_time / cfg.solver.dt) / cfg.result.save_interval)
+        expected_steps = np.arange(0, int(cfg.solver.total_time / cfg.solver.dt) + 1, cfg.result.save_interval)
+        assert result["time"].shape[0] == len(expected_steps)
+        np.testing.assert_allclose(result["time"][:], expected_steps * cfg.solver.dt)
