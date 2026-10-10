@@ -58,7 +58,8 @@ def step(controller: SimulationController, profile: bool = False) -> None:
     if profile:
         cp.cuda.nvtx.RangePush("solver.step")
     try:
-        controller.solver.step(controller.potential, controller._compute_total_pump,
+        pump = getattr(controller, "pump_field", controller._compute_total_pump)
+        controller.solver.step(controller.potential, pump,
                                controller.reservoir, controller.boundary_condition,
                                controller.state)
         controller.state.t += controller.cfg.solver.dt

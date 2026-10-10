@@ -36,7 +36,8 @@ class AbstractLaser(ABC):
         self.x0 = laser_config.x0
         self.y0 = laser_config.y0
         self.delay = laser_config.delay
-        self.P = self.xp.zeros(X.shape, dtype=self._real_dtype)
+        self._zero_power = self.xp.zeros(X.shape, dtype=self._real_dtype)
+        self.P = self._zero_power
 
     def _finalize_spatial_envelope(
         self,
@@ -67,16 +68,23 @@ class AbstractLaser(ABC):
         """Return the time profile of the pump."""
         raise NotImplementedError
 
+    def power_coefficient(self, t: float) -> float:
+        """Return the scalar time coefficient of the cached spatial envelope."""
+        if t < self.delay:
+            return 0.0
+        t_eff = t - self.delay
+        return self._amplitude(t_eff) * self._P_time(t_eff)
+
     def get_power(
         self,
         X: Union[np.ndarray, cp.ndarray],
         Y: Union[np.ndarray, cp.ndarray],
         t: float,
     ) -> Union[np.ndarray, cp.ndarray]:
-        """Return the full pump field at time t."""
-        if t < self.delay:
-            self.P = self.xp.zeros(X.shape, dtype=self._real_dtype)
+        """Return the full pump field at time t; callers must treat it as read-only."""
+        coeff = self.power_coefficient(t)
+        if coeff == 0:
+            self.P = self._zero_power
             return self.P
-        t_eff = t - self.delay
-        self.P = self._amplitude(t_eff) * self._spatial_envelope * self._P_time(t_eff)
+        self.P = self._spatial_envelope * coeff
         return self.P

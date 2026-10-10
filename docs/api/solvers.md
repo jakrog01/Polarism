@@ -19,7 +19,13 @@ using the midpoint value for both middle stages. `etd-rk2` passes
 `pump(t + dt/2)` to `reservoir.step`. `split-step-fft` advances the reservoir
 in two half-steps, sampling the pump at `t + dt/4` and `t + 3dt/4`. The
 reservoir interface still accepts an array. For a constant field, pass
-`lambda t: pump_array`.
+`lambda t: pump_array`. Treat the returned array as read-only.
+
+`SimulationController` passes a `PumpField` (`polarism.laser.pump_field`).
+Besides `pump(t)`, it offers `separable_term()`, which returns
+`(envelope, coefficient)` when there is exactly one built-in laser. `rk4-cuda`
+then scales the cached envelope inside its kernels instead of building three
+pump arrays per step. Any other callable falls back to `pump(t)`.
 
 This replaces the former pump-array argument and intentionally breaks the
 plugin solver interface. Plugin solvers must evaluate the callable at their

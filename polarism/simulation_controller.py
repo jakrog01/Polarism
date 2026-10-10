@@ -12,6 +12,7 @@ from polarism.config.validation import validate_config
 from polarism.grid.create_grid import create_grid
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.laser.laser_factory import LaserFactory
+from polarism.laser.pump_field import PumpField
 from polarism.plugins import load_plugins
 from polarism.potential.create_potential import create_potential
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
@@ -85,6 +86,7 @@ class SimulationController:
         )
         self.potential = create_potential(cfg.potential, self.grid)
         self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self.grid.Y, cfg.solver.precision)
+        self.pump_field = PumpField(self.lasers, self.grid, cfg.solver.precision)
         self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid, cfg.solver.precision)
         self.state = SimulationState(
             self.grid,
@@ -279,6 +281,7 @@ class SimulationController:
 
     def run(self) -> None:
         """Run the simulation loop."""
+        self.pump_field.lasers = self.lasers
         dt = self.cfg.solver.dt
         n_steps = round(self.cfg.solver.total_time / dt)
 
@@ -291,7 +294,7 @@ class SimulationController:
             for step in trange(n_steps, desc="Simulating"):
                 self.solver.step(
                     self.potential,
-                    self._compute_total_pump,
+                    self.pump_field,
                     self.reservoir,
                     self.boundary_condition,
                     self.state,
@@ -347,11 +350,9 @@ class SimulationController:
         )
 
     def _compute_total_pump(self, t: float) -> Union[np.ndarray, cp.ndarray]:
-        """Sum the pump from all lasers at time t."""
-        P_total = self.xp.zeros(self.grid.X.shape, dtype=real_dtype(self.xp, self.cfg.solver.precision))
-        for laser in self.lasers:
-            P_total += laser.get_power(self.grid.X, self.grid.Y, t)
-        return P_total
+        """Sum laser fields at time t; callers must treat the result as read-only."""
+        self.pump_field.lasers = self.lasers
+        return self.pump_field(t)
 
     def _get_scalar_groups(self) -> dict[str, dict[str, float]]:
         """Build scalar groups from the last computed laser fields.

@@ -121,6 +121,42 @@ def test_rk4_cuda_is_bitwise_deterministic() -> None:
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("absorption", ["no-absorption", "cap"])
+@pytest.mark.parametrize("precision", ["single", "double"])
+def test_fused_pump_matches_array_path_bitwise(absorption: str, precision: str) -> None:
+    _require_cuda()
+    cfg = small_config(
+        solver__method="rk4-cuda", solver__precision=precision,
+        boundary_condition__absorption=absorption,
+        laser__laser_type="pulse-gaussian", laser__P0=0.7, laser__Pmax=0.7,
+        laser__sigma_time=0.08,
+        compute_engine=ComputeEngineParameters(use_gpu=True),
+    )
+    fused = SimulationController(cfg)
+    array = SimulationController(cfg)
+    assert fused.pump_field.separable_term() is not None
+    assert bool(compute_engine.xp.iscomplexobj(fused.potential)) == (absorption == "cap")
+
+    start = fused.lasers[0].phase
+    for step in range(3):
+        fused.state.t = array.state.t = start + step * cfg.solver.dt
+        fused.solver.step(
+            fused.potential, fused.pump_field, fused.reservoir,
+            fused.boundary_condition, fused.state,
+        )
+        array.solver.step(
+            array.potential, lambda t: array.pump_field(t), array.reservoir,
+            array.boundary_condition, array.state,
+        )
+
+    np.testing.assert_array_equal(
+        compute_engine.to_cpu(fused.state.psi), compute_engine.to_cpu(array.state.psi)
+    )
+    for left, right in zip(fused.reservoir.get_state(), array.reservoir.get_state()):
+        np.testing.assert_array_equal(compute_engine.to_cpu(left), compute_engine.to_cpu(right))
+
+
+@pytest.mark.gpu
 @pytest.mark.parametrize("reservoir_type", ["single", "double", "quadratic-double"])
 def test_rk4_cuda_does_not_alias_previous_state(reservoir_type: str) -> None:
     _require_cuda()
