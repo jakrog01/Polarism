@@ -6,6 +6,11 @@ Install a CuPy extra before selecting a GPU solver. Use `pip install "polarism[c
 
 Set `cfg.compute_engine.use_gpu = True`. Use `rk4-cuda` for finite differences on periodic or closed-interval grids, `split-step-fft-cuda` for second-order spectral integration on a periodic grid, or `ifrk-fft-cuda` for selectable-order periodic spectral integration with stage-coupled reservoirs. `ifrk4-fft-cuda` remains an RK4 alias. See the [solver reference](../api/solvers.md) for reservoir and model-term support.
 
+`rk4-cuda` performs each step in one tiled CUDA kernel for single precision,
+and for double precision on GPUs classified as full-rate FP64. Other
+double-precision GPUs use staged kernels. The tiled path also requires enough
+shared memory for a tile. Tiled and staged results agree to rounding level.
+
 `cfg.solver.precision` accepts `single` and `double` and defaults to `double`. The controller emits a one-time notice for double-precision runs on GPUs outside the high-throughput FP64 classes recognized by the code: compute capabilities 6.0 (P100), 7.0 (V100), 8.0 (A100), 9.0 (H100), and 10.0 (B200). Consumer GPUs often have reduced FP64 throughput. Compare accuracy and speed before switching to `single`.
 
 ## CUDA graph chunks
