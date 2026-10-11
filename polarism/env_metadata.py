@@ -33,7 +33,7 @@ def _gpu_properties() -> dict[str, Any] | None:
     try:
         if cp.cuda.runtime.getDeviceCount() < 1:
             return None
-        return cp.cuda.runtime.getDeviceProperties(0)
+        return cp.cuda.runtime.getDeviceProperties(cp.cuda.runtime.getDevice())
     except Exception:
         return None
 

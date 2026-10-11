@@ -165,7 +165,7 @@ only the movie stream, while storage visitors remain fatal by default.
 | Field | Meaning | Main options |
 | --- | --- | --- |
 | `use_gpu` | request CuPy/CUDA backend | boolean |
-| `gpu_device` | reserved CUDA device index; currently unused by backend selection | integer, default `0` |
+| `gpu_device` | CUDA device index among the visible devices | integer, default `0` |
 
 ## Physics block
 

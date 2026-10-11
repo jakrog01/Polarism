@@ -24,4 +24,4 @@ This command requires a working CUDA device. It prints device and CUDA metadata,
 
 ## Device selection
 
-`cfg.compute_engine.gpu_device` exists in the configuration, but the current backend does not use it to select a device. CuPy runs on its current CUDA device. To restrict visibility before starting a process, set `CUDA_VISIBLE_DEVICES` in the shell, for example `CUDA_VISIBLE_DEVICES=1 polarism-bench --grid-sizes 128 --precisions single --steps 16`.
+Set `cfg.compute_engine.gpu_device` to the index of the CUDA device to run on (default `0`). `compute_engine.configure()` makes that device current for the process, so every array, kernel and FFT plan created afterwards lives on it. An index outside the visible devices raises `ValueError`. Indices are counted among the devices visible to the process: with `CUDA_VISIBLE_DEVICES=2,3`, `gpu_device = 1` selects physical GPU 3. On multi-GPU nodes, run one simulation per GPU, either by setting `gpu_device` per run or by giving each process its own `CUDA_VISIBLE_DEVICES`.

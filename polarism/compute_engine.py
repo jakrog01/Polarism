@@ -48,6 +48,13 @@ class ComputeEngine:
         if self.config.use_gpu:
             if CUPY_AVAILABLE:
                 if has_cuda_device():
+                    count = cp.cuda.runtime.getDeviceCount()
+                    if not 0 <= config.gpu_device < count:
+                        raise ValueError(
+                            f"compute_engine.gpu_device={config.gpu_device} is out of "
+                            f"range; {count} CUDA device(s) visible"
+                        )
+                    cp.cuda.Device(config.gpu_device).use()
                     self.xp = cp
                     self.use_gpu = True
                 else:

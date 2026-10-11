@@ -95,7 +95,6 @@ Request the GPU backend with:
 cfg.compute_engine.use_gpu = True
 ```
 
-The `gpu_device` field is currently unused for device selection; CuPy uses its
-current device. See [Running on GPUs](running-on-gpus.md#device-selection) for
-process-level selection. If CuPy or a CUDA device is unavailable, the backend
+`gpu_device` selects the CUDA device by index among the visible devices; see
+[Running on GPUs](running-on-gpus.md#device-selection). If CuPy or a CUDA device is unavailable, the backend
 falls back to NumPy. Validate CUDA paths on the target hardware.
