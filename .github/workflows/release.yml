@@ -3,6 +3,8 @@ name: Release
 # Every merge into master is a release. The version is taken from
 # pyproject.toml and must be bumped (and match polarism.__version__);
 # a version that is already tagged fails the pull request and the release.
+# Distributions are built and checked on every pull request; on push they
+# are published to PyPI before the tag and GitHub release are created.
 on:
   pull_request:
     branches:
@@ -55,14 +57,9 @@ jobs:
     needs: version
     uses: ./.github/workflows/tests.yml
 
-  release:
-    if: github.event_name == 'push'
-    needs: [version, tests]
+  build:
+    needs: version
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -70,16 +67,58 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Build distributions
+      - name: Build and check distributions
         run: |
-          python -m pip install build
+          python -m pip install build twine
           python -m build
+          python -m twine check --strict dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    if: github.event_name == 'push'
+    needs: [version, build, tests]
+    runs-on: ubuntu-latest
+    # PyPI Trusted Publishing: the project must list this repository,
+    # workflow (release.yml) and environment (pypi) as a trusted publisher.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/polarism/${{ needs.version.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+  release:
+    if: github.event_name == 'push'
+    needs: [version, pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
 
       - name: Create tag and GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "v$VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "Polarism $VERSION" \
             --generate-notes
