@@ -143,6 +143,14 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         ).astype(self._complex_dtype)
         self._half = half
         self._half_normalized = (half / self._n).astype(self._complex_dtype)
+        self._conj_half = self.xp.conj(half)
+        k_squared = self.xp.asarray(grid.k_squared, dtype=self.xp.float64)
+        self._full_normalized = (
+            self.xp.exp(
+                -1j * config.physics.hbar * k_squared *
+                config.solver.dt / (2 * config.physics.m_eff)
+            ) / self._n
+        ).astype(self._complex_dtype)
         self._potential_cached = None
         self._graph_cache = {}
         self._graph_signature = None
@@ -270,7 +278,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         self._graph_cache.clear()
         self._graph_signature = None
         with self._advance_stream:
-            xp.multiply(spectrum[0], self._half_normalized, out=multiplied)
+            xp.multiply(spectrum[0], self._full_normalized, out=multiplied)
             xp.multiply(spectrum[0], self._half, out=multiplied)
             self._advance_plan.fft(spectrum[0], multiplied, cufft.CUFFT_FORWARD)
             self._advance_plan.fft(multiplied, spectrum[0], cufft.CUFFT_INVERSE)
@@ -297,7 +305,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             stream.begin_capture()
             try:
                 for k in range(length):
-                    xp.multiply(spectrum[k % 2], self._half_normalized, out=multiplied)
+                    xp.multiply(spectrum[k % 2], self._full_normalized, out=multiplied)
                     plan.fft(multiplied, local, cufft.CUFFT_INVERSE)
                     self._launch_into(
                         model, local, fields[k % 2], potential,
@@ -305,8 +313,6 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                         scales, 2 * k,
                     )
                     plan.fft(out, spectrum[(k + 1) % 2], cufft.CUFFT_FORWARD)
-                    xp.multiply(spectrum[(k + 1) % 2], self._half,
-                                out=spectrum[(k + 1) % 2])
                 graph = stream.end_capture()
             except Exception:
                 try:
@@ -369,7 +375,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         plan = self._advance_plan
         done = 0
         with stream:
-            xp.copyto(spec[0], spectrum_in)
+            xp.multiply(spectrum_in, self._conj_half, out=spec[0])
             for target, source in zip(res[0], fields_in):
                 xp.copyto(target, source)
             if (self.config.solver.cuda_graphs and not self._graphs_failed
@@ -407,7 +413,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                     print(f"split-step-fft-cuda: CUDA graphs unavailable ({exc}); using regular launches.",
                           file=sys.stderr)
                     stream.synchronize()
-                    xp.copyto(spec[0], spectrum_in)
+                    xp.multiply(spectrum_in, self._conj_half, out=spec[0])
                     for target, source in zip(res[0], fields_in):
                         xp.copyto(target, source)
                     done = 0
@@ -416,7 +422,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                 from cupy.cuda import cufft
                 for k in range(done, n_steps):
                     parity = (k - done) % 2
-                    xp.multiply(spec[parity], self._half_normalized, out=multiplied)
+                    xp.multiply(spec[parity], self._full_normalized, out=multiplied)
                     plan.fft(multiplied, local, cufft.CUFFT_INVERSE)
                     t = (start_step + k) * self.config.solver.dt
                     times = (t + self.config.solver.dt / 4,
@@ -431,9 +437,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                     self._launch_into(model, local, res[parity], potential, pumps,
                                       factors, out, res[1 - parity])
                     plan.fft(out, spec[1 - parity], cufft.CUFFT_FORWARD)
-                    xp.multiply(spec[1 - parity], self._half, out=spec[1 - parity])
 
             final_index = (n_steps - done) % 2
+            xp.multiply(spec[final_index], self._half, out=spec[final_index])
             state.psi = None
             state.psi_k = spec[final_index].copy()
             reservoir.set_state(tuple(field.copy() for field in res[final_index]))
