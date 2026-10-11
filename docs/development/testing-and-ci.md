@@ -6,10 +6,10 @@ The repository has multiple pytest layers, and they serve different purposes. Th
 
 | Command | Purpose |
 | --- | --- |
-| `pytest` | Default CPU-oriented regression suite |
-| `pytest -m compliance` | Solver-to-solver agreement and compatibility checks |
-| `pytest -m slow --use-gpu` | Long-running Phoenix benchmark workflow |
-| `pytest -q -m '' --use-gpu --junitxml=artifacts/reports/full_verification.xml` | Complete CPU and GPU verification, including Phoenix |
+| `.venv/bin/pytest -q` | Default CPU-oriented regression suite |
+| `.venv/bin/pytest -m compliance` | Solver-to-solver agreement and compatibility checks |
+| `.venv/bin/pytest -m slow --use-gpu` | Long-running Phoenix benchmark workflow |
+| `.venv/bin/pytest -q -m '' --use-gpu --junitxml=artifacts/reports/full_verification.xml` | Complete CPU and GPU verification, including Phoenix |
 
 The default `pyproject.toml` configuration excludes `slow` and `compliance` markers from a plain `pytest` run.
 

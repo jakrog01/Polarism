@@ -126,7 +126,7 @@ The condensate equation receives `nR` as the active reservoir density.
 
 | Field | Meaning | Main options |
 | --- | --- | --- |
-| `method` | time integrator | `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`, `split-step-fft`, `etd-rk2`, `ip-rk4`, `ifrk4-fft-cuda` |
+| `method` | time integrator | `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`, `split-step-fft`, `split-step-fft-cuda`, `etd-rk2`, `ip-rk4`, `ifrk4-fft-cuda` |
 | `dt` | timestep | positive float |
 | `total_time` | total simulation time | positive float |
 | `precision` | arithmetic mode where supported | typically `single`, `double` |
@@ -165,7 +165,7 @@ only the movie stream, while storage visitors remain fatal by default.
 | Field | Meaning | Main options |
 | --- | --- | --- |
 | `use_gpu` | request CuPy/CUDA backend | boolean |
-| `gpu_device` | CUDA device index | nonnegative integer |
+| `gpu_device` | reserved CUDA device index; currently unused by backend selection | integer, default `0` |
 
 ## Physics block
 

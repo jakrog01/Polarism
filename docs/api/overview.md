@@ -28,3 +28,7 @@ This documentation prefers abstraction over implementation detail:
 - describe responsibilities, not private helpers
 - document supported options, not internal call graphs
 - expose interfaces and selection points, not the entire codebase
+
+The [generated Python API](python-api.md) renders signatures and docstrings for
+the public exports, configuration dataclasses, controller, and plugin extension
+points. Keep those docstrings accurate when changing their contracts.

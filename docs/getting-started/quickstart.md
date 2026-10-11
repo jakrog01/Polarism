@@ -30,7 +30,6 @@ cfg.solver.total_time = 2.0
 
 cfg.result.save_results = True
 cfg.result.save_hdf5 = True
-cfg.result.save_interval = 50
 cfg.result.output_directory = "quickstart_results"
 
 cfg.compute_engine.use_gpu = False

@@ -1,6 +1,10 @@
 site_name: Polarism
 site_description: High-performance documentation for the Polarism Gross-Pitaevskii solver
 site_url: https://jakrog01.github.io/Polarism/
+repo_url: https://github.com/jakrog01/Polarism
+repo_name: jakrog01/Polarism
+edit_uri: edit/dev/docs/
+copyright: Copyright &copy; 2026 Jakub Rogala
 docs_dir: docs
 strict: true
 
@@ -13,12 +17,21 @@ nav:
       - Installation: getting-started/installation.md
       - Quickstart: getting-started/quickstart.md
   - User Guide:
+      - Running on GPUs: user-guide/running-on-gpus.md
       - Grid and Parameters: user-guide/grid-and-parameters.md
       - Potentials and Pumps: user-guide/potentials-and-pumps.md
       - Time Evolution: user-guide/time-evolution.md
       - Output and Visualization: user-guide/output-and-visualization.md
-      - Plugins: user-guide/plugins.md
-  - API Reference:
+      - Plugins:
+          - Overview: plugins/index.md
+          - Your first plugin: plugins/first-plugin.md
+          - Lasers: plugins/lasers.md
+          - Potentials: plugins/potentials.md
+          - Reservoirs: plugins/reservoirs.md
+          - Solvers: plugins/solvers.md
+          - Grids: plugins/grids.md
+          - Absorption strategies: plugins/absorption.md
+  - Reference:
       - Overview: api/overview.md
       - Option Matrix: api/option-matrix.md
       - Top-Level Package: api/polarism.md
@@ -27,11 +40,14 @@ nav:
       - Model Components: api/model-components.md
       - Solvers: api/solvers.md
       - Results: api/results.md
-  - Development and Theory:
+      - Python API: api/python-api.md
+  - Explanation:
       - Physics Background: development/physics-background.md
+  - Development:
       - GPU Profiling: development/profiling.md
       - Testing and CI: development/testing-and-ci.md
       - Contributing: development/contributing.md
+      - Release notes: https://github.com/jakrog01/Polarism/releases
 
 theme:
   name: material
@@ -44,10 +60,15 @@ theme:
     - navigation.top
     - navigation.tabs
     - navigation.sections
+    - navigation.footer
+    - navigation.path
     - search.highlight
     - search.suggest
+    - search.share
     - toc.follow
     - content.code.copy
+    - content.action.edit
+    - content.tabs.link
   palette:
     - scheme: slate
       primary: deep purple
@@ -78,6 +99,8 @@ markdown_extensions:
       pygments_lang_class: true
   - pymdownx.inlinehilite
   - pymdownx.superfences
+  - pymdownx.snippets:
+      base_path: [.]
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.tasklist:
@@ -85,10 +108,19 @@ markdown_extensions:
 
 plugins:
   - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            show_source: false
+            members_order: source
+            docstring_style: google
+            filters: ["!^_"]
 
 extra_javascript:
   - javascripts/mathjax.js
-  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+  - https://unpkg.com/mathjax@3.2.2/es5/tex-mml-chtml.js
 
 extra_css:
   - stylesheets/extra.css

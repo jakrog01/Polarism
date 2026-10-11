@@ -89,11 +89,13 @@ Practical guidance:
 
 ## Backend selection
 
-The compute backend is explicit:
+Request the GPU backend with:
 
 ```python
 cfg.compute_engine.use_gpu = True
-cfg.compute_engine.gpu_device = 0
 ```
 
-If CuPy is unavailable, the backend falls back to NumPy. That fallback is convenient for portability, but it is not a substitute for validating CUDA paths on the target hardware.
+The `gpu_device` field is currently unused for device selection; CuPy uses its
+current device. See [Running on GPUs](running-on-gpus.md#device-selection) for
+process-level selection. If CuPy or a CUDA device is unavailable, the backend
+falls back to NumPy. Validate CUDA paths on the target hardware.

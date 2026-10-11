@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polarism"
-version = "0.3.3"
+version = "0.3.4"
 description = "High-performance tools for driven-dissipative exciton-polariton simulations"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -46,13 +46,17 @@ cuda13 = [
     "cupy-cuda13x>=14",
 ]
 docs = [
-    "mkdocs-material>=9.7",
+    "mkdocs>=1.6,<2",
+    "mkdocs-material>=9.7,<10",
+    "mkdocstrings[python]>=1.0",
 ]
 test = [
     "pytest>=8.3",
 ]
 dev = [
-    "mkdocs-material>=9.7",
+    "mkdocs>=1.6,<2",
+    "mkdocs-material>=9.7,<10",
+    "mkdocstrings[python]>=1.0",
     "pytest>=8.3",
 ]
 

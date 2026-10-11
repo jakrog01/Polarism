@@ -1,0 +1,27 @@
+# Running on GPUs
+
+Install a CuPy extra before selecting a GPU solver. Use `pip install "polarism[cuda12]"` for CUDA 12.x, including V100/Volta systems, or `pip install "polarism[cuda13]"` for CUDA 13.x. The CuPy build must match the driver and CUDA environment. If CuPy or a device is unavailable, the compute engine reports a fallback to NumPy; CUDA-only solvers then cannot run.
+
+## Choose a solver and precision
+
+Set `cfg.compute_engine.use_gpu = True`. Use `rk4-cuda` for finite differences on periodic or closed-interval grids, `split-step-fft-cuda` for second-order spectral integration on a periodic grid, or `ifrk4-fft-cuda` for periodic spectral RK4 with stage-coupled reservoirs. See the [solver reference](../api/solvers.md) for reservoir and model-term support.
+
+`cfg.solver.precision` accepts `single` and `double` and defaults to `double`. The controller emits a one-time notice for double-precision runs on GPUs outside the high-throughput FP64 classes recognized by the code: compute capabilities 6.0 (P100), 7.0 (V100), 8.0 (A100), 9.0 (H100), and 10.0 (B200). Consumer GPUs often have reduced FP64 throughput. Compare accuracy and speed before switching to `single`.
+
+## CUDA graph chunks
+
+`cfg.solver.cuda_graphs` defaults to `True`. The controller groups solver steps between result samples, and `rk4-cuda` and `split-step-fft-cuda` can replay eligible chunks as CUDA graphs. Graphs need either one separable built-in laser or no lasers, an exact built-in reservoir type, and absorption whose after-step action is a no-op (such as `no-absorption` or `cap`). `split-step-fft-cuda` additionally requires zero reservoir diffusion. Multi-pump and plugin components can still run through regular solver launches. CUDA graph capture failure also falls back to regular launches. Set `cfg.solver.cuda_graphs = False` to disable graph replay.
+
+## Measure your GPU
+
+Run `polarism-bench --help` to inspect the CLI, then a small check such as:
+
+```bash
+polarism-bench --methods rk4-cuda split-step-fft-cuda --grid-sizes 128 --precisions single --steps 16
+```
+
+This command requires a working CUDA device. It prints device and CUDA metadata, measured device-copy bandwidth, per-step and chunked execution time, speedup, and throughput. Each case also prints a JSON record. These are measurements on your system, not promised performance. For deeper profiling, see [GPU Profiling](../development/profiling.md).
+
+## Device selection
+
+`cfg.compute_engine.gpu_device` exists in the configuration, but the current backend does not use it to select a device. CuPy runs on its current CUDA device. To restrict visibility before starting a process, set `CUDA_VISIBLE_DEVICES` in the shell, for example `CUDA_VISIBLE_DEVICES=1 polarism-bench --grid-sizes 128 --precisions single --steps 16`.
