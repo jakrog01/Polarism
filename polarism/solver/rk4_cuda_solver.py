@@ -1253,8 +1253,10 @@ class RK4CudaSolver(AbstractSolver):
         self._graph_scales = xp.empty(64 * 3, self._real_dtype)
         self._advance_stream = xp.cuda.Stream(non_blocking=True)
 
-    def _graph_for(self, length, potential, envelope, pump_flat, v_im_scale):
-        signature = (id(potential), id(envelope), int(pump_flat.data.ptr))
+    def _graph_for(self, length, potential, envelope, pump_flat, v_im_scale,
+                   combiner=None):
+        signature = (id(potential), id(envelope),
+                     combiner.signature if combiner is not None else int(pump_flat.data.ptr))
         if signature != self._graph_signature:
             self._graph_cache.clear()
             self._graph_signature = signature
@@ -1272,10 +1274,20 @@ class RK4CudaSolver(AbstractSolver):
         with stream:
             stream.begin_capture()
             try:
+                if combiner is not None:
+                    start = combiner.combine(0, 0)
                 for k in range(length):
+                    if combiner is not None:
+                        half = combiner.combine(2 * k + 1, 2)
+                        end_index = 1 - k % 2
+                        end = combiner.combine(2 * k + 2, end_index)
+                        pumps = (start, half, end)
+                        start = end
+                    else:
+                        pumps = (pump_flat,) * 3
                     self._step_gpu(
                         psi[k % 2], res[k % 2], vr, vi,
-                        (pump_flat,) * 3, None, v_im_scale,
+                        pumps, None, v_im_scale,
                         psi[(k + 1) % 2], res[(k + 1) % 2],
                         scales, 3 * k,
                     )
@@ -1288,7 +1300,7 @@ class RK4CudaSolver(AbstractSolver):
                 raise
         if len(self._graph_cache) == 4:
             self._graph_cache.pop(next(iter(self._graph_cache)))
-        self._graph_cache[length] = (graph, pump_flat)
+        self._graph_cache[length] = (graph, combiner if combiner is not None else pump_flat)
         return graph
 
     def advance(self, potential, pump, reservoir, boundary_condition, state,
@@ -1312,7 +1324,10 @@ class RK4CudaSolver(AbstractSolver):
 
         xp = self.xp
         shape = state.psi.shape
-        term = pump.separable_term() if hasattr(pump, "separable_term") else None
+        terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
+        term = (terms[0] if terms is not None and len(terms) == 1 else
+                pump.separable_term() if terms is None and hasattr(pump, "separable_term") else None)
+        multi = terms is not None and len(terms) > 1
         no_lasers = not getattr(pump, "lasers", [True])
         if term is not None:
             envelope, coefficient = term
@@ -1326,9 +1341,10 @@ class RK4CudaSolver(AbstractSolver):
         else:
             envelope = None
             coefficient = None
+            pump_flat = None
         graph_ok = (
             self.config.solver.cuda_graphs and not self._graphs_failed
-            and coefficient is not None
+            and (coefficient is not None or multi)
             and getattr(boundary_condition.absorption, "after_step_is_noop", False)
         )
         vr, vi = self._prepare_potential_buffers(potential)
@@ -1338,6 +1354,15 @@ class RK4CudaSolver(AbstractSolver):
                             for x in reservoir.get_state())
         xp.cuda.get_current_stream().synchronize()
         self._ensure_advance_buffers()
+        if multi:
+            from polarism.solver.cuda_pump import CudaPumpCombiner
+            if not hasattr(self, "_pump_combiner"):
+                self._pump_combiner = CudaPumpCombiner(xp, self._real_dtype, self.N)
+            combiner = self._pump_combiner
+            combiner.prepare(terms, 3, 2 * 64 + 1)
+            xp.cuda.get_current_stream().synchronize()
+        else:
+            combiner = None
         work_psi, work_res = self._advance_buffers
         stream = self._advance_stream
         done = 0
@@ -1345,29 +1370,33 @@ class RK4CudaSolver(AbstractSolver):
             xp.copyto(work_psi[0], current_psi)
             for target, source in zip(work_res[0], current_res):
                 xp.copyto(target, source)
+            pending_hosts = []
             if graph_ok:
-                pending_hosts = []
                 try:
                     while n_steps - done >= 2:
                         remaining = n_steps - done
                         length = min(64, remaining - remaining % 2)
                         graph = self._graph_for(
-                            length, potential, envelope, pump_flat, vi_scale
+                            length, potential, envelope, pump_flat, vi_scale, combiner
                         )
-                        host_scales = self._np_real([
-                            coefficient(time)
-                            for k in range(length)
-                            for time in (
-                                (start_step + done + k) * self._dt,
-                                (start_step + done + k) * self._dt + 0.5 * self._dt,
-                                (start_step + done + k) * self._dt + self._dt,
-                            )
-                        ])
+                        times = [time for k in range(length) for time in (
+                            (start_step + done + k) * self._dt,
+                            (start_step + done + k) * self._dt + 0.5 * self._dt,
+                            (start_step + done + k) * self._dt + self._dt)]
+                        if multi:
+                            pump_times = [times[0]]
+                            pump_times.extend(time for i, time in enumerate(times[1:])
+                                              if i % 3 != 2)
+                            pending_hosts.append(combiner.coefficients(
+                                terms, pump_times, stream))
+                            host_scales = self._np_real([1] * (length * 3))
+                        else:
+                            host_scales = self._np_real([coefficient(t) for t in times])
                         pending_hosts.append(host_scales)
                         self._graph_scales[:length * 3].set(host_scales, stream=stream)
                         graph.launch(stream=stream)
                         done += length
-                        if len(pending_hosts) == 32:
+                        if len(pending_hosts) >= 32:
                             stream.synchronize()
                             pending_hosts.clear()
                 except Exception as exc:
@@ -1385,7 +1414,18 @@ class RK4CudaSolver(AbstractSolver):
             for k in range(done, n_steps):
                 t = (start_step + k) * self._dt
                 times = (t, t + 0.5 * self._dt, t + self._dt)
-                if coefficient is None:
+                if multi:
+                    first = k == done
+                    sample_times = times if first else times[1:]
+                    pending_hosts.append(combiner.coefficients(terms, sample_times, stream))
+                    if first:
+                        start = combiner.combine(0, 0)
+                    half = combiner.combine(1 if first else 0, 2)
+                    end = combiner.combine(2 if first else 1, 1 - (k - done) % 2)
+                    pumps = (start, half, end)
+                    start = end
+                    factors = (self._np_real(1),) * 3
+                elif coefficient is None:
                     pumps = tuple(self._flat_gpu_input(pump(time), self._real_dtype)
                                   for time in times)
                     factors = (self._np_real(1),) * 3
@@ -1396,6 +1436,9 @@ class RK4CudaSolver(AbstractSolver):
                 self._step_gpu(work_psi[parity], work_res[parity], vr, vi,
                                pumps, factors, vi_scale,
                                work_psi[1 - parity], work_res[1 - parity])
+                if len(pending_hosts) >= 32:
+                    stream.synchronize()
+                    pending_hosts.clear()
             final_index = (n_steps - done) % 2
             state.psi = boundary_condition.after_step_action(
                 work_psi[final_index].reshape(shape).copy()

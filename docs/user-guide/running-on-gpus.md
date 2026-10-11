@@ -15,7 +15,7 @@ shared memory for a tile. Tiled and staged results agree to rounding level.
 
 ## CUDA graph chunks
 
-`cfg.solver.cuda_graphs` defaults to `True`. The controller groups solver steps between result samples, and `rk4-cuda`, `split-step-fft-cuda`, `ifrk-fft-cuda`, and its RK4 alias can replay eligible chunks as CUDA graphs. Graphs need either one separable built-in laser or no lasers, an exact built-in reservoir type, and absorption whose after-step action is a no-op (such as `no-absorption` or `cap`). The FFT solvers additionally require zero reservoir diffusion for their fused graph paths. Multi-pump and plugin components can still run through regular solver launches. CUDA graph capture failure also falls back to regular launches. Set `cfg.solver.cuda_graphs = False` to disable graph replay.
+`cfg.solver.cuda_graphs` defaults to `True`. The controller groups solver steps between result samples, and `rk4-cuda`, `split-step-fft-cuda`, `ifrk-fft-cuda`, and its RK4 alias can replay eligible chunks as CUDA graphs. Graphs accept any number of lasers when each inherits `AbstractLaser.get_power` unchanged and has a cached spatial envelope, including qualifying plugin lasers. They also need an exact built-in reservoir type and absorption whose after-step action is a no-op (such as `no-absorption` or `cap`). The FFT solvers additionally require zero reservoir diffusion for their fused graph paths. A custom `get_power` uses regular solver launches. CUDA graph capture failure also falls back to regular launches. Set `cfg.solver.cuda_graphs = False` to disable graph replay.
 
 ## Measure your GPU
 

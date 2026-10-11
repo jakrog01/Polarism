@@ -41,7 +41,7 @@ def test_total_pump_matches_zero_initialized_sum_without_mutating_lasers() -> No
     assert np.count_nonzero(zero) == 0
 
 
-def test_pump_field_matches_laser_sum_and_only_exposes_one_standard_laser() -> None:
+def test_pump_field_matches_laser_sum_and_exposes_standard_terms() -> None:
     controller = SimulationController(small_config())
     X, Y = controller.grid.X, controller.grid.Y
     first = LaserFactory.create_laser(
@@ -53,17 +53,34 @@ def test_pump_field_matches_laser_sum_and_only_exposes_one_standard_laser() -> N
     pump = PumpField([], controller.grid, "double")
     np.testing.assert_array_equal(pump(0.2), np.zeros_like(X))
     assert pump.separable_term() is None
+    assert pump.separable_terms() == []
 
     pump.lasers = [first]
     envelope, coefficient = pump.separable_term()
     assert envelope is first._spatial_envelope
     assert coefficient(0.2) == first.power_coefficient(0.2)
+    assert pump.separable_terms()[0][0] is first._spatial_envelope
     np.testing.assert_array_equal(pump(0.2), first.get_power(X, Y, 0.2))
 
     pump.lasers = [first, second]
     assert pump.separable_term() is None
+    terms = pump.separable_terms()
+    assert len(terms) == 2
+    assert terms[0][0] is first._spatial_envelope
+    assert terms[1][0] is second._spatial_envelope
+    assert [term[1](0.2) for term in terms] == [first.power_coefficient(0.2),
+                                                second.power_coefficient(0.2)]
     expected = first.get_power(X, Y, 0.2) + second.get_power(X, Y, 0.2)
     np.testing.assert_array_equal(pump(0.2), expected)
+
+    class InheritedPlugin(UniformLaser):
+        pass
+
+    inherited = InheritedPlugin(LaserParameters(laser_type="uniform", P0=1.0), X, Y)
+    pump.lasers = [first, inherited]
+    assert pump.separable_terms()[1][0] is inherited._spatial_envelope
+    del inherited._spatial_envelope
+    assert pump.separable_terms() is None
 
     class PluginLaser(UniformLaser):
         def get_power(self, X, Y, t):
@@ -72,6 +89,7 @@ def test_pump_field_matches_laser_sum_and_only_exposes_one_standard_laser() -> N
     plugin = PluginLaser(LaserParameters(laser_type="uniform", P0=1.0), X, Y)
     pump.lasers = [plugin]
     assert pump.separable_term() is None
+    assert pump.separable_terms() is None
     np.testing.assert_array_equal(pump(0.2), plugin.get_power(X, Y, 0.2))
 
 

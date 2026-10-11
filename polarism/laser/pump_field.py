@@ -1,4 +1,4 @@
-"""Callable total pump field with an optional separable single-laser term."""
+"""Callable total pump field with optional separable laser terms."""
 from __future__ import annotations
 
 from polarism.compute_engine import compute_engine
@@ -37,3 +37,13 @@ class PumpField:
                 and hasattr(laser, "_spatial_envelope")):
             return laser._spatial_envelope, laser.power_coefficient
         return None
+
+    def separable_terms(self):
+        """Return every standard laser's (envelope, coefficient), or None if any differs."""
+        terms = []
+        for laser in self.lasers:
+            if (type(laser).get_power is not AbstractLaser.get_power
+                    or not hasattr(laser, "_spatial_envelope")):
+                return None
+            terms.append((laser._spatial_envelope, laser.power_coefficient))
+        return terms
