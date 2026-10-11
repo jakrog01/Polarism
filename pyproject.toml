@@ -65,6 +65,7 @@ Changelog = "https://github.com/jakrog01/Polarism/releases"
 
 [project.scripts]
 polarism = "polarism.cli:main"
+polarism-bench = "polarism.benchmark:main"
 
 [tool.setuptools.packages.find]
 include = ["polarism*"]

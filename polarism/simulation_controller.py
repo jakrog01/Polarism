@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
 
-from tqdm import trange
+from tqdm import tqdm
 
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
-from polarism.compute_engine import compute_engine
+from polarism.compute_engine import compute_engine, has_full_rate_fp64
 from polarism.config.dtype_utils import complex_dtype, real_dtype
 from polarism.config.validation import validate_config
 from polarism.grid.create_grid import create_grid
@@ -54,6 +54,9 @@ def _compute_pump_field(**ctx):
     return ctx["P_total"]
 
 
+_fp64_notice_shown = False
+
+
 class SimulationController:
     """Set up and run a full simulation."""
     cfg: Config
@@ -75,6 +78,25 @@ class SimulationController:
         self.cfg = cfg
         compute_engine.configure(cfg.compute_engine)
         self.xp = compute_engine.xp
+
+        global _fp64_notice_shown
+        if (compute_engine.use_gpu and cfg.solver.precision == "double"
+                and not _fp64_notice_shown):
+            properties = self.xp.cuda.runtime.getDeviceProperties(
+                self.xp.cuda.runtime.getDevice()
+            )
+            if not has_full_rate_fp64(properties["major"], properties["minor"]):
+                import sys
+                name = properties["name"]
+                if isinstance(name, bytes):
+                    name = name.decode()
+                print(
+                    f"{name}: double precision runs at a fraction of single "
+                    "precision speed on this GPU class; "
+                    'solver.precision="single" is typically several times faster.',
+                    file=sys.stderr,
+                )
+                _fp64_notice_shown = True
 
         load_plugins()
         validate_config(cfg)
@@ -291,43 +313,48 @@ class SimulationController:
                 if self.visualizer is not None:
                     self.next_viz_time += self.cfg.result.real_time_refresh_interval
 
-            for step in trange(n_steps, desc="Simulating"):
-                self.solver.step(
-                    self.potential,
-                    self.pump_field,
-                    self.reservoir,
-                    self.boundary_condition,
-                    self.state,
-                )
-
-                t_after = (step + 1) * dt
-                self.state.t = t_after
-
-                save_interval = max(1, self.cfg.result.save_interval)
-                should_save = (
-                    self.storage_visitor is not None
-                    and (step + 1) % save_interval == 0
-                )
-                should_viz = (
-                    self.visualizer is not None and t_after >= self.next_viz_time
-                )
-
-                if self.visualizer is not None and self.visualizer._closed:
-                    print(
-                        f"\nVisualization closed at t={t_after:.3f}, "
-                        "stopping simulation."
+            save_interval = max(1, self.cfg.result.save_interval)
+            step = 0
+            with tqdm(total=n_steps, desc="Simulating") as progress:
+                while step < n_steps:
+                    recording = self.storage_visitor is not None or self.animation_visitor is not None
+                    if self.visualizer is not None:
+                        end = step + 1
+                    elif recording:
+                        end = min(n_steps, ((step // save_interval) + 1) * save_interval)
+                    else:
+                        end = n_steps
+                    self.solver.advance(
+                        self.potential, self.pump_field, self.reservoir,
+                        self.boundary_condition, self.state, step, end - step,
                     )
-                    break
+                    progress.update(end - step)
+                    step = end
+                    t_after = step * dt
+                    should_save = (
+                        self.storage_visitor is not None
+                        and step % save_interval == 0
+                    )
+                    should_viz = (
+                        self.visualizer is not None and t_after >= self.next_viz_time
+                    )
 
-                should_animate = (
-                    self.animation_visitor is not None
-                    and (step + 1) % save_interval == 0
-                )
+                    if self.visualizer is not None and self.visualizer._closed:
+                        print(
+                            f"\nVisualization closed at t={t_after:.3f}, "
+                            "stopping simulation."
+                        )
+                        break
 
-                if should_save or should_viz or should_animate:
-                    self._record_results(t_after)
-                    if should_viz:
-                        self.next_viz_time += self.cfg.result.real_time_refresh_interval
+                    should_animate = (
+                        self.animation_visitor is not None
+                        and step % save_interval == 0
+                    )
+
+                    if should_save or should_viz or should_animate:
+                        self._record_results(t_after)
+                        if should_viz:
+                            self.next_viz_time += self.cfg.result.real_time_refresh_interval
         finally:
             if self.storage_visitor is not None:
                 self.storage_visitor.finalize()

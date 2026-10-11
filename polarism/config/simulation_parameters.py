@@ -103,6 +103,7 @@ class SolverParameters:
     method: str = "rk4-fdm"
     precision: str = "double"
     laplacian: str = "five-point"
+    cuda_graphs: bool = True
 
 
 @dataclass

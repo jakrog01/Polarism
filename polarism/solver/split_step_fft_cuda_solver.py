@@ -144,6 +144,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         self._half = half
         self._half_normalized = (half / self._n).astype(self._complex_dtype)
         self._potential_cached = None
+        self._graph_cache = {}
+        self._graph_signature = None
+        self._graphs_failed = False
 
     def _plan(self, array):
         key = (array.shape, array.dtype.str, int(self.xp.cuda.runtime.getDevice()))
@@ -203,6 +206,239 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                 scalar(p.gamma_A), scalar(p.R_IA), scalar(p.R_AI), scalar(p.kappa))
         self._kernel(model)(((self._n + 255) // 256,), (256,), args)
         return out, tuple(x.reshape(self._shape) for x in (out_a, out_b)[:len(fields)])
+
+    def _launch_into(self, model, psi, fields, potential, pumps, scales,
+                     out, out_fields, graph_scales=None, scale_index=0):
+        a = fields[0]
+        b = fields[1] if len(fields) > 1 else a
+        vr, vi, vi_scale = self._potential(potential)
+        p = self.config.physics
+        scalar = self._scalar
+        if graph_scales is None:
+            scale_args = (scales[0], scales[1])
+            kernel = self._kernel(model)
+        else:
+            scale_args = (graph_scales, np.int32(scale_index))
+            kernel = self._graph_kernel(model)
+        args = (
+            psi.ravel().view(self._real_dtype), a.ravel(), b.ravel(),
+            vr, vi, pumps[0], pumps[1], out.ravel().view(self._real_dtype),
+            out_fields[0].ravel(),
+            out_fields[1].ravel() if len(fields) > 1 else out_fields[0].ravel(),
+            np.int32(self._n), *scale_args, vi_scale, scalar(self.config.solver.dt),
+            scalar(1 / p.hbar), scalar(p.g_C), scalar(p.g_R), scalar(p.g_I),
+            scalar(p.R), scalar(p.gamma_C), scalar(p.gamma_R), scalar(p.gamma_I),
+            scalar(p.gamma_A), scalar(p.R_IA), scalar(p.R_AI), scalar(p.kappa),
+        )
+        kernel(((self._n + 255) // 256,), (256,), args)
+
+    def _graph_kernel(self, model):
+        if not hasattr(self, "_graph_kernel_cache"):
+            self._graph_kernel_cache = {}
+        if model not in self._graph_kernel_cache:
+            source = kernel_source(self._precision, model)
+            source = source.replace(
+                "real scale1, real scale2, real vi_scale,",
+                "const real* scales, int scale_index, real vi_scale,",
+            )
+            source = source.replace("scale1", "scales[scale_index]")
+            source = source.replace("scale2", "scales[scale_index+1]")
+            kernel = self.xp.RawKernel(source, "local_step", options=("--std=c++11",))
+            kernel.compile()
+            self._graph_kernel_cache[model] = kernel
+        return self._graph_kernel_cache[model]
+
+    def _ensure_advance_buffers(self, n_fields):
+        if (hasattr(self, "_advance_buffers")
+                and len(self._advance_buffers[1][0]) == n_fields):
+            return
+        xp = self.xp
+        from cupy.cuda import cufft
+
+        spectrum = tuple(xp.empty(self._shape, self._complex_dtype) for _ in range(2))
+        local = xp.empty(self._shape, self._complex_dtype)
+        out = xp.empty_like(local)
+        # The k-space product is consumed by the inverse FFT before the local
+        # kernel overwrites out, so both can share one buffer.
+        multiplied = out
+        fields = tuple(tuple(xp.empty(self._shape, self._real_dtype)
+                             for _ in range(n_fields)) for _ in range(2))
+        self._advance_buffers = (spectrum, fields, local, out, multiplied)
+        self._graph_scales = xp.empty(64 * 2, self._real_dtype)
+        self._advance_stream = xp.cuda.Stream(non_blocking=True)
+        self._advance_plan = self._plan(spectrum[0])
+        self._graph_cache.clear()
+        self._graph_signature = None
+        with self._advance_stream:
+            xp.multiply(spectrum[0], self._half_normalized, out=multiplied)
+            xp.multiply(spectrum[0], self._half, out=multiplied)
+            self._advance_plan.fft(spectrum[0], multiplied, cufft.CUFFT_FORWARD)
+            self._advance_plan.fft(multiplied, spectrum[0], cufft.CUFFT_INVERSE)
+            self._advance_stream.synchronize()
+
+    def _graph_for(self, length, model, potential, envelope, pump_flat):
+        signature = (model, id(potential), id(envelope), int(pump_flat.data.ptr))
+        if signature != self._graph_signature:
+            self._graph_cache.clear()
+            self._graph_signature = signature
+        if length in self._graph_cache:
+            return self._graph_cache[length][0]
+        xp = self.xp
+        from cupy.cuda import cufft
+
+        spectrum, fields, local, out, multiplied = self._advance_buffers
+        scales = self._graph_scales
+        plan = self._advance_plan
+        self._potential(potential)
+        self._graph_kernel(model)
+        stream = self._advance_stream
+        stream.synchronize()
+        with stream:
+            stream.begin_capture()
+            try:
+                for k in range(length):
+                    xp.multiply(spectrum[k % 2], self._half_normalized, out=multiplied)
+                    plan.fft(multiplied, local, cufft.CUFFT_INVERSE)
+                    self._launch_into(
+                        model, local, fields[k % 2], potential,
+                        (pump_flat, pump_flat), None, out, fields[(k + 1) % 2],
+                        scales, 2 * k,
+                    )
+                    plan.fft(out, spectrum[(k + 1) % 2], cufft.CUFFT_FORWARD)
+                    xp.multiply(spectrum[(k + 1) % 2], self._half,
+                                out=spectrum[(k + 1) % 2])
+                graph = stream.end_capture()
+            except Exception:
+                try:
+                    stream.end_capture()
+                except Exception:
+                    pass
+                raise
+        if len(self._graph_cache) == 4:
+            self._graph_cache.pop(next(iter(self._graph_cache)))
+        self._graph_cache[length] = (graph, pump_flat)
+        return graph
+
+    def advance(self, potential, pump, reservoir, boundary_condition, state,
+                start_step: int, n_steps: int) -> None:
+        """Run supported periodic chunks with planned FFTs and optional graphs."""
+        if n_steps <= 0:
+            return
+        from polarism.reservoir.single_reservoir import SingleReservoir
+        from polarism.reservoir.double_reservoir import DoubleReservoir
+        from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
+
+        models = {SingleReservoir: "single", DoubleReservoir: "double",
+                  QuadraticDoubleReservoir: "quadratic-double"}
+        model = models.get(type(reservoir))
+        diffusion = any(getattr(reservoir, name, 0.0) != 0.0 for name in
+                        ("reservoir_diffusion_R", "reservoir_diffusion_A",
+                         "reservoir_diffusion_I"))
+        absorption = getattr(boundary_condition, "absorption", None)
+        if model is None or diffusion or not getattr(absorption, "after_step_is_noop", False):
+            return super().advance(potential, pump, reservoir, boundary_condition,
+                                   state, start_step, n_steps)
+
+        xp = self.xp
+        term = pump.separable_term() if hasattr(pump, "separable_term") else None
+        no_lasers = not getattr(pump, "lasers", [True])
+        if term is not None:
+            envelope, coefficient = term
+            pump_flat = self._flat_gpu_input(envelope, self._real_dtype)
+        elif no_lasers:
+            if not hasattr(self, "_zero_pump"):
+                self._zero_pump = xp.zeros(self._shape, dtype=self._real_dtype)
+            envelope = self._zero_pump
+            pump_flat = self._flat_gpu_input(envelope, self._real_dtype)
+            coefficient = lambda t: 1
+        else:
+            envelope = None
+            coefficient = None
+
+        spectrum_in = getattr(state, "psi_k", None)
+        if spectrum_in is None:
+            spectrum_in = self._fft.fft2(
+                xp.ascontiguousarray(state.psi), plan=self._plan(state.psi)
+            )
+        spectrum_in = spectrum_in.astype(self._complex_dtype, copy=False)
+        fields_in = reservoir.get_state()
+        xp.cuda.get_current_stream().synchronize()
+        self._ensure_advance_buffers(len(fields_in))
+        spec, res, local, out, multiplied = self._advance_buffers
+        stream = self._advance_stream
+        plan = self._advance_plan
+        done = 0
+        with stream:
+            xp.copyto(spec[0], spectrum_in)
+            for target, source in zip(res[0], fields_in):
+                xp.copyto(target, source)
+            if (self.config.solver.cuda_graphs and not self._graphs_failed
+                    and coefficient is not None):
+                pending_hosts = []
+                try:
+                    while n_steps - done >= 2:
+                        remaining = n_steps - done
+                        length = min(64, remaining - remaining % 2)
+                        graph = self._graph_for(
+                            length, model, potential, envelope, pump_flat
+                        )
+                        host_scales = self._scalar([
+                            coefficient(time)
+                            for k in range(length)
+                            for time in (
+                                (start_step + done + k) * self.config.solver.dt
+                                + self.config.solver.dt / 4,
+                                (start_step + done + k) * self.config.solver.dt
+                                + 3 * self.config.solver.dt / 4,
+                            )
+                        ])
+                        pending_hosts.append(host_scales)
+                        self._graph_scales[:length * 2].set(host_scales, stream=stream)
+                        graph.launch(stream=stream)
+                        done += length
+                        if len(pending_hosts) == 32:
+                            stream.synchronize()
+                            pending_hosts.clear()
+                except Exception as exc:
+                    import sys
+                    self._graphs_failed = True
+                    self._graph_cache.clear()
+                    self._graph_signature = None
+                    print(f"split-step-fft-cuda: CUDA graphs unavailable ({exc}); using regular launches.",
+                          file=sys.stderr)
+                    stream.synchronize()
+                    xp.copyto(spec[0], spectrum_in)
+                    for target, source in zip(res[0], fields_in):
+                        xp.copyto(target, source)
+                    done = 0
+
+            if done < n_steps:
+                from cupy.cuda import cufft
+                for k in range(done, n_steps):
+                    parity = (k - done) % 2
+                    xp.multiply(spec[parity], self._half_normalized, out=multiplied)
+                    plan.fft(multiplied, local, cufft.CUFFT_INVERSE)
+                    t = (start_step + k) * self.config.solver.dt
+                    times = (t + self.config.solver.dt / 4,
+                             t + 3 * self.config.solver.dt / 4)
+                    if coefficient is None:
+                        pumps = tuple(self._flat_gpu_input(pump(time), self._real_dtype)
+                                      for time in times)
+                        factors = (self._scalar(1), self._scalar(1))
+                    else:
+                        pumps = (pump_flat, pump_flat)
+                        factors = tuple(self._scalar(coefficient(time)) for time in times)
+                    self._launch_into(model, local, res[parity], potential, pumps,
+                                      factors, out, res[1 - parity])
+                    plan.fft(out, spec[1 - parity], cufft.CUFFT_FORWARD)
+                    xp.multiply(spec[1 - parity], self._half, out=spec[1 - parity])
+
+            final_index = (n_steps - done) % 2
+            state.psi = None
+            state.psi_k = spec[final_index].copy()
+            reservoir.set_state(tuple(field.copy() for field in res[final_index]))
+            stream.synchronize()
+        state.t = (start_step + n_steps) * self.config.solver.dt
 
     def step(self, potential, pump, reservoir: AbstractReservoir,
              boundary_condition: BoundaryCondition, state: SimulationState) -> None:

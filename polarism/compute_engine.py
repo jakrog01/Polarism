@@ -25,6 +25,11 @@ def has_cuda_device() -> bool:
         return False
 
 
+def has_full_rate_fp64(major: int, minor: int) -> bool:
+    """Classify NVIDIA architectures with high throughput FP64 units."""
+    return (major, minor) in {(6, 0), (7, 0), (8, 0), (9, 0), (10, 0)}
+
+
 class ComputeEngine:
     """Track the active NumPy or CuPy backend."""
     xp: Any
