@@ -38,11 +38,12 @@ pyproject.toml                Project metadata and dependency groups
 ## Installation
 
 ```bash
-pip install "git+https://github.com/jakrog01/Polarism.git"
+pip install polarism
 ```
 
-GPU solvers additionally need a CuPy build matching the local CUDA toolkit; see
-[`docs/getting-started/installation.md`](docs/getting-started/installation.md).
+GPU solvers additionally need a CuPy build matching the local CUDA toolkit,
+e.g. `pip install "polarism[cuda12]"` or `pip install "polarism[cuda13]"`; see
+[`docs/getting-started/installation.md`](https://github.com/jakrog01/Polarism/blob/master/docs/getting-started/installation.md).
 
 ## Quick Local Setup
 
@@ -64,7 +65,7 @@ Run the default CPU-oriented checks:
 ```
 
 The default pytest selection excludes slow and compliance-marked suites. See
-[`docs/development/testing-and-ci.md`](docs/development/testing-and-ci.md) for
+[`docs/development/testing-and-ci.md`](https://github.com/jakrog01/Polarism/blob/master/docs/development/testing-and-ci.md) for
 the heavier validation commands.
 
 For the complete CPU/GPU validation, including the Phoenix reference matrix:
@@ -78,7 +79,7 @@ Run this command as a single process with exclusive access to the GPU.
 
 ## Minimal API Example
 
-The same script is available as [`examples/basic_run.py`](examples/basic_run.py).
+The same script is available as [`examples/basic_run.py`](https://github.com/jakrog01/Polarism/blob/master/examples/basic_run.py).
 
 ```python
 import polarism as ps
@@ -121,7 +122,7 @@ For the command-line interface generated from `polarism.Config`:
 ```
 
 More examples are documented in
-[`docs/getting-started/quickstart.md`](docs/getting-started/quickstart.md).
+[`docs/getting-started/quickstart.md`](https://github.com/jakrog01/Polarism/blob/master/docs/getting-started/quickstart.md).
 
 ## Pump Power Conventions
 
@@ -142,7 +143,7 @@ Numerical choices such as grid spacing, timestep, boundary condition, kinetic
 relaxation, and Laplacian stencil should be treated as convergence parameters,
 not as cosmetic post-processing settings. The model background and rationale are
 summarized in
-[`docs/development/physics-background.md`](docs/development/physics-background.md).
+[`docs/development/physics-background.md`](https://github.com/jakrog01/Polarism/blob/master/docs/development/physics-background.md).
 
 ## Documentation
 
@@ -154,14 +155,14 @@ Build and serve the documentation locally:
 
 Key entry points:
 
-- [`docs/index.md`](docs/index.md) for the documentation map.
-- [`docs/getting-started/installation.md`](docs/getting-started/installation.md)
+- [`docs/index.md`](https://github.com/jakrog01/Polarism/blob/master/docs/index.md) for the documentation map.
+- [`docs/getting-started/installation.md`](https://github.com/jakrog01/Polarism/blob/master/docs/getting-started/installation.md)
   for setup.
-- [`docs/user-guide/grid-and-parameters.md`](docs/user-guide/grid-and-parameters.md)
+- [`docs/user-guide/grid-and-parameters.md`](https://github.com/jakrog01/Polarism/blob/master/docs/user-guide/grid-and-parameters.md)
   for spatial discretization and physical parameters.
-- [`docs/user-guide/potentials-and-pumps.md`](docs/user-guide/potentials-and-pumps.md)
+- [`docs/user-guide/potentials-and-pumps.md`](https://github.com/jakrog01/Polarism/blob/master/docs/user-guide/potentials-and-pumps.md)
   for laser and pump definitions.
-- [`docs/user-guide/output-and-visualization.md`](docs/user-guide/output-and-visualization.md)
+- [`docs/user-guide/output-and-visualization.md`](https://github.com/jakrog01/Polarism/blob/master/docs/user-guide/output-and-visualization.md)
   for HDF5 output, plots, and movies.
 
 ## Development Notes

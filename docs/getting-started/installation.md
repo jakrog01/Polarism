@@ -2,13 +2,19 @@
 
 This project already carries the documentation dependencies needed to build the site. A single Python environment is enough for development, testing, and docs generation.
 
-## Install from GitHub
+## Install from PyPI
 
 ```bash
-pip install "git+https://github.com/jakrog01/Polarism.git"
+pip install polarism
 ```
 
-Pin a release with `@v0.3.1` at the end of the URL.
+Pin a release with `pip install "polarism==0.3.1"`.
+
+The development version can be installed straight from GitHub:
+
+```bash
+pip install "git+https://github.com/jakrog01/Polarism.git@dev"
+```
 
 ## Development setup
 
@@ -38,5 +44,7 @@ The runtime backend uses NumPy by default and switches to CuPy when `cfg.compute
 Recommended workflow:
 
 - Start with a CPU install and validate correctness first.
-- Add a CuPy build that matches the CUDA toolkit on the target machine.
+- Add a CuPy build that matches the CUDA toolkit on the target machine:
+  `pip install "polarism[cuda12]"` for CUDA 12.x or
+  `pip install "polarism[cuda13]"` for CUDA 13.x.
 - Re-run the compliance or benchmark suites on GPU hardware before trusting production-scale timings.
