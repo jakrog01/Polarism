@@ -141,6 +141,10 @@ cfg.laser.config_file = "lasers_setup.yaml"
 ```
 
 The YAML file should define a `lasers:` list where each entry names a `laser_type` plus its parameters.
+`PumpField.separable_terms()` exposes each standard laser's cached spatial envelope
+and scalar time coefficient. It returns an empty list with no lasers and `None`
+if any laser overrides `get_power` or has no cached envelope. Eligible CUDA
+solvers combine these terms on the GPU for multiple pumps.
 
 ## Reservoir models
 

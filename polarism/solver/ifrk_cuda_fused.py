@@ -127,6 +127,8 @@ class FusedIFRK:
         self.unique_c = tuple(dict.fromkeys(solver._c))
         self.c_index = tuple(self.unique_c.index(c) for c in solver._c)
         self.dt = self.scalar(solver.config.solver.dt)
+        # Host-side times use the configured dt, not its kernel-precision copy.
+        self.host_dt = float(solver.config.solver.dt)
         self.rate = self.scalar(solver._phase_rate)
         self.eta = solver._eta != 0.0
         self.p = solver.config.physics
@@ -207,12 +209,12 @@ class FusedIFRK:
         if term is not None:
             envelope, coefficient = term
             field = self._array(envelope, self.real).ravel()
-            scales = [coefficient(t + c * float(self.dt)) for c in self.unique_c]
+            scales = [coefficient(t + c * self.host_dt) for c in self.unique_c]
             return [field] * self.s, scales, field, coefficient
         if no_lasers:
             return ([self._zero_pump.ravel()] * self.s,
                     [1] * len(self.unique_c), self._zero_pump.ravel(), lambda time: 1)
-        samples = [self._array(pump(t + c * float(self.dt)), self.real).ravel()
+        samples = [self._array(pump(t + c * self.host_dt), self.real).ravel()
                    for c in self.unique_c]
         return [samples[i] for i in self.c_index], [1] * len(samples), None, None
 
@@ -291,7 +293,7 @@ class FusedIFRK:
         else:
             self._copy_out(1, reservoir, state)
 
-    def _graph(self, length, signature, pump_flat):
+    def _graph(self, length, signature, pump_flat, combiner=None):
         if signature != self._graph_signature:
             self._graph_cache.clear()
             self._graph_signature = signature
@@ -305,6 +307,10 @@ class FusedIFRK:
             stream.begin_capture()
             try:
                 for k in range(length):
+                    if combiner is not None:
+                        samples = [combiner.combine(k * len(self.unique_c) + i, i)
+                                   for i in range(len(self.unique_c))]
+                        pumps = [samples[i] for i in self.c_index]
                     self._run_into(spec[k % 2], res[k % 2],
                                    spec[(k + 1) % 2], res[(k + 1) % 2],
                                    pumps, self._graph_scales.ravel(),
@@ -333,28 +339,46 @@ class FusedIFRK:
         done = 0
         with stream:
             self._copy_in(state, reservoir)
-            pumps, _, pump_flat, coefficient = self._pump(pump, state.t)
+            terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
+            multi = terms is not None and len(terms) > 1
+            if multi:
+                from polarism.solver.cuda_pump import CudaPumpCombiner
+                if not hasattr(self, "_pump_combiner"):
+                    self._pump_combiner = CudaPumpCombiner(xp, self.real, self.n)
+                combiner = self._pump_combiner
+                combiner.prepare(terms, len(self.unique_c), 64 * len(self.unique_c))
+                pump_flat = None
+                coefficient = None
+            else:
+                combiner = None
+                _, _, pump_flat, coefficient = self._pump(pump, state.t)
             graph_ok = (self.solver.config.solver.cuda_graphs and not self._graphs_failed
-                        and coefficient is not None
+                        and (coefficient is not None or multi)
                         and self.solver._can_skip_after_step(boundary_condition))
+            pending_hosts = []
             if graph_ok:
-                nodes_per_step = (4 + int(self.eta))*self.s + 2
+                nodes_per_step = ((4 + int(self.eta))*self.s + 2
+                                  + (len(self.unique_c) if multi else 0))
                 max_length = max(2, min(64, (1800 // nodes_per_step) // 2 * 2))
-                signature = (model, id(potential), int(pump_flat.data.ptr))
-                pending_hosts = []
+                signature = (model, id(potential),
+                             combiner.signature if multi else int(pump_flat.data.ptr))
                 try:
                     while n_steps - done >= 2:
                         length = min(max_length, (n_steps-done)//2*2)
-                        graph = self._graph(length, signature, pump_flat)
-                        host = self.scalar([
-                            coefficient((start_step+done+k)*float(self.dt)+c*float(self.dt))
-                            for k in range(length) for c in self.unique_c
-                        ]).reshape(length, len(self.unique_c))
+                        graph = self._graph(length, signature, pump_flat, combiner)
+                        times = [(start_step+done+k)*self.host_dt+c*self.host_dt
+                                 for k in range(length) for c in self.unique_c]
+                        if multi:
+                            pending_hosts.append(combiner.coefficients(terms, times, stream))
+                            host = self.scalar([1] * (length * len(self.unique_c)))
+                        else:
+                            host = self.scalar([coefficient(t) for t in times])
+                        host = host.reshape(length, len(self.unique_c))
                         pending_hosts.append(host)
                         self._graph_scales[:length].set(host, stream=stream)
                         graph.launch(stream=stream)
                         done += length
-                        if len(pending_hosts) == 32:
+                        if len(pending_hosts) >= 32:
                             stream.synchronize()
                             pending_hosts.clear()
                 except Exception as exc:
@@ -367,12 +391,22 @@ class FusedIFRK:
                     self._copy_in(state, reservoir)
                     done = 0
             for k in range(done, n_steps):
-                t = (start_step+k)*float(self.dt)
-                stage_pumps, factors, _, _ = self._pump(pump, t)
+                t = (start_step+k)*self.host_dt
+                if multi:
+                    times = [t+c*self.host_dt for c in self.unique_c]
+                    pending_hosts.append(combiner.coefficients(terms, times, stream))
+                    samples = [combiner.combine(i, i) for i in range(len(times))]
+                    stage_pumps = [samples[i] for i in self.c_index]
+                    factors = [1] * len(times)
+                else:
+                    stage_pumps, factors, _, _ = self._pump(pump, t)
                 scales = xp.asarray(factors, dtype=self.real)
                 parity = (k-done) % 2
                 self._run_into(spec[parity], res[parity], spec[1-parity],
                                res[1-parity], stage_pumps, scales, 0)
+                if len(pending_hosts) >= 32:
+                    stream.synchronize()
+                    pending_hosts.clear()
             index = (n_steps-done) % 2
             if self.solver._can_skip_after_step(boundary_condition):
                 self._copy_out(index, reservoir, state)
@@ -383,4 +417,4 @@ class FusedIFRK:
                 state.psi_k = self.fft.fft2(state.psi, plan=self._plan)
                 reservoir.set_state(tuple(field.copy() for field in res[index]))
             stream.synchronize()
-        state.t = (start_step+n_steps)*float(self.dt)
+        state.t = (start_step+n_steps)*self.host_dt

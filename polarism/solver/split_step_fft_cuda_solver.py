@@ -143,6 +143,14 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         ).astype(self._complex_dtype)
         self._half = half
         self._half_normalized = (half / self._n).astype(self._complex_dtype)
+        self._conj_half = self.xp.conj(half)
+        k_squared = self.xp.asarray(grid.k_squared, dtype=self.xp.float64)
+        self._full_normalized = (
+            self.xp.exp(
+                -1j * config.physics.hbar * k_squared *
+                config.solver.dt / (2 * config.physics.m_eff)
+            ) / self._n
+        ).astype(self._complex_dtype)
         self._potential_cached = None
         self._graph_cache = {}
         self._graph_signature = None
@@ -270,14 +278,16 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         self._graph_cache.clear()
         self._graph_signature = None
         with self._advance_stream:
-            xp.multiply(spectrum[0], self._half_normalized, out=multiplied)
+            xp.multiply(spectrum[0], self._full_normalized, out=multiplied)
             xp.multiply(spectrum[0], self._half, out=multiplied)
             self._advance_plan.fft(spectrum[0], multiplied, cufft.CUFFT_FORWARD)
             self._advance_plan.fft(multiplied, spectrum[0], cufft.CUFFT_INVERSE)
             self._advance_stream.synchronize()
 
-    def _graph_for(self, length, model, potential, envelope, pump_flat):
-        signature = (model, id(potential), id(envelope), int(pump_flat.data.ptr))
+    def _graph_for(self, length, model, potential, envelope, pump_flat,
+                   combiner=None):
+        signature = (model, id(potential), id(envelope),
+                     combiner.signature if combiner is not None else int(pump_flat.data.ptr))
         if signature != self._graph_signature:
             self._graph_cache.clear()
             self._graph_signature = signature
@@ -297,16 +307,17 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             stream.begin_capture()
             try:
                 for k in range(length):
-                    xp.multiply(spectrum[k % 2], self._half_normalized, out=multiplied)
+                    xp.multiply(spectrum[k % 2], self._full_normalized, out=multiplied)
                     plan.fft(multiplied, local, cufft.CUFFT_INVERSE)
+                    pumps = ((combiner.combine(2 * k, 0),
+                              combiner.combine(2 * k + 1, 1))
+                             if combiner is not None else (pump_flat, pump_flat))
                     self._launch_into(
                         model, local, fields[k % 2], potential,
-                        (pump_flat, pump_flat), None, out, fields[(k + 1) % 2],
+                        pumps, None, out, fields[(k + 1) % 2],
                         scales, 2 * k,
                     )
                     plan.fft(out, spectrum[(k + 1) % 2], cufft.CUFFT_FORWARD)
-                    xp.multiply(spectrum[(k + 1) % 2], self._half,
-                                out=spectrum[(k + 1) % 2])
                 graph = stream.end_capture()
             except Exception:
                 try:
@@ -316,7 +327,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                 raise
         if len(self._graph_cache) == 4:
             self._graph_cache.pop(next(iter(self._graph_cache)))
-        self._graph_cache[length] = (graph, pump_flat)
+        self._graph_cache[length] = (graph, combiner if combiner is not None else pump_flat)
         return graph
 
     def advance(self, potential, pump, reservoir, boundary_condition, state,
@@ -340,7 +351,10 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                                    state, start_step, n_steps)
 
         xp = self.xp
-        term = pump.separable_term() if hasattr(pump, "separable_term") else None
+        terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
+        term = (terms[0] if terms is not None and len(terms) == 1 else
+                pump.separable_term() if terms is None and hasattr(pump, "separable_term") else None)
+        multi = terms is not None and len(terms) > 1
         no_lasers = not getattr(pump, "lasers", [True])
         if term is not None:
             envelope, coefficient = term
@@ -354,6 +368,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         else:
             envelope = None
             coefficient = None
+            pump_flat = None
 
         spectrum_in = getattr(state, "psi_k", None)
         if spectrum_in is None:
@@ -364,39 +379,48 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         fields_in = reservoir.get_state()
         xp.cuda.get_current_stream().synchronize()
         self._ensure_advance_buffers(len(fields_in))
+        if multi:
+            from polarism.solver.cuda_pump import CudaPumpCombiner
+            if not hasattr(self, "_pump_combiner"):
+                self._pump_combiner = CudaPumpCombiner(xp, self._real_dtype, self._n)
+            combiner = self._pump_combiner
+            combiner.prepare(terms, 2, 2 * 64)
+            xp.cuda.get_current_stream().synchronize()
+        else:
+            combiner = None
         spec, res, local, out, multiplied = self._advance_buffers
         stream = self._advance_stream
         plan = self._advance_plan
         done = 0
         with stream:
-            xp.copyto(spec[0], spectrum_in)
+            xp.multiply(spectrum_in, self._conj_half, out=spec[0])
             for target, source in zip(res[0], fields_in):
                 xp.copyto(target, source)
+            pending_hosts = []
             if (self.config.solver.cuda_graphs and not self._graphs_failed
-                    and coefficient is not None):
-                pending_hosts = []
+                    and (coefficient is not None or multi)):
                 try:
                     while n_steps - done >= 2:
                         remaining = n_steps - done
                         length = min(64, remaining - remaining % 2)
                         graph = self._graph_for(
-                            length, model, potential, envelope, pump_flat
+                            length, model, potential, envelope, pump_flat, combiner
                         )
-                        host_scales = self._scalar([
-                            coefficient(time)
-                            for k in range(length)
-                            for time in (
-                                (start_step + done + k) * self.config.solver.dt
-                                + self.config.solver.dt / 4,
-                                (start_step + done + k) * self.config.solver.dt
-                                + 3 * self.config.solver.dt / 4,
-                            )
-                        ])
+                        times = [time for k in range(length) for time in (
+                            (start_step + done + k) * self.config.solver.dt
+                            + self.config.solver.dt / 4,
+                            (start_step + done + k) * self.config.solver.dt
+                            + 3 * self.config.solver.dt / 4)]
+                        if multi:
+                            pending_hosts.append(combiner.coefficients(terms, times, stream))
+                            host_scales = self._scalar([1] * (length * 2))
+                        else:
+                            host_scales = self._scalar([coefficient(t) for t in times])
                         pending_hosts.append(host_scales)
                         self._graph_scales[:length * 2].set(host_scales, stream=stream)
                         graph.launch(stream=stream)
                         done += length
-                        if len(pending_hosts) == 32:
+                        if len(pending_hosts) >= 32:
                             stream.synchronize()
                             pending_hosts.clear()
                 except Exception as exc:
@@ -407,7 +431,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                     print(f"split-step-fft-cuda: CUDA graphs unavailable ({exc}); using regular launches.",
                           file=sys.stderr)
                     stream.synchronize()
-                    xp.copyto(spec[0], spectrum_in)
+                    xp.multiply(spectrum_in, self._conj_half, out=spec[0])
                     for target, source in zip(res[0], fields_in):
                         xp.copyto(target, source)
                     done = 0
@@ -416,12 +440,16 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                 from cupy.cuda import cufft
                 for k in range(done, n_steps):
                     parity = (k - done) % 2
-                    xp.multiply(spec[parity], self._half_normalized, out=multiplied)
+                    xp.multiply(spec[parity], self._full_normalized, out=multiplied)
                     plan.fft(multiplied, local, cufft.CUFFT_INVERSE)
                     t = (start_step + k) * self.config.solver.dt
                     times = (t + self.config.solver.dt / 4,
                              t + 3 * self.config.solver.dt / 4)
-                    if coefficient is None:
+                    if multi:
+                        pending_hosts.append(combiner.coefficients(terms, times, stream))
+                        pumps = (combiner.combine(0, 0), combiner.combine(1, 1))
+                        factors = (self._scalar(1), self._scalar(1))
+                    elif coefficient is None:
                         pumps = tuple(self._flat_gpu_input(pump(time), self._real_dtype)
                                       for time in times)
                         factors = (self._scalar(1), self._scalar(1))
@@ -431,9 +459,12 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                     self._launch_into(model, local, res[parity], potential, pumps,
                                       factors, out, res[1 - parity])
                     plan.fft(out, spec[1 - parity], cufft.CUFFT_FORWARD)
-                    xp.multiply(spec[1 - parity], self._half, out=spec[1 - parity])
+                    if len(pending_hosts) >= 32:
+                        stream.synchronize()
+                        pending_hosts.clear()
 
             final_index = (n_steps - done) % 2
+            xp.multiply(spec[final_index], self._half, out=spec[final_index])
             state.psi = None
             state.psi_k = spec[final_index].copy()
             reservoir.set_state(tuple(field.copy() for field in res[final_index]))

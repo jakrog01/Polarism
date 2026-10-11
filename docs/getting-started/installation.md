@@ -8,7 +8,7 @@ Install the published package for simulation work. A development checkout is nee
 pip install polarism
 ```
 
-Pin a release with `pip install "polarism==0.3.6"`.
+Pin a release with `pip install "polarism==0.3.7"`.
 
 The development version can be installed straight from GitHub:
 
