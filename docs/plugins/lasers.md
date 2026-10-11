@@ -54,7 +54,7 @@ The base class handles delayed start, dtype conversion, and the latest `P`.
 envelope is computed once, then reused. `PumpField.separable_term()` is
 available when exactly one laser inherits `AbstractLaser.get_power` unchanged
 and has a cached envelope. That permits CUDA graph replay in eligible
-`rk4-cuda` or `split-step-fft-cuda` chunks. Multiple lasers or an overridden
+`rk4-cuda`, `split-step-fft-cuda`, or `ifrk-fft-cuda` chunks. Multiple lasers or an overridden
 `get_power` use the regular pump path. Avoid converting the field to NumPy
 inside `_P_space` or a per-step hook.
 
@@ -63,7 +63,7 @@ inside `_P_space` or a per-step hook.
 | Solver family | Plugin laser behavior |
 | --- | --- |
 | `rk4-fdm`, `rk4-fdm-fused`, `split-step-fft`, `etd-rk2`, `ip-rk4` | Use the callable total pump field |
-| `rk4-cuda`, `split-step-fft-cuda`, `ifrk4-fft-cuda` | Use the pump field on an active GPU; only the first two have CUDA graph chunk paths |
+| `rk4-cuda`, `split-step-fft-cuda`, `ifrk-fft-cuda`, `ifrk4-fft-cuda` | Use the pump field on an active GPU; eligible built-in laser envelopes allow CUDA graph chunks |
 
 ## Pitfalls
 

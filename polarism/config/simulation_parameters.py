@@ -101,6 +101,7 @@ class SolverParameters:
     total_time: float = 5.0
     dt: float = 1e-3
     method: str = "rk4-fdm"
+    tableau: str = "rk4"
     precision: str = "double"
     laplacian: str = "five-point"
     cuda_graphs: bool = True

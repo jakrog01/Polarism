@@ -62,7 +62,7 @@ potential in `get_potential_distribution`, leave `psi` unchanged in
 
 | Solver family | Plugin strategy behavior |
 | --- | --- |
-| `rk4-fdm`, `rk4-fdm-fused`, `split-step-fft`, `etd-rk2`, `ip-rk4`, `ifrk4-fft-cuda` | Use the combined potential and after-step action |
+| `rk4-fdm`, `rk4-fdm-fused`, `split-step-fft`, `etd-rk2`, `ip-rk4`, `ifrk-fft-cuda`, `ifrk4-fft-cuda` | Use the combined potential and after-step action |
 | `rk4-cuda`, `split-step-fft-cuda` | Accept the strategy; post-step actions disable their optimized chunk path |
 
 ## Pitfalls

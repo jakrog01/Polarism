@@ -137,7 +137,7 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
             "kinetic_relaxation_eta."
         ),
     },
-    "ifrk4-fft-cuda": {
+    "ifrk-fft-cuda": {
         "grid_types": {"periodic"},
         "supports_potential": True,
         "reservoir_types": _ALL_RESERVOIR_TYPES,
@@ -145,14 +145,15 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
         "custom_reservoirs": "quantitative",
         "supports_kinetic_relaxation": True,
         "description": (
-            "GPU-native FFT interaction-picture RK4 solver. Stage-coupled reservoir. "
-            "cuFFT kinetics, no CPU transfers in the time loop. "
+            "FFT interaction-picture RK solver with selectable tableau. "
+            "Stage-coupled reservoir and cuFFT fused stages for supported GPU cases. "
             "Evaluates kinetic_relaxation_eta in nonlinear RHS. "
             "Spectral production path for periodic grids; "
             "use a wide CAP absorber for open boundaries."
         ),
     },
 }
+_SOLVER_CAPABILITIES["ifrk4-fft-cuda"] = _SOLVER_CAPABILITIES["ifrk-fft-cuda"]
 
 
 class SolverCompatibilityError(RuntimeError):
@@ -236,7 +237,7 @@ def check_solver_compatibility(cfg: Config) -> None:
             stacklevel=2,
         )
 
-    if solver in {"rk4-cuda", "ifrk4-fft-cuda"}:
+    if solver in {"rk4-cuda", "ifrk4-fft-cuda", "ifrk-fft-cuda"}:
         use_gpu = getattr(cfg.compute_engine, "use_gpu", False)
         cuda_available = has_cuda_device()
         if use_gpu and not cuda_available:

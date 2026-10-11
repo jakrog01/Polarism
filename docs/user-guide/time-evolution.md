@@ -13,7 +13,8 @@ The codebase supports several real-time integration strategies. The best choice 
 | CUDA split-step FFT | `split-step-fft-cuda` | Second-order spectral evolution on a periodic CUDA grid |
 | Interaction-picture RK4 | `ip-rk4` | Spectral-style evolution when its assumptions fit |
 | ETD-RK2 | `etd-rk2` | Periodic spectral evolution with exponential differencing |
-| GPU-native FFT IP-RK4 | `ifrk4-fft-cuda` | GPU-native spectral production runs with stage-coupled reservoirs |
+| GPU-native Lawson IF-RK | `ifrk-fft-cuda` | Selectable fourth-, fifth-, seventh-, eighth-, or ninth-order spectral runs |
+| Lawson IF-RK4 alias | `ifrk4-fft-cuda` | Historical fourth-order method name |
 
 ## Choosing a solver
 
@@ -22,12 +23,12 @@ Recommended order:
 1. Prototype with `rk4-fdm`.
 2. Confirm time-step and grid convergence.
 3. Move to `rk4-fdm-fused` or `rk4-cuda` (FDM production) once the physics setup is stable.
-4. For periodic-grid spectral campaigns, use `ifrk4-fft-cuda` (GPU-native, stage-coupled quadratic-double).
+4. For periodic-grid spectral campaigns, use `ifrk-fft-cuda` (GPU-native with built-in reservoirs, stage-coupled).
 5. Use `split-step-fft` or `split-step-fft-cuda` for second-order spectral evolution on periodic grids, including reservoir-coupled cases. Neither evaluates `kinetic_relaxation_eta`.
 
 ## Spectral solver limitations
 
-All spectral solvers (`split-step-fft`, `split-step-fft-cuda`, `ip-rk4`, `etd-rk2`, `ifrk4-fft-cuda`)
+All spectral solvers (`split-step-fft`, `split-step-fft-cuda`, `ip-rk4`, `etd-rk2`, `ifrk-fft-cuda`, `ifrk4-fft-cuda`)
 are FFT-only and therefore accept the `periodic` grid only.  Selecting a
 `closed-interval` grid raises `SolverCompatibilityError` at configuration time.
 For `closed-interval` domains use the finite-difference family: `rk4-fdm`,

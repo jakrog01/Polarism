@@ -9,7 +9,7 @@ Polarism is a Python package for 2-D driven-dissipative Gross-Pitaevskii simulat
 ## Highlights
 
 - Finite-difference RK4, split-step FFT, ETD-RK2, and interaction-picture solver families.
-- NumPy execution and optional CuPy GPU execution, including CUDA graph chunks for eligible `rk4-cuda` and `split-step-fft-cuda` runs.
+- NumPy execution and optional CuPy GPU execution, including CUDA graph chunks for eligible CUDA solver runs.
 - Single, double, and quadratic-double reservoirs; continuous and pulsed pumps.
 - HDF5, JSON, and NPY output, live visualization, and online animation.
 - Registries for custom solvers and model components, documented in the [plugin guide](https://jakrog01.github.io/Polarism/plugins/); a `tyro`-generated `polarism` CLI.
@@ -74,7 +74,7 @@ compute_engine.configure(cfg.compute_engine)
 ps.SimulationController(cfg).run()
 ```
 
-For GPU execution, set `cfg.compute_engine.use_gpu = True`, choose `cfg.solver.method = "rk4-cuda"` or `"split-step-fft-cuda"`, and consider `cfg.solver.precision = "single"` on consumer GPUs. The FFT solver requires a periodic grid. Inspect CLI options with `polarism --help`.
+For GPU execution, set `cfg.compute_engine.use_gpu = True`, choose `cfg.solver.method = "rk4-cuda"`, `"split-step-fft-cuda"`, or `"ifrk-fft-cuda"`, and consider `cfg.solver.precision = "single"` on consumer GPUs. FFT solvers require a periodic grid. Inspect CLI options with `polarism --help`.
 
 ## Choosing a solver
 
@@ -84,7 +84,8 @@ For GPU execution, set `cfg.compute_engine.use_gpu = True`, choose `cfg.solver.m
 | `rk4-cuda` | periodic or closed-interval | CUDA | Fused FDM runs |
 | `split-step-fft`, `etd-rk2`, `ip-rk4` | periodic | CPU or CuPy | Spectral integration |
 | `split-step-fft-cuda` | periodic | CUDA | Second-order spectral runs |
-| `ifrk4-fft-cuda` | periodic | CUDA | Spectral RK4 with stage-coupled reservoirs |
+| `ifrk-fft-cuda` | periodic | CPU or CUDA | Spectral RK4/DP5/DOP853/Verner 7/9 with stage-coupled reservoirs |
+| `ifrk4-fft-cuda` | periodic | CPU or CUDA | Historical alias for spectral RK4 |
 
 Check timestep and grid convergence for your model. See the [solver reference](https://jakrog01.github.io/Polarism/api/solvers/) for compatibility details.
 

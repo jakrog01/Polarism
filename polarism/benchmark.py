@@ -9,7 +9,7 @@ import time
 from polarism.compute_engine import has_cuda_device
 
 
-def _controller(method: str, size: int, precision: str, reservoir: str):
+def _controller(method: str, size: int, precision: str, reservoir: str, tableau: str = "rk4"):
     from polarism.config.simulation_parameters import Config
     from polarism.simulation_controller import SimulationController
 
@@ -24,6 +24,7 @@ def _controller(method: str, size: int, precision: str, reservoir: str):
     cfg.laser.P0 = 0.02
     cfg.laser.sigma_space = 12.0
     cfg.solver.method = method
+    cfg.solver.tableau = tableau
     cfg.solver.dt = 1e-3
     cfg.solver.total_time = 1.0
     cfg.solver.precision = precision
@@ -38,19 +39,23 @@ def _arguments(controller):
             controller.boundary_condition, controller.state)
 
 
-def _time_run(method, size, precision, reservoir, steps, chunked, cp):
-    controller = _controller(method, size, precision, reservoir)
+def _time_run(method, size, precision, reservoir, steps, chunked, cp, tableau="rk4"):
+    controller = _controller(method, size, precision, reservoir, tableau)
     args = _arguments(controller)
     dt = controller.cfg.solver.dt
     if chunked:
-        controller.solver.advance(*args, 0, 64)
+        def chunks(first_step):
+            done = 0
+            while done < steps:
+                length = min(64, steps - done)
+                controller.solver.advance(*args, first_step + done, length)
+                done += length
+
+        # The untimed pass captures every graph length the timed pass uses.
+        chunks(0)
         cp.cuda.Device().synchronize()
         start = time.perf_counter()
-        done = 0
-        while done < steps:
-            length = min(64, steps - done)
-            controller.solver.advance(*args, done + 64, length)
-            done += length
+        chunks(steps)
     else:
         for k in range(4):
             controller.solver.step(*args)
@@ -91,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--steps", type=int, default=128)
     parser.add_argument("--reservoir", choices=("single", "double", "quadratic-double"),
                         default="single")
+    parser.add_argument("--tableau", choices=("rk4", "dp5", "dop853", "vern7", "vern9"),
+                        default="rk4")
     args = parser.parse_args(argv)
     if args.steps < 1 or any(n < 2 for n in args.grid_sizes):
         parser.error("steps must be positive and grid sizes must be at least 2")
@@ -114,11 +121,11 @@ def main(argv: list[str] | None = None) -> int:
         for precision in args.precisions:
             for size in args.grid_sizes:
                 step_us = _time_run(method, size, precision, args.reservoir,
-                                    args.steps, False, cp)
+                                    args.steps, False, cp, args.tableau)
                 advance_us = _time_run(method, size, precision, args.reservoir,
-                                       args.steps, True, cp)
+                                       args.steps, True, cp, args.tableau)
                 record = {
-                    "method": method, "precision": precision, "grid": size,
+                    "method": method, "tableau": args.tableau, "precision": precision, "grid": size,
                     "reservoir": args.reservoir, "steps": args.steps,
                     "step_us": step_us, "advance_us": advance_us,
                     "speedup": step_us / advance_us,

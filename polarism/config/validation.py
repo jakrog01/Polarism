@@ -93,6 +93,10 @@ def _validate_physics(cfg: Config) -> None:
 
 def _validate_solver(cfg: Config) -> None:
     s = cfg.solver
+    if s.tableau not in {"rk4", "dp5", "dop853", "vern7", "vern9"}:
+        raise ConfigValidationError(
+            "solver.tableau must be one of rk4, dp5, dop853, vern7, vern9"
+        )
     if s.dt <= 0.0:
         raise ConfigValidationError(f"solver.dt must be > 0, got {s.dt}")
     if s.total_time <= 0.0:
