@@ -69,7 +69,7 @@ reservoir classes. Compare small CPU and GPU runs before production use.
 
 | Solver | Plugin reservoir behavior |
 | --- | --- |
-| `rk4-fdm`, `rk4-fdm-fused`, `ip-rk4`, `etd-rk2`, `ifrk4-fft-cuda` | Compatibility metadata accepts custom reservoirs; call their derivative/state interface |
+| `rk4-fdm`, `rk4-fdm-fused`, `ip-rk4`, `etd-rk2`, `ifrk-fft-cuda`, `ifrk4-fft-cuda` | Compatibility metadata accepts custom reservoirs; call their derivative/state interface |
 | `split-step-fft`, `split-step-fft-cuda` | Compatibility metadata accepts custom reservoirs; call `step` in regular stepping |
 | `rk4-cuda` | Compatibility check rejects custom `reservoir_type` |
 

@@ -126,7 +126,8 @@ The condensate equation receives `nR` as the active reservoir density.
 
 | Field | Meaning | Main options |
 | --- | --- | --- |
-| `method` | time integrator | `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`, `split-step-fft`, `split-step-fft-cuda`, `etd-rk2`, `ip-rk4`, `ifrk4-fft-cuda` |
+| `method` | time integrator | `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`, `split-step-fft`, `split-step-fft-cuda`, `etd-rk2`, `ip-rk4`, `ifrk-fft-cuda`, `ifrk4-fft-cuda` |
+| `tableau` | fixed-step RK coefficients read only by `ifrk-fft-cuda` | `rk4` (default), `dp5`, `dop853`, `vern7`, `vern9` |
 | `dt` | timestep | positive float |
 | `total_time` | total simulation time | positive float |
 | `precision` | arithmetic mode where supported | typically `single`, `double` |
@@ -136,6 +137,8 @@ The condensate equation receives `nR` as the active reservoir density.
 `solver.laplacian` defaults to `five-point`.  `isotropic-9pt` is available for
 square cells (`dx == dy`) and discretizes the same physical operator, `nabla^2`,
 with reduced grid-direction anisotropy.
+
+`ifrk4-fft-cuda` always uses `rk4` regardless of `solver.tableau`.
 
 ## Result options
 
@@ -165,7 +168,7 @@ only the movie stream, while storage visitors remain fatal by default.
 | Field | Meaning | Main options |
 | --- | --- | --- |
 | `use_gpu` | request CuPy/CUDA backend | boolean |
-| `gpu_device` | reserved CUDA device index; currently unused by backend selection | integer, default `0` |
+| `gpu_device` | CUDA device index among the visible devices | integer, default `0` |
 
 ## Physics block
 
