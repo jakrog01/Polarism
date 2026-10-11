@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Union
 
+from polarism.compute_engine import has_full_rate_fp64
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -620,6 +621,233 @@ def build_kernel_source_1d(
     return tuple(s.replace("pump_scale * pump[tid]", f"{mul}(pump_scale, pump[tid])") for s in sources)
 
 
+def _tile_index(index: int, size: int, bc_type: str) -> int:
+    """Map a virtual halo coordinate to a grid coordinate."""
+    if bc_type == "periodic":
+        return index % size
+    period = 2 * (size - 1)
+    folded = index % period
+    return min(folded, period - folded)
+
+
+def _tile_halo_indices(nx: int, ny: int, tile_x: int, tile_y: int,
+                       block_x: int, block_y: int, bc_type: str):
+    """Emulate the grid indices loaded by a tile and its four-cell halo."""
+    import numpy as np
+
+    x = np.array([_tile_index(block_x * tile_x + i - 4, nx, bc_type)
+                  for i in range(tile_x + 8)])
+    y = np.array([_tile_index(block_y * tile_y + i - 4, ny, bc_type)
+                  for i in range(tile_y + 8)])
+    return y[:, None] * nx + x[None, :]
+
+
+def _tile_shared_bytes(tile_x: int, tile_y: int, real_type: str,
+                       reservoir_type: str) -> int:
+    fields = 3 if reservoir_type == "single" else 4
+    byte_width = 4 if real_type == "float" else 8
+    return byte_width * fields * (2 * (tile_x + 8) * (tile_y + 8)
+                                  + 3 * tile_x * tile_y)
+
+
+def _choose_tile_shape(real_type: str, reservoir_type: str, block_limit: int,
+                       sm_limit: int):
+    candidates = ((32, 16), (32, 8), (16, 8), (8, 8))
+    for tile in candidates:
+        needed = _tile_shared_bytes(*tile, real_type, reservoir_type)
+        if needed <= block_limit and 2 * needed <= sm_limit:
+            return tile
+    for tile in candidates:
+        if _tile_shared_bytes(*tile, real_type, reservoir_type) <= block_limit:
+            return tile
+    return None
+
+
+def _prefer_tiled(precision: str, major: int, minor: int) -> bool:
+    return precision == "single" or has_full_rate_fp64(major, minor)
+
+
+def build_tiled_kernel_source(bc_type: str, real_type: str, reservoir_type: str,
+                              laplacian_type: str, tile_x: int, tile_y: int,
+                              complex_potential: bool, graph: bool = False) -> str:
+    """Build a whole-step kernel from the staged RHS expressions."""
+    import re
+
+    rhs_source = build_kernel_source_1d(
+        bc_type, real_type, reservoir_type, laplacian_type
+    )[0]
+    fields = ("nR",) if reservoir_type == "single" else (
+        ("nA", "nI") if reservoir_type == "double" else ("nR", "nI")
+    )
+    derivative_names = {"nR": "dnR_dt", "nA": "dnA_dt", "nI": "dnI_dt"}
+    suffix = {"single": "", "double": "_double",
+              "quadratic-double": "_qdouble"}[reservoir_type]
+    header, body = rhs_source.split(") {", 1)
+    body = body.rsplit("\n}", 1)[0]
+    body = body.replace(PREAMBLE_1D, "\n")
+    neighbors = _NEUMANN_NEIGHBORS if bc_type == "closed-interval" else _PERIODIC_NEIGHBORS
+    tile_neighbors = ("""
+    const int up = tid - pitch;
+    const int dn = tid + pitch;
+    const int lt = tid - 1;
+    const int rt = tid + 1;
+""" if bc_type == "periodic" else """
+    const int up = (tiled_coord(vy - 1, ny) == (i > 0 ? i - 1 : 1))
+                   ? tid - pitch : tid + pitch;
+    const int dn = (tiled_coord(vy + 1, ny) == (i < ny-1 ? i + 1 : ny-2))
+                   ? tid + pitch : tid - pitch;
+    const int lt = (tiled_coord(vx - 1, nx) == (j > 0 ? j - 1 : 1))
+                   ? tid - 1 : tid + 1;
+    const int rt = (tiled_coord(vx + 1, nx) == (j < nx-1 ? j + 1 : nx-2))
+                   ? tid + 1 : tid - 1;
+""")
+    body = body.replace(neighbors, tile_neighbors)
+    diag, _, _, _ = _build_laplacian_code(laplacian_type, bc_type, real_type)
+    if diag:
+        body = body.replace(diag, """
+    const int ul = up + (lt - tid);
+    const int ur = up + (rt - tid);
+    const int dl = dn + (lt - tid);
+    const int dr = dn + (rt - tid);
+""")
+    body = body.replace("V_re[tid]", "V_re[gid]").replace("V_im[tid]", "V_im[gid]")
+    body = body.replace("pump[tid]", "pump[gid]")
+    if not complex_potential:
+        body = body.replace("V_im[gid]", "V_re[gid]")
+    body = body.replace("dpsi[2*tid+1]", "dpsi[1]")
+    body = body.replace("dpsi[2*tid]", "dpsi[0]")
+    for name in derivative_names.values():
+        body = body.replace(f"{name}[tid]", f"{name}[0]")
+    parameter_declarations = f"const {real_type} inv_dx2," + rhs_source.split(
+        f"const {real_type} inv_dx2,", 1
+    )[1].split(") {", 1)[0]
+    parameter_names = re.findall(rf"const {real_type} (\w+)", parameter_declarations)
+    rhs_header = re.sub(
+        r'^extern "C" __global__\s*void \w+\(',
+        '__device__ __forceinline__ void tiled_rhs(', header.strip(), count=1,
+    )
+    rhs_header = rhs_header.replace(
+        "const int nx, const int ny,",
+        "const int nx, const int ny, const int tid, const int gid, "
+        "const int vx, const int vy, const int pitch,",
+    )
+    if bc_type == "periodic":
+        coord_source = """__device__ __forceinline__ int tiled_coord(int index, int size) {
+    int wrapped = index % size;
+    return wrapped < 0 ? wrapped + size : wrapped;
+}"""
+    else:
+        coord_source = """__device__ __forceinline__ int tiled_coord(int index, int size) {
+    const int period = 2 * (size - 1);
+    int folded = index % period;
+    if (folded < 0) folded += period;
+    return folded < size ? folded : period - folded;
+}"""
+    declarations = [f"const {real_type}* __restrict__ psi_initial"]
+    declarations += [f"const {real_type}* __restrict__ {name}_initial" for name in fields]
+    declarations += [f"const {real_type}* __restrict__ V_re",
+                     f"const {real_type}* __restrict__ V_im"]
+    declarations += [f"const {real_type}* __restrict__ pump{stage}" for stage in range(3)]
+    declarations += [f"{real_type}* __restrict__ psi_out"]
+    declarations += [f"{real_type}* __restrict__ {name}_out" for name in fields]
+    declarations += ["const int nx", "const int ny"]
+    if graph:
+        declarations += [f"const {real_type}* pump_scales", "const int pump_index"]
+    else:
+        declarations += [f"const {real_type} scale{stage}" for stage in range(3)]
+    declarations += [f"const {real_type} v_im_scale",
+                     f"const {real_type} half_dt", f"const {real_type} dt",
+                     f"const {real_type} dt6", parameter_declarations]
+    scale_values = ([f"pump_scales[pump_index + {i}]" for i in range(3)] if graph
+                    else [f"scale{i}" for i in range(3)])
+    count = 2 + len(fields)
+    area = f"(({tile_x}+8)*({tile_y}+8))"
+    lines = [
+        f"extern __shared__ {real_type} scratch[];",
+        f"const int pitch = {tile_x}+8;",
+        f"const int area = {area};",
+        "const int lane = threadIdx.x;",
+        f"const int base_x = blockIdx.x * {tile_x};",
+        f"const int base_y = blockIdx.y * {tile_y};",
+    ]
+    for bank in (0, 1):
+        offset = bank * count
+        lines.append(f"{real_type}* psi{bank} = scratch + {offset}*area;")
+        for index, name in enumerate(fields):
+            lines.append(f"{real_type}* {name}{bank} = scratch + {offset+2+index}*area;")
+    k_base = 2 * count
+    lines.append(f"{real_type}* kp = scratch + {k_base}*area;")
+    for index, name in enumerate(fields):
+        lines.append(f"{real_type}* k{name} = scratch + {k_base}*area + "
+                     f"(2+{index})*{tile_x}*{tile_y}*3;")
+    lines += [
+        "for (int p = lane; p < area; p += blockDim.x) {",
+        "    const int vx = base_x + p % pitch - 4;",
+        "    const int vy = base_y + p / pitch - 4;",
+        "    const int gid = tiled_coord(vy, ny)*nx + tiled_coord(vx, nx);",
+        "    psi0[2*p] = psi_initial[2*gid];",
+    ]
+    lines.append("    psi0[2*p+1] = psi_initial[2*gid+1];")
+    for name in fields:
+        lines.append(f"    {name}0[p] = {name}_initial[gid];")
+    lines += ["}", "__syncthreads();", "#pragma unroll",
+              "for (int stage = 0; stage < 4; ++stage) {",
+              "    for (int p = lane; p < area; p += blockDim.x) {",
+              "        const int x = p % pitch;", "        const int y = p / pitch;",
+              "        if (x < stage+1 || x >= pitch-stage-1 ||",
+              f"            y < stage+1 || y >= {tile_y}+8-stage-1) continue;",
+              "        const int vx = base_x + x - 4;",
+              "        const int vy = base_y + y - 4;",
+              "        const int gid = tiled_coord(vy, ny)*nx + tiled_coord(vx, nx);",
+              "        const int out = (y-4)*" + str(tile_x) + " + x-4;",
+              f"        {real_type} dp[2];"]
+    for name in fields:
+        lines.append(f"        {real_type} d{name}[1];")
+    lines += [
+        f"        const {real_type}* input_psi = (stage & 1) ? psi1 : psi0;",
+    ]
+    for name in fields:
+        lines.append(f"        const {real_type}* input_{name} = (stage & 1) ? {name}1 : {name}0;")
+    lines += [
+        f"        const {real_type}* stage_pump = stage == 0 ? pump0 : "
+        "(stage == 3 ? pump2 : pump1);",
+        f"        const {real_type} stage_scale = stage == 0 ? {scale_values[0]} : "
+        f"(stage == 3 ? {scale_values[2]} : {scale_values[1]});",
+        "        tiled_rhs(input_psi, " + ", ".join(f"input_{name}" for name in fields)
+        + ", V_re, V_im, stage_pump, dp, "
+        + ", ".join(f"d{name}" for name in fields)
+        + ", nx, ny, p, gid, vx, vy, pitch, stage_scale, v_im_scale, "
+        + ", ".join(parameter_names) + ");",
+        "        if (stage < 3) {",
+        f"            const {real_type} c_dt = stage == 2 ? dt : half_dt;",
+        f"            {real_type}* next_psi = (stage & 1) ? psi0 : psi1;",
+        "            next_psi[2*p] = psi_initial[2*gid] + c_dt * dp[0];",
+        "            next_psi[2*p+1] = psi_initial[2*gid+1] + c_dt * dp[1];",
+    ]
+    for name in fields:
+        lines += [f"            {real_type}* next_{name} = (stage & 1) ? {name}0 : {name}1;",
+                  f"            next_{name}[p] = {name}_initial[gid] + c_dt * d{name}[0];"]
+    lines += ["        }", f"        if (x >= 4 && x < 4+{tile_x} && y >= 4 && y < 4+{tile_y}) {{",
+              "            if (stage < 3) {",
+              "                kp[stage*2*" + str(tile_x*tile_y) + "+2*out] = dp[0];",
+              "                kp[stage*2*" + str(tile_x*tile_y) + "+2*out+1] = dp[1];"]
+    for name in fields:
+        lines.append(f"                k{name}[stage*{tile_x*tile_y}+out] = d{name}[0];")
+    lines += ["            } else if (vx < nx && vy < ny) {",
+              f"                psi_out[2*gid] = psi_initial[2*gid] + dt6 * (kp[2*out] + 2*kp[2*{tile_x*tile_y}+2*out] + 2*kp[4*{tile_x*tile_y}+2*out] + dp[0]);",
+              f"                psi_out[2*gid+1] = psi_initial[2*gid+1] + dt6 * (kp[2*out+1] + 2*kp[2*{tile_x*tile_y}+2*out+1] + 2*kp[4*{tile_x*tile_y}+2*out+1] + dp[1]);"]
+    for name in fields:
+        lines += [f"                {real_type} {name}_new = {name}_initial[gid] + dt6 * (k{name}[out] + 2*k{name}[{tile_x*tile_y}+out] + 2*k{name}[2*{tile_x*tile_y}+out] + d{name}[0]);",
+                  f"                {name}_out[gid] = ({name}_new < 0) ? 0 : {name}_new;"]
+    lines += ["            }", "        }", "    }", "    __syncthreads();", "}"]
+    kernel = "\n    ".join(lines)
+    return (coord_source + "\n"
+            + rhs_header + ") {\n    const int i = gid / nx;\n    const int j = gid % nx;\n"
+            + body + "\n}\n"
+            + f'extern "C" __global__ void tiled_step{suffix}(' + ",\n    ".join(declarations)
+            + ") {\n    " + kernel + "\n}\n")
+
+
 def _auto_tune_block_size(kern_rhs, _N: int) -> int:
     """Pick a CUDA block size for the kernel."""
     candidates = [128, 256, 512]
@@ -776,6 +1004,14 @@ class RK4CudaSolver(AbstractSolver):
                     self._k_kinetic_relaxation_eta, self._k_diff_I, self._k_diff_R,
                 )
             self._k_rhs_parameters = common + model
+            props = self.xp.cuda.runtime.getDeviceProperties(
+                self.xp.cuda.runtime.getDevice()
+            )
+            self._use_tiled = _prefer_tiled(
+                self._precision, props["major"], props["minor"]
+            )
+            self._tiled_kernels = {}
+            self._tile_shape = self._select_tile_shape()
             self._graph_cache = {}
             self._graph_signature = None
             self._graphs_failed = False
@@ -822,6 +1058,38 @@ class RK4CudaSolver(AbstractSolver):
 
         block = self._select_block_size()
         self._make_launch_dims(block)
+
+    def _select_tile_shape(self):
+        """Choose a tile that fits device shared memory, favoring two resident blocks."""
+        import cupy as cp
+
+        props = cp.cuda.runtime.getDeviceProperties(cp.cuda.runtime.getDevice())
+        block_limit = props.get("sharedMemPerBlockOptin", props["sharedMemPerBlock"])
+        sm_limit = props.get("sharedMemPerMultiprocessor", block_limit)
+        return _choose_tile_shape(self._real_type, self._reservoir_type,
+                                  block_limit, sm_limit)
+
+    def _tiled_kernel(self, complex_potential, graph=False):
+        key = (complex_potential, graph)
+        if key not in self._tiled_kernels:
+            import cupy as cp
+
+            tile_x, tile_y = self._tile_shape
+            source = build_tiled_kernel_source(
+                self.grid_type, self._real_type, self._reservoir_type,
+                self._laplacian_type, tile_x, tile_y, complex_potential, graph,
+            )
+            suffix = {"single": "", "double": "_double",
+                      "quadratic-double": "_qdouble"}[self._reservoir_type]
+            kernel = cp.RawKernel(source, "tiled_step" + suffix)
+            shared_bytes = _tile_shared_bytes(tile_x, tile_y, self._real_type,
+                                               self._reservoir_type)
+            if shared_bytes > cp.cuda.runtime.getDeviceProperties(
+                    cp.cuda.runtime.getDevice())["sharedMemPerBlock"]:
+                kernel.max_dynamic_shared_size_bytes = shared_bytes
+            kernel.compile()
+            self._tiled_kernels[key] = (kernel, shared_bytes)
+        return self._tiled_kernels[key]
 
     def _init_gpu_buffers(self) -> None:
         """Allocate three RK4 derivative stages and constant potential buffer."""
@@ -882,6 +1150,22 @@ class RK4CudaSolver(AbstractSolver):
                   v_im_scale, psi_out, reservoir_out, scale_buffer=None,
                   scale_offset=0):
         """Launch the same RK4 kernels for each supported reservoir model."""
+        if self._use_tiled and self._tile_shape is not None:
+            kernel, shared_bytes = self._tiled_kernel(bool(v_im_scale),
+                                                       scale_buffer is not None)
+            tile_x, tile_y = self._tile_shape
+            scale_args = ((scale_buffer, self._k_int(scale_offset))
+                          if scale_buffer is not None else pump_scales)
+            kernel(
+                ((self.nx + tile_x - 1) // tile_x,
+                 (self.ny + tile_y - 1) // tile_y), (256,),
+                (psi0, *reservoir0, V_re, V_im, *pumps,
+                 psi_out, *reservoir_out, self._k_nx, self._k_ny,
+                 *scale_args, v_im_scale, self._k_half_dt, self._k_dt,
+                 self._k_dt6, *self._k_rhs_parameters),
+                shared_mem=shared_bytes,
+            )
+            return
         grid, block = self._k_grid, self._k_block
         dimensions = (self._k_nx, self._k_ny)
         parameters = self._k_rhs_parameters
@@ -976,7 +1260,10 @@ class RK4CudaSolver(AbstractSolver):
             self._graph_signature = signature
         if length in self._graph_cache:
             return self._graph_cache[length][0]
-        self._compile_graph_kernels()
+        if self._use_tiled and self._tile_shape is not None:
+            self._tiled_kernel(bool(v_im_scale), graph=True)
+        else:
+            self._compile_graph_kernels()
         psi, res = self._advance_buffers
         scales = self._graph_scales
         vr, vi = self._prepare_potential_buffers(potential)

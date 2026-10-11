@@ -28,6 +28,11 @@ Besides `pump(t)`, it offers `separable_term()`, which returns
 `(envelope, coefficient)` when there is exactly one built-in laser. `rk4-cuda`
 then scales the cached envelope inside its kernels instead of building three
 pump arrays per step. Any other callable falls back to `pump(t)`.
+`rk4-cuda` uses one tiled CUDA kernel per step in single precision and on GPUs
+classified as full-rate FP64 in double precision. The tile includes a stencil halo
+in shared memory. Other double-precision GPUs, and devices without enough shared
+memory for a tile, use staged kernels. Tiled and staged results agree to rounding
+level.
 
 This replaces the former pump-array argument and intentionally breaks the
 plugin solver interface. Plugin solvers must evaluate the callable at their
