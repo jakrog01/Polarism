@@ -8,7 +8,7 @@ This project already carries the documentation dependencies needed to build the 
 pip install polarism
 ```
 
-Pin a release with `pip install "polarism==0.3.2"`.
+Pin a release with `pip install "polarism==0.3.3"`.
 
 The development version can be installed straight from GitHub:
 
@@ -47,4 +47,5 @@ Recommended workflow:
 - Add a CuPy build that matches the CUDA toolkit on the target machine:
   `pip install "polarism[cuda12]"` for CUDA 12.x or
   `pip install "polarism[cuda13]"` for CUDA 13.x.
+- V100 (Volta) systems need `polarism[cuda12]`; CUDA 13 no longer supports Volta.
 - Re-run the compliance or benchmark suites on GPU hardware before trusting production-scale timings.

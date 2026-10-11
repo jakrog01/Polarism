@@ -39,3 +39,18 @@ class AbstractSolver(ABC):
         integration stage times; the caller updates ``state.t`` after the step.
         """
         pass
+
+    def advance(
+        self,
+        potential,
+        pump,
+        reservoir,
+        boundary_condition,
+        state: SimulationState,
+        start_step: int,
+        n_steps: int,
+    ) -> None:
+        """Advance several steps, preserving controller stage times."""
+        for k in range(n_steps):
+            self.step(potential, pump, reservoir, boundary_condition, state)
+            state.t = (start_step + k + 1) * self.config.solver.dt

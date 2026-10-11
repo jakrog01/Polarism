@@ -130,6 +130,7 @@ The condensate equation receives `nR` as the active reservoir density.
 | `dt` | timestep | positive float |
 | `total_time` | total simulation time | positive float |
 | `precision` | arithmetic mode where supported | typically `single`, `double` |
+| `cuda_graphs` | enable CUDA graph replay for eligible solver chunks | boolean, default `True` |
 | `laplacian` | finite-difference Laplacian stencil for `rk4-cuda` | `five-point`, `isotropic-9pt` |
 
 `solver.laplacian` defaults to `five-point`.  `isotropic-9pt` is available for

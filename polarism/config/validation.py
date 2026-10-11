@@ -101,6 +101,8 @@ def _validate_solver(cfg: Config) -> None:
         raise ConfigValidationError(
             f"solver.precision must be one of {_VALID_PRECISIONS}, got '{s.precision}'"
         )
+    if not isinstance(s.cuda_graphs, bool):
+        raise ConfigValidationError("solver.cuda_graphs must be a boolean")
 
 
 def _validate_result(cfg: Config) -> None:

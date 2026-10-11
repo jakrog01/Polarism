@@ -587,7 +587,7 @@ def build_kernel_source_1d(
         final_reservoir.extend((
             f"const {real_type} k4{key} = {rhs};",
             f"{real_type} {key}_new = {initial}[tid] + dt6 * (k1{key}[tid] + 2*k2{key}[tid] + 2*{derivative}[tid] + k4{key});",
-            f"{final_output}[tid] = ({key}_new > 0) ? {key}_new : 0;",
+            f"{final_output}[tid] = ({key}_new < 0) ? 0 : {key}_new;",
         ))
         extra_arguments.extend((
             f"const {real_type}* __restrict__ k1{key},",
@@ -720,6 +720,7 @@ class RK4CudaSolver(AbstractSolver):
             self._k_nx = _np.int32(self.nx)
             self._k_ny = _np.int32(self.ny)
             self._k_N = _np.int32(self.N)
+            self._k_int = _np.int32
             self._k_inv_dx2 = _cast(self._inv_dx2)
             self._k_inv_dy2 = _cast(self._inv_dy2)
             self._k_neg_hbar2_over_2m = _cast(self._neg_hbar2_over_2m)
@@ -775,6 +776,9 @@ class RK4CudaSolver(AbstractSolver):
                     self._k_kinetic_relaxation_eta, self._k_diff_I, self._k_diff_R,
                 )
             self._k_rhs_parameters = common + model
+            self._graph_cache = {}
+            self._graph_signature = None
+            self._graphs_failed = False
 
     def _build_kernel_source(
         self, bc_type: str, real_type: str, reservoir_type: str
@@ -875,30 +879,40 @@ class RK4CudaSolver(AbstractSolver):
         return self.xp.ascontiguousarray(array).ravel()
 
     def _step_gpu(self, psi0, reservoir0, V_re, V_im, pumps, pump_scales,
-                  v_im_scale, psi_out, reservoir_out):
+                  v_im_scale, psi_out, reservoir_out, scale_buffer=None,
+                  scale_offset=0):
         """Launch the same RK4 kernels for each supported reservoir model."""
         grid, block = self._k_grid, self._k_block
         dimensions = (self._k_nx, self._k_ny)
         parameters = self._k_rhs_parameters
         k_psi = self._k_psi
         k_reservoir = self._k_reservoir
+        rhs, fused, final = (
+            self._graph_kernels if scale_buffer is not None else
+            (self._kern_rhs, self._kern_fused, self._kern_final)
+        )
 
-        self._kern_rhs(
+        def scale_args(stage):
+            if scale_buffer is None:
+                return (pump_scales[stage],)
+            return (scale_buffer, self._k_int(scale_offset + stage))
+
+        rhs(
             grid, block,
             (psi0, *reservoir0, V_re, V_im, pumps[0],
              k_psi[0], *k_reservoir[0], *dimensions,
-             pump_scales[0], v_im_scale, *parameters),
+             *scale_args(0), v_im_scale, *parameters),
         )
         for stage in (1, 2):
             staged_reservoir = tuple(
                 value for field, derivative in zip(reservoir0, k_reservoir[stage - 1])
                 for value in (field, derivative)
             )
-            self._kern_fused(
+            fused(
                 grid, block,
                 (psi0, k_psi[stage - 1], *staged_reservoir,
                  V_re, V_im, pumps[1], k_psi[stage], *k_reservoir[stage],
-                 *dimensions, pump_scales[1], v_im_scale,
+                 *dimensions, *scale_args(1), v_im_scale,
                  self._k_half_dt, *parameters),
             )
 
@@ -910,14 +924,199 @@ class RK4CudaSolver(AbstractSolver):
             value for derivatives in zip(k_reservoir[0], k_reservoir[1])
             for value in derivatives
         )
-        self._kern_final(
+        final(
             grid, block,
             (psi0, k_psi[2], *staged_reservoir,
              V_re, V_im, pumps[2], psi_out, *reservoir_out,
              k_psi[0], k_psi[1], *earlier_reservoir,
-             *dimensions, pump_scales[2], v_im_scale,
+             *dimensions, *scale_args(2), v_im_scale,
              self._k_dt, self._k_dt6, *parameters),
         )
+
+    def _compile_graph_kernels(self):
+        """Compile variants whose pump scale is read from a device array."""
+        import re
+
+        if hasattr(self, "_graph_kernels"):
+            return
+        sources = self._build_kernel_source(
+            self.grid_type, self._real_type, self._reservoir_type
+        )
+        names = ("gpe_rhs", "fused_stage_rhs", "fused_final_stage")
+        suffix = {"single": "", "double": "_double",
+                  "quadratic-double": "_qdouble"}[self._reservoir_type]
+        kernels = []
+        for source, name in zip(sources, names):
+            source = source.replace(
+                f"const {self._real_type} pump_scale,",
+                f"const {self._real_type}* pump_scales, const int pump_index,",
+            )
+            source = re.sub(r"\bpump_scale\b", "pump_scales[pump_index]", source)
+            kernel = self.xp.RawKernel(source, name + suffix)
+            kernel.compile()
+            kernels.append(kernel)
+        self._graph_kernels = tuple(kernels)
+
+    def _ensure_advance_buffers(self):
+        if hasattr(self, "_advance_buffers"):
+            return
+        xp = self.xp
+        fields = 1 if self._reservoir_type == "single" else 2
+        psi = tuple(xp.empty(self.N, self._complex_dtype) for _ in range(2))
+        res = tuple(tuple(xp.empty(self.N, self._real_dtype) for _ in range(fields))
+                    for _ in range(2))
+        self._advance_buffers = (psi, res)
+        self._graph_scales = xp.empty(64 * 3, self._real_dtype)
+        self._advance_stream = xp.cuda.Stream(non_blocking=True)
+
+    def _graph_for(self, length, potential, envelope, pump_flat, v_im_scale):
+        signature = (id(potential), id(envelope), int(pump_flat.data.ptr))
+        if signature != self._graph_signature:
+            self._graph_cache.clear()
+            self._graph_signature = signature
+        if length in self._graph_cache:
+            return self._graph_cache[length][0]
+        self._compile_graph_kernels()
+        psi, res = self._advance_buffers
+        scales = self._graph_scales
+        vr, vi = self._prepare_potential_buffers(potential)
+        stream = self._advance_stream
+        stream.synchronize()
+        with stream:
+            stream.begin_capture()
+            try:
+                for k in range(length):
+                    self._step_gpu(
+                        psi[k % 2], res[k % 2], vr, vi,
+                        (pump_flat,) * 3, None, v_im_scale,
+                        psi[(k + 1) % 2], res[(k + 1) % 2],
+                        scales, 3 * k,
+                    )
+                graph = stream.end_capture()
+            except Exception:
+                try:
+                    stream.end_capture()
+                except Exception:
+                    pass
+                raise
+        if len(self._graph_cache) == 4:
+            self._graph_cache.pop(next(iter(self._graph_cache)))
+        self._graph_cache[length] = (graph, pump_flat)
+        return graph
+
+    def advance(self, potential, pump, reservoir, boundary_condition, state,
+                start_step: int, n_steps: int) -> None:
+        """Run a chunk with reusable buffers and, when eligible, a CUDA graph."""
+        if n_steps <= 0:
+            return
+        if not self._use_gpu:
+            return super().advance(potential, pump, reservoir, boundary_condition,
+                                   state, start_step, n_steps)
+        from polarism.reservoir.single_reservoir import SingleReservoir
+        from polarism.reservoir.double_reservoir import DoubleReservoir
+        from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
+
+        supported = {"single": SingleReservoir, "double": DoubleReservoir,
+                     "quadratic-double": QuadraticDoubleReservoir}
+        if (type(reservoir) is not supported[self._reservoir_type]
+                or not getattr(boundary_condition.absorption, "after_step_is_noop", False)):
+            return super().advance(potential, pump, reservoir, boundary_condition,
+                                   state, start_step, n_steps)
+
+        xp = self.xp
+        shape = state.psi.shape
+        term = pump.separable_term() if hasattr(pump, "separable_term") else None
+        no_lasers = not getattr(pump, "lasers", [True])
+        if term is not None:
+            envelope, coefficient = term
+            pump_flat = self._flat_gpu_input(envelope, self._real_dtype)
+        elif no_lasers:
+            if not hasattr(self, "_zero_pump"):
+                self._zero_pump = xp.zeros(shape, dtype=self._real_dtype)
+            envelope = self._zero_pump
+            pump_flat = self._flat_gpu_input(envelope, self._real_dtype)
+            coefficient = lambda t: 1
+        else:
+            envelope = None
+            coefficient = None
+        graph_ok = (
+            self.config.solver.cuda_graphs and not self._graphs_failed
+            and coefficient is not None
+            and getattr(boundary_condition.absorption, "after_step_is_noop", False)
+        )
+        vr, vi = self._prepare_potential_buffers(potential)
+        vi_scale = self._np_real(1 if xp.iscomplexobj(potential) else 0)
+        current_psi = self._flat_gpu_input(state.psi, self._complex_dtype)
+        current_res = tuple(self._flat_gpu_input(x, self._real_dtype)
+                            for x in reservoir.get_state())
+        xp.cuda.get_current_stream().synchronize()
+        self._ensure_advance_buffers()
+        work_psi, work_res = self._advance_buffers
+        stream = self._advance_stream
+        done = 0
+        with stream:
+            xp.copyto(work_psi[0], current_psi)
+            for target, source in zip(work_res[0], current_res):
+                xp.copyto(target, source)
+            if graph_ok:
+                pending_hosts = []
+                try:
+                    while n_steps - done >= 2:
+                        remaining = n_steps - done
+                        length = min(64, remaining - remaining % 2)
+                        graph = self._graph_for(
+                            length, potential, envelope, pump_flat, vi_scale
+                        )
+                        host_scales = self._np_real([
+                            coefficient(time)
+                            for k in range(length)
+                            for time in (
+                                (start_step + done + k) * self._dt,
+                                (start_step + done + k) * self._dt + 0.5 * self._dt,
+                                (start_step + done + k) * self._dt + self._dt,
+                            )
+                        ])
+                        pending_hosts.append(host_scales)
+                        self._graph_scales[:length * 3].set(host_scales, stream=stream)
+                        graph.launch(stream=stream)
+                        done += length
+                        if len(pending_hosts) == 32:
+                            stream.synchronize()
+                            pending_hosts.clear()
+                except Exception as exc:
+                    import sys
+                    self._graphs_failed = True
+                    self._graph_cache.clear()
+                    self._graph_signature = None
+                    print(f"rk4-cuda: CUDA graphs unavailable ({exc}); using regular launches.",
+                          file=sys.stderr)
+                    stream.synchronize()
+                    xp.copyto(work_psi[0], current_psi)
+                    for target, source in zip(work_res[0], current_res):
+                        xp.copyto(target, source)
+                    done = 0
+            for k in range(done, n_steps):
+                t = (start_step + k) * self._dt
+                times = (t, t + 0.5 * self._dt, t + self._dt)
+                if coefficient is None:
+                    pumps = tuple(self._flat_gpu_input(pump(time), self._real_dtype)
+                                  for time in times)
+                    factors = (self._np_real(1),) * 3
+                else:
+                    pumps = (pump_flat,) * 3
+                    factors = tuple(self._np_real(coefficient(time)) for time in times)
+                parity = (k - done) % 2
+                self._step_gpu(work_psi[parity], work_res[parity], vr, vi,
+                               pumps, factors, vi_scale,
+                               work_psi[1 - parity], work_res[1 - parity])
+            final_index = (n_steps - done) % 2
+            state.psi = boundary_condition.after_step_action(
+                work_psi[final_index].reshape(shape).copy()
+            )
+            reservoir.set_state(tuple(field.reshape(shape).copy()
+                                      for field in work_res[final_index]))
+            stream.synchronize()
+        state.t = (start_step + n_steps) * self._dt
 
     def _cpu_laplacian_9pt(self, psi, out) -> None:
         """Apply the 9-point isotropic CPU Laplacian (requires dx == dy)."""
