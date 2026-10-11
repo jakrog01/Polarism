@@ -8,7 +8,7 @@ This project already carries the documentation dependencies needed to build the 
 pip install polarism
 ```
 
-Pin a release with `pip install "polarism==0.3.2"`.
+Pin a release with `pip install "polarism==0.3.3"`.
 
 The development version can be installed straight from GitHub:
 
