@@ -1,12 +1,18 @@
 # Polarism
 
-Polarism is a **Gross-Pitaevskii Equation solver** oriented toward fast 2-D driven-dissipative simulations, GPU acceleration, and reproducible batch execution on HPC systems. This site uses a docs-as-code setup built around MkDocs Material and GitHub Pages deployment.
+Polarism is a Python package for 2-D driven-dissipative Gross-Pitaevskii simulations of exciton-polariton systems. Start with `pip install polarism`, then follow the [quickstart](getting-started/quickstart.md).
+
+## In 0.3.x
+
+- PyPI installation includes optional CUDA 12 and CUDA 13 extras.
+- `split-step-fft-cuda` joins the CUDA solver options; eligible runs of it and `rk4-cuda` support CUDA graph chunks.
+- `polarism-bench` compares per-step and chunked execution on the current GPU.
 
 ## What is documented here
 
 - A fast path for local installation and first simulation runs.
 - User-facing configuration guidance for grids, pumps, solvers, and outputs.
-- Curated API reference focused on public abstractions, module roles, and supported options.
+- Hand-written reference plus generated Python signatures and docstrings for the public API.
 - Development notes for physics background, testing, CI, and contribution workflow.
 
 ## Architecture at a glance
@@ -34,12 +40,13 @@ Start with [Getting Started](getting-started/index.md), then continue to [Instal
 ### User Guide
 
 Use this section when you need to understand how the configuration maps onto the physics model and solver behavior.
+To add components, start with the [plugin guide](plugins/index.md).
 
-### API Reference
+### Reference
 
-Use this section for an abstract view of the package: module responsibilities, interfaces, factories, and supported options, without exposing source-level implementation details.
+Use this section for package responsibilities, interfaces, factories, and supported options. The [Python API](api/python-api.md) is generated from public objects and docstrings.
 
-### Development and Theory
+### Explanation and Development
 
 Use this section when you need the mathematical model, the test strategy, or the repository conventions for contributing code.
 

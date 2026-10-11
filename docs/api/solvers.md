@@ -65,23 +65,8 @@ transforms; CAP absorption stays on the fast path. It requires an active CUDA
 GPU and does not support `kinetic_relaxation_eta`. Like `split-step-fft`, it is
 second order, so compare timestep errors before using large steps.
 
-Both `rk4-cuda` and `split-step-fft-cuda` execute several steps between saved
-results with CUDA graphs when the pump is separable, the reservoir uses a
-supported built-in model, and boundary absorption needs no action after each
-step. The controller still records at the configured intervals. Set
-`cfg.solver.cuda_graphs = False` to use regular launches; `step()` remains the
-single-step API. The split-step solver falls back to regular launches if cuFFT
-graph capture is unavailable on a given CUDA installation.
-
-Consumer GPUs can have much lower double-precision throughput than
-single-precision throughput. Controller setup prints a one-line notice for
-double-precision runs on those devices. To compare throughput on your GPU, run
-`python -m polarism.benchmark --grid-sizes 64 256 1024 2048` or the
-`polarism-bench` command. Each run reports per-step and chunked microseconds,
-speedup, and chunked throughput in millions of grid points per second; JSON
-lines include device, CUDA version metadata and the measured device copy
-bandwidth. See [GPU solver profiling](../development/profiling.md) for the
-in-depth benchmark and tracing tools.
+For CUDA graph eligibility, precision guidance, benchmarking, and device
+selection, see [Running on GPUs](../user-guide/running-on-gpus.md).
 
 Measured on an RTX 4070 SUPER: 1024² periodic grid, double precision, 3.2 ps
 run. The error is the relative L2 error of ψ against a fine-dt `ifrk4-fft-cuda`

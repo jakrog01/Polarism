@@ -2,38 +2,18 @@
 
 # Polarism
 
-High-performance tools for 2-D driven-dissipative Gross-Pitaevskii
-simulations of exciton-polariton systems.
+Polarism is a Python package for 2-D driven-dissipative Gross-Pitaevskii simulations of exciton-polariton systems. It provides configurable pumps, reservoirs, solvers, and result output for CPU and optional CUDA runs.
 
-The repository is organized around one clear boundary:
+[![PyPI version](https://img.shields.io/pypi/v/polarism.svg)](https://pypi.org/project/polarism/) [![Python versions](https://img.shields.io/pypi/pyversions/polarism.svg)](https://pypi.org/project/polarism/) [![Tests](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml) [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://jakrog01.github.io/Polarism/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/jakrog01/Polarism/blob/master/LICENSE)
 
-- `polarism/` is the physics engine: model configuration, grids, lasers,
-  reservoirs, solvers, state evolution, and result storage.
-- `tests/` contains the validation layer for the engine and solver behavior.
-- `examples/` contains runnable usage examples.
+## Highlights
 
-The full documentation site is in `docs/` and is configured by `mkdocs.yml`.
-
-Documentation site:
-https://jakrog01.github.io/Polarism/#getting-started
-
-## Repository Layout
-
-```text
-polarism/                     Physics engine and reusable Python package
-  config/                     Dataclasses and validation helpers
-  grid/                       Periodic and closed-interval 2-D grids
-  laser/                      Continuous and pulsed pump definitions
-  reservoir/                  Single, double, and quadratic-double reservoirs
-  solver/                     CPU, CuPy, CUDA RK4, FFT, and ETD/IP solvers
-  results/                    Storage and visualization support
-
-tests/                        CPU, compliance, and benchmark-style tests
-
-docs/                         MkDocs Material documentation site
-examples/                     Runnable usage examples
-pyproject.toml                Project metadata and dependency groups
-```
+- Finite-difference RK4, split-step FFT, ETD-RK2, and interaction-picture solver families.
+- NumPy execution and optional CuPy GPU execution, including CUDA graph chunks for eligible `rk4-cuda` and `split-step-fft-cuda` runs.
+- Single, double, and quadratic-double reservoirs; continuous and pulsed pumps.
+- HDF5, JSON, and NPY output, live visualization, and online animation.
+- Registries for custom solvers and model components, documented in the [plugin guide](https://jakrog01.github.io/Polarism/plugins/); a `tyro`-generated `polarism` CLI.
+- `polarism-bench` for measuring per-step and chunked GPU execution on your hardware.
 
 ## Installation
 
@@ -41,45 +21,24 @@ pyproject.toml                Project metadata and dependency groups
 pip install polarism
 ```
 
-GPU solvers additionally need a CuPy build matching the local CUDA toolkit,
-e.g. `pip install "polarism[cuda12]"` or `pip install "polarism[cuda13]"`; see
-[`docs/getting-started/installation.md`](https://github.com/jakrog01/Polarism/blob/master/docs/getting-started/installation.md).
+For CUDA runs, install the extra matching your CUDA environment:
 
-## Quick Local Setup
+| Extra | CUDA environment |
+| --- | --- |
+| `pip install "polarism[cuda12]"` | CUDA 12.x; use this for V100/Volta |
+| `pip install "polarism[cuda13]"` | CUDA 13.x |
 
-For development, use the project virtual environment. The global Python on the target systems is
-not expected to contain the required packages.
+The installed CuPy build must be compatible with the NVIDIA driver and CUDA toolkit. See the [installation guide](https://jakrog01.github.io/Polarism/getting-started/installation/) and [GPU guide](https://jakrog01.github.io/Polarism/user-guide/running-on-gpus/).
+
+For a development checkout:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
 pip install -e ".[dev]"
 ```
 
-Run the default CPU-oriented checks:
+## Quickstart
 
-```bash
-.venv/bin/pytest
-.venv/bin/mkdocs build
-```
-
-The default pytest selection excludes slow and compliance-marked suites. See
-[`docs/development/testing-and-ci.md`](https://github.com/jakrog01/Polarism/blob/master/docs/development/testing-and-ci.md) for
-the heavier validation commands.
-
-For the complete CPU/GPU validation, including the Phoenix reference matrix:
-
-```bash
-.venv/bin/pytest -q -m '' --use-gpu --tb=short \
-  --junitxml=artifacts/reports/full_verification.xml
-```
-
-Run this command as a single process with exclusive access to the GPU.
-
-## Minimal API Example
-
-The same script is available as [`examples/basic_run.py`](https://github.com/jakrog01/Polarism/blob/master/examples/basic_run.py).
+This example matches [`examples/basic_run.py`](https://github.com/jakrog01/Polarism/blob/master/examples/basic_run.py):
 
 ```python
 import polarism as ps
@@ -115,65 +74,43 @@ compute_engine.configure(cfg.compute_engine)
 ps.SimulationController(cfg).run()
 ```
 
-For the command-line interface generated from `polarism.Config`:
+For GPU execution, set `cfg.compute_engine.use_gpu = True`, choose `cfg.solver.method = "rk4-cuda"` or `"split-step-fft-cuda"`, and consider `cfg.solver.precision = "single"` on consumer GPUs. The FFT solver requires a periodic grid. Inspect CLI options with `polarism --help`.
 
-```bash
-.venv/bin/polarism --help
-```
+## Choosing a solver
 
-More examples are documented in
-[`docs/getting-started/quickstart.md`](https://github.com/jakrog01/Polarism/blob/master/docs/getting-started/quickstart.md).
+| Method | Grid | Device | Use |
+| --- | --- | --- | --- |
+| `rk4-fdm`, `rk4-fdm-fused` | periodic or closed-interval | CPU or CuPy | FDM reference or lower-overhead FDM |
+| `rk4-cuda` | periodic or closed-interval | CUDA | Fused FDM runs |
+| `split-step-fft`, `etd-rk2`, `ip-rk4` | periodic | CPU or CuPy | Spectral integration |
+| `split-step-fft-cuda` | periodic | CUDA | Second-order spectral runs |
+| `ifrk4-fft-cuda` | periodic | CUDA | Spectral RK4 with stage-coupled reservoirs |
 
-## Pump Power Conventions
-
-For pulsed pumps, prefer explicit physical semantics in the laser YAML:
-
-```yaml
-lasers:
-  - laser_type: pulse-gaussian
-    power_definition: pulse_energy
-```
-
-`pulse_energy` means that `power` / `P` is the integrated dose of one pulse
-over space and time. This keeps spot-size sweeps meaningful: increasing
-`sigma_space` lowers the local peak pump while preserving the total pulse dose.
-The legacy `peak_amplitude` mode is still available for reproducing old runs.
-
-Numerical choices such as grid spacing, timestep, boundary condition, kinetic
-relaxation, and Laplacian stencil should be treated as convergence parameters,
-not as cosmetic post-processing settings. The model background and rationale are
-summarized in
-[`docs/development/physics-background.md`](https://github.com/jakrog01/Polarism/blob/master/docs/development/physics-background.md).
+Check timestep and grid convergence for your model. See the [solver reference](https://jakrog01.github.io/Polarism/api/solvers/) for compatibility details.
 
 ## Documentation
 
-Build and serve the documentation locally:
+- [Getting started](https://jakrog01.github.io/Polarism/getting-started/)
+- [User guide](https://jakrog01.github.io/Polarism/user-guide/grid-and-parameters/)
+- [Running on GPUs](https://jakrog01.github.io/Polarism/user-guide/running-on-gpus/)
+- [Plugin guide](https://jakrog01.github.io/Polarism/plugins/)
+- [Reference](https://jakrog01.github.io/Polarism/api/overview/) and [Python API](https://jakrog01.github.io/Polarism/api/python-api/)
+- [Physics background](https://jakrog01.github.io/Polarism/development/physics-background/)
 
-```bash
-.venv/bin/mkdocs serve
-```
+For pulsed pumps, `power_definition: pulse_energy` makes `power` or `P` the integrated dose of one pulse over space and time. The legacy `peak_amplitude` mode remains available for reproducing older runs. See [Potentials and Pumps](https://jakrog01.github.io/Polarism/user-guide/potentials-and-pumps/).
 
-Key entry points:
+## Contributing
 
-- [`docs/index.md`](https://github.com/jakrog01/Polarism/blob/master/docs/index.md) for the documentation map.
-- [`docs/getting-started/installation.md`](https://github.com/jakrog01/Polarism/blob/master/docs/getting-started/installation.md)
-  for setup.
-- [`docs/user-guide/grid-and-parameters.md`](https://github.com/jakrog01/Polarism/blob/master/docs/user-guide/grid-and-parameters.md)
-  for spatial discretization and physical parameters.
-- [`docs/user-guide/potentials-and-pumps.md`](https://github.com/jakrog01/Polarism/blob/master/docs/user-guide/potentials-and-pumps.md)
-  for laser and pump definitions.
-- [`docs/user-guide/output-and-visualization.md`](https://github.com/jakrog01/Polarism/blob/master/docs/user-guide/output-and-visualization.md)
-  for HDF5 output, plots, and movies.
+See the [contributing guide](https://jakrog01.github.io/Polarism/development/contributing/). Run the default regression suite with `.venv/bin/pytest -q` from a development checkout.
 
-## Development Notes
+## Citation
 
-- Keep reusable physics logic inside `polarism/`.
-- Keep tests for engine behavior inside `tests/`.
-- Use `.venv/bin/python`, `.venv/bin/pytest`, and `.venv/bin/mkdocs` in this
-  repository.
+Use [CITATION.cff](https://github.com/jakrog01/Polarism/blob/master/CITATION.cff) or GitHub's “Cite this repository” menu.
+
+## License
+
+Polarism is licensed under the [MIT License](https://github.com/jakrog01/Polarism/blob/master/LICENSE).
 
 ## Acknowledgements
 
-This project is developed with the Exciton-Polariton research group at the
-Faculty of Physics, University of Warsaw, with support from NCN OPUS grant work
-and ICM computing infrastructure.
+This project is developed with the Exciton-Polariton research group at the Faculty of Physics, University of Warsaw, with support from NCN OPUS grant work and ICM computing infrastructure.

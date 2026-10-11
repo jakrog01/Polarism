@@ -10,6 +10,7 @@ The codebase supports several real-time integration strategies. The best choice 
 | Fused finite difference RK4 | `rk4-fdm-fused` | Faster CPU or backend-agnostic finite-difference runs |
 | CUDA fused RK4 | `rk4-cuda` | GPU production runs |
 | Split-step FFT | `split-step-fft` | Second-order Strang splitting on periodic grids |
+| CUDA split-step FFT | `split-step-fft-cuda` | Second-order spectral evolution on a periodic CUDA grid |
 | Interaction-picture RK4 | `ip-rk4` | Spectral-style evolution when its assumptions fit |
 | ETD-RK2 | `etd-rk2` | Periodic spectral evolution with exponential differencing |
 | GPU-native FFT IP-RK4 | `ifrk4-fft-cuda` | GPU-native spectral production runs with stage-coupled reservoirs |
@@ -22,15 +23,18 @@ Recommended order:
 2. Confirm time-step and grid convergence.
 3. Move to `rk4-fdm-fused` or `rk4-cuda` (FDM production) once the physics setup is stable.
 4. For periodic-grid spectral campaigns, use `ifrk4-fft-cuda` (GPU-native, stage-coupled quadratic-double).
-5. Use `split-step-fft` for second-order spectral evolution on periodic grids, including reservoir-coupled cases. It does not evaluate `kinetic_relaxation_eta`.
+5. Use `split-step-fft` or `split-step-fft-cuda` for second-order spectral evolution on periodic grids, including reservoir-coupled cases. Neither evaluates `kinetic_relaxation_eta`.
 
 ## Spectral solver limitations
 
-All spectral solvers (`split-step-fft`, `ip-rk4`, `etd-rk2`, `ifrk4-fft-cuda`)
+All spectral solvers (`split-step-fft`, `split-step-fft-cuda`, `ip-rk4`, `etd-rk2`, `ifrk4-fft-cuda`)
 are FFT-only and therefore accept the `periodic` grid only.  Selecting a
 `closed-interval` grid raises `SolverCompatibilityError` at configuration time.
 For `closed-interval` domains use the finite-difference family: `rk4-fdm`,
 `rk4-fdm-fused` or `rk4-cuda`.
+
+See [Running on GPUs](running-on-gpus.md) for CUDA solver requirements and
+CUDA graph chunking.
 
 `etd-rk2` advances the reservoir via a separate midpoint step, not stage-coupled
 with `psi`.  It is not a production path for `quadratic-double` threshold studies.
