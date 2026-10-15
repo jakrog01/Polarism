@@ -46,7 +46,15 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         self.dx = grid.dx
         self.dy = grid.dy
         self.grid_type = grid.boundary
+        self._spatial_shape = (grid.ny, grid.nx)
         self.nR = self.xp.zeros((grid.ny, grid.nx), dtype=real_dtype(self.xp, precision))
+
+    def reset(self, batch_size: int | None = None) -> None:
+        """Reset zero density fields, optionally with a leading batch axis."""
+        if batch_size is not None and (isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1):
+            raise ValueError("batch_size must be a positive integer")
+        shape = self._spatial_shape if batch_size is None else (batch_size, *self._spatial_shape)
+        self.nR = self.xp.zeros(shape, dtype=self.nR.dtype)
 
     def get_state(self) -> tuple[Union[np.ndarray, cp.ndarray]]:
         """Return the current state."""

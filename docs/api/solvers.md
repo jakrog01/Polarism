@@ -216,3 +216,23 @@ Use solver choice as a numerical decision, not just a performance switch:
 2. check timestep and grid convergence
 3. compare against a faster solver on representative cases
 4. only then move to production throughput runs
+
+## Batched solver capabilities
+
+Use `SimulationState(grid, ..., batch_size: int | None = None)` and
+`create_reservoir(config, physics, grid, precision="double", *, batch_size: int | None = None)`.
+The built-in reservoir instances also expose `reset(batch_size: int | None = None)`.
+The leading batch axis is independent; potential and boundary fields stay 2-D.
+
+| Solver | Batched execution |
+| --- | --- |
+| `rk4-fdm`, `rk4-fdm-fused` | Native array RK4; spatial stencils use the last two axes |
+| `split-step-fft`, `ip-rk4`, `etd-rk2` | Native batched FFT and array operations |
+| `ifrk-fft-cuda`, `ifrk4-fft-cuda` | Native batched cuFFT and fused CUDA stages for built-in reservoirs; existing generic path for plugin or diffusive reservoirs |
+| `split-step-fft-cuda` | Native batched cuFFT and local CUDA kernel; existing generic path for plugin or diffusive reservoirs |
+| `rk4-cuda` | Array RK4 fallback on batched states, including the 9-point stencil; the tiled and staged RawKernels remain optimized for 2-D states |
+
+CUDA graph buffers and FFT plans are selected by the active field shape. A
+separable pump with scalar time coefficient uses its cached envelope. When the
+coefficient varies across batch members, the solver evaluates `pump(t)` at each
+stage and uses the returned 3-D field.

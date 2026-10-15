@@ -15,12 +15,21 @@ def create_reservoir(
     physics: PhysicsConstants,
     grid: SimulationGrid2D,
     precision: str = "double",
+    *,
+    batch_size: int | None = None,
 ) -> AbstractReservoir:
-    """Create reservoir."""
+    """Create a reservoir with zero fields, optionally shaped ``(B, ny, nx)``."""
     reservoir_type = reservoir_config.reservoir_type
     if reservoir_type not in available_reservoirs:
         raise ValueError(
             f"Unknown reservoir type: '{reservoir_type}'. "
             f"Available: {list(available_reservoirs.keys())}"
         )
-    return available_reservoirs[reservoir_type](reservoir_config, physics, grid, precision)
+    reservoir = available_reservoirs[reservoir_type](reservoir_config, physics, grid, precision)
+    if batch_size is not None:
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+            raise ValueError("batch_size must be a positive integer")
+        if not hasattr(reservoir, "reset"):
+            raise ValueError(f"Reservoir {reservoir_type!r} does not support batched reset")
+        reservoir.reset(batch_size=batch_size)
+    return reservoir

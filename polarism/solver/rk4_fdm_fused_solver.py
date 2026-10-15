@@ -121,9 +121,9 @@ class RK4FDMFusedSolver(AbstractSolver):
         inv_dy2 = self._inv_dy2
         xp = self.xp
         out[:] = (
-            xp.roll(psi, -1, axis=0) - 2 * psi + xp.roll(psi, 1, axis=0)
+            xp.roll(psi, -1, axis=-2) - 2 * psi + xp.roll(psi, 1, axis=-2)
         ) * inv_dy2 + (
-            xp.roll(psi, -1, axis=1) - 2 * psi + xp.roll(psi, 1, axis=1)
+            xp.roll(psi, -1, axis=-1) - 2 * psi + xp.roll(psi, 1, axis=-1)
         ) * inv_dx2
 
     def _laplacian_closed_interval_neumann(self, psi, out) -> None:
@@ -133,45 +133,45 @@ class RK4FDMFusedSolver(AbstractSolver):
         out.fill(0)
 
         if self.ny > 2 and self.nx > 2:
-            out[1:-1, 1:-1] = (
-                psi[2:, 1:-1] - 2 * psi[1:-1, 1:-1] + psi[:-2, 1:-1]
+            out[..., 1:-1, 1:-1] = (
+                psi[..., 2:, 1:-1] - 2 * psi[..., 1:-1, 1:-1] + psi[..., :-2, 1:-1]
             ) * inv_dy2 + (
-                psi[1:-1, 2:] - 2 * psi[1:-1, 1:-1] + psi[1:-1, :-2]
+                psi[..., 1:-1, 2:] - 2 * psi[..., 1:-1, 1:-1] + psi[..., 1:-1, :-2]
             ) * inv_dx2
 
         if self.nx > 2:
-            out[0, 1:-1] = (
-                2 * (psi[1, 1:-1] - psi[0, 1:-1]) * inv_dy2
-                + (psi[0, 2:] - 2 * psi[0, 1:-1] + psi[0, :-2]) * inv_dx2
+            out[..., 0, 1:-1] = (
+                2 * (psi[..., 1, 1:-1] - psi[..., 0, 1:-1]) * inv_dy2
+                + (psi[..., 0, 2:] - 2 * psi[..., 0, 1:-1] + psi[..., 0, :-2]) * inv_dx2
             )
-            out[-1, 1:-1] = (
-                2 * (psi[-2, 1:-1] - psi[-1, 1:-1]) * inv_dy2
-                + (psi[-1, 2:] - 2 * psi[-1, 1:-1] + psi[-1, :-2]) * inv_dx2
+            out[..., -1, 1:-1] = (
+                2 * (psi[..., -2, 1:-1] - psi[..., -1, 1:-1]) * inv_dy2
+                + (psi[..., -1, 2:] - 2 * psi[..., -1, 1:-1] + psi[..., -1, :-2]) * inv_dx2
             )
 
         if self.ny > 2:
-            out[1:-1, 0] = (
-                psi[2:, 0] - 2 * psi[1:-1, 0] + psi[:-2, 0]
-            ) * inv_dy2 + 2 * (psi[1:-1, 1] - psi[1:-1, 0]) * inv_dx2
-            out[1:-1, -1] = (
-                psi[2:, -1] - 2 * psi[1:-1, -1] + psi[:-2, -1]
-            ) * inv_dy2 + 2 * (psi[1:-1, -2] - psi[1:-1, -1]) * inv_dx2
+            out[..., 1:-1, 0] = (
+                psi[..., 2:, 0] - 2 * psi[..., 1:-1, 0] + psi[..., :-2, 0]
+            ) * inv_dy2 + 2 * (psi[..., 1:-1, 1] - psi[..., 1:-1, 0]) * inv_dx2
+            out[..., 1:-1, -1] = (
+                psi[..., 2:, -1] - 2 * psi[..., 1:-1, -1] + psi[..., :-2, -1]
+            ) * inv_dy2 + 2 * (psi[..., 1:-1, -2] - psi[..., 1:-1, -1]) * inv_dx2
 
-        out[0, 0] = (
-            2 * (psi[1, 0] - psi[0, 0]) * inv_dy2
-            + 2 * (psi[0, 1] - psi[0, 0]) * inv_dx2
+        out[..., 0, 0] = (
+            2 * (psi[..., 1, 0] - psi[..., 0, 0]) * inv_dy2
+            + 2 * (psi[..., 0, 1] - psi[..., 0, 0]) * inv_dx2
         )
-        out[0, -1] = (
-            2 * (psi[1, -1] - psi[0, -1]) * inv_dy2
-            + 2 * (psi[0, -2] - psi[0, -1]) * inv_dx2
+        out[..., 0, -1] = (
+            2 * (psi[..., 1, -1] - psi[..., 0, -1]) * inv_dy2
+            + 2 * (psi[..., 0, -2] - psi[..., 0, -1]) * inv_dx2
         )
-        out[-1, 0] = (
-            2 * (psi[-2, 0] - psi[-1, 0]) * inv_dy2
-            + 2 * (psi[-1, 1] - psi[-1, 0]) * inv_dx2
+        out[..., -1, 0] = (
+            2 * (psi[..., -2, 0] - psi[..., -1, 0]) * inv_dy2
+            + 2 * (psi[..., -1, 1] - psi[..., -1, 0]) * inv_dx2
         )
-        out[-1, -1] = (
-            2 * (psi[-2, -1] - psi[-1, -1]) * inv_dy2
-            + 2 * (psi[-1, -2] - psi[-1, -1]) * inv_dx2
+        out[..., -1, -1] = (
+            2 * (psi[..., -2, -1] - psi[..., -1, -1]) * inv_dy2
+            + 2 * (psi[..., -1, -2] - psi[..., -1, -1]) * inv_dx2
         )
 
     def _rhs_into(self, psi, n_active, n_inactive, potential, out) -> None:

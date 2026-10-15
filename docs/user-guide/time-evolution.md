@@ -55,3 +55,28 @@ The bundled tests already encode this mindset by checking decay laws, spatial un
 ## Real time only
 
 The current package does not expose a dedicated imaginary-time evolution driver. If you need true ground-state workflows, add them explicitly and document the numerical assumptions before using them for production research.
+
+## Batched simulations
+
+A leading axis runs independent simulations on one grid. Construct a state and
+zero reservoir fields with the same `batch_size`:
+
+```python
+from polarism import SimulationState, create_reservoir
+
+state = SimulationState(grid, seed=7, batch_size=3)
+reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid,
+                             precision="double", batch_size=3)
+```
+
+`state.psi` and every reservoir field have shape `(3, ny, nx)`. The seed
+produces the same initial wavefunction in every member as a single unbatched
+state with that seed; assign `state.psi` to customize members. Pass one shared
+`(ny, nx)` potential and a callable `pump(t)` returning either a shared
+`(ny, nx)` pump or individual `(3, ny, nx)` pump fields. The boundary profile
+and mask are shared across the batch. `reservoir.reset(batch_size=3)` restores
+batched zero fields; `reservoir.reset()` restores unbatched zero fields.
+
+All built-in solvers accept batched states. Spatial derivatives and FFTs use the
+last two axes, so batch members do not interact. See the [solver batch
+capability table](../api/solvers.md#batched-solver-capabilities) for CUDA paths.

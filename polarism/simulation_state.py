@@ -19,7 +19,7 @@ class SimulationState:
 
     At most one of ``_psi`` and ``psi_k`` is authoritative between step
     boundaries. Both may coexist after materialization and until the next
-    mutation.
+    mutation. A leading batch axis is supported when ``batch_size`` is given.
     """
     _psi: Union[np.ndarray, cp.ndarray] | None
     psi_k: Union[np.ndarray, cp.ndarray] | None
@@ -34,8 +34,9 @@ class SimulationState:
         mode: str = "legacy_positive_uniform",
         k_cutoff_um: Optional[float] = None,
         seed: Optional[int] = None,
+        batch_size: int | None = None,
     ):
-        """Set up the simulation state."""
+        """Initialize psi; each batch member copies the seeded 2-D initial field."""
         xp = compute_engine.xp
         rdtype = real_dtype(xp, precision)
         cdtype = complex_dtype(xp, precision)
@@ -48,6 +49,10 @@ class SimulationState:
             cdtype=cdtype,
             rdtype=rdtype,
         )
+        if batch_size is not None:
+            if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+                raise ValueError("batch_size must be a positive integer")
+            self._psi = xp.broadcast_to(self._psi, (batch_size, grid.ny, grid.nx)).copy()
         self.psi_k = None
         self.t = 0.0
 

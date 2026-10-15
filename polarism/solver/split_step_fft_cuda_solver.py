@@ -74,7 +74,7 @@ extern "C" __global__ void local_step(
     const real* psi, const real* a0, const real* b0,
     const real* vr, const real* vi, const real* p1, const real* p2,
     real* out_psi, real* out_a, real* out_b,
-    int n, real scale1, real scale2, real vi_scale, real dt,
+    int n, int spatial_n, int p1_n, int p2_n, real scale1, real scale2, real vi_scale, real dt,
     real inv_hbar, real gC, real gR, real gI, real R, real gammaC,
     real gammaR, real gammaI, real gammaA, real ria, real rai, real kappa) {{
     int j = blockIdx.x*blockDim.x + threadIdx.x;
@@ -82,13 +82,13 @@ extern "C" __global__ void local_step(
     real re = psi[2*j], im = psi[2*j+1];
     real a = a0[j], b = MODEL == 0 ? (real)0 : b0[j];
 #if MODEL != 3
-    half_step(&a, &b, re*re+im*im, pump_value(p1, scale1, j), dt*(real)0.5,
+    half_step(&a, &b, re*re+im*im, pump_value(p1, scale1, {p1_index}), dt*(real)0.5,
         R, gammaR, gammaI, gammaA, ria, rai, kappa);
 #endif
-    nonlinear(&re, &im, a, b, vr[j], vi[j], vi_scale, dt,
+    nonlinear(&re, &im, a, b, vr[{spatial_index}], vi[{spatial_index}], vi_scale, dt,
         inv_hbar, gC, gR, gI, R, gammaC);
 #if MODEL != 3
-    half_step(&a, &b, re*re+im*im, pump_value(p2, scale2, j), dt*(real)0.5,
+    half_step(&a, &b, re*re+im*im, pump_value(p2, scale2, {p2_index}), dt*(real)0.5,
         R, gammaR, gammaI, gammaA, ria, rai, kappa);
     out_a[j] = a;
 #if MODEL != 0
@@ -101,7 +101,7 @@ extern "C" __global__ void local_step(
 """
 
 
-def kernel_source(precision: str, model: str) -> str:
+def kernel_source(precision: str, model: str, batched: bool = False) -> str:
     """Render one of the eight precision/model CUDA variants for RawKernel or NVRTC."""
     models = {"single": 0, "double": 1, "quadratic-double": 2, "nonlinear": 3}
     if precision not in {"single", "double"} or model not in models:
@@ -110,6 +110,9 @@ def kernel_source(precision: str, model: str) -> str:
         real="float" if precision == "single" else "double",
         model=models[model],
         mul="__fmul_rn" if precision == "single" else "__dmul_rn",
+        spatial_index="j % spatial_n" if batched else "j",
+        p1_index="j % p1_n" if batched else "j",
+        p2_index="j % p2_n" if batched else "j",
     )
 
 
@@ -134,7 +137,8 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         self._complex_dtype = complex_dtype(self.xp, self._precision)
         self._scalar = np.float32 if self._precision == "single" else np.float64
         self._shape = (grid.ny, grid.nx)
-        self._n = grid.nx * grid.ny
+        self._spatial_n = grid.nx * grid.ny
+        self._n = self._spatial_n
         self._plan_cache = {}
         self._kernel_cache = {}
         half = self.xp.exp(
@@ -159,7 +163,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
     def _plan(self, array):
         key = (array.shape, array.dtype.str, int(self.xp.cuda.runtime.getDevice()))
         if key not in self._plan_cache:
-            self._plan_cache[key] = self._fft.get_fft_plan(array, axes=(-2, -1))
+            # Plan from a C-contiguous template: callers may pass strided views.
+            template = self.xp.empty(array.shape, dtype=array.dtype)
+            self._plan_cache[key] = self._fft.get_fft_plan(template, axes=(-2, -1))
         return self._plan_cache[key]
 
     def _flat_gpu_input(self, array, dtype):
@@ -180,16 +186,19 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         return self._potential_buffers
 
     def _kernel(self, model):
-        if model not in self._kernel_cache:
-            self._kernel_cache[model] = self.xp.RawKernel(
-                kernel_source(self._precision, model), "local_step",
+        key = (model, len(self._shape) == 3)
+        if key not in self._kernel_cache:
+            self._kernel_cache[key] = self.xp.RawKernel(
+                kernel_source(self._precision, model, key[1]), "local_step",
                 options=("--std=c++11",),
             )
-        return self._kernel_cache[model]
+        return self._kernel_cache[key]
 
     def _pump_pair(self, pump, t):
         times = (t + self.config.solver.dt / 4, t + 3 * self.config.solver.dt / 4)
         term = pump.separable_term() if hasattr(pump, "separable_term") else None
+        if len(self._shape) == 3 and term is not None and np.ndim(term[1](t)) != 0:
+            term = None
         if term is None:
             return (tuple(self._flat_gpu_input(pump(time), self._real_dtype) for time in times),
                     (self._scalar(1), self._scalar(1)))
@@ -208,6 +217,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         scalar = self._scalar
         args = (psi.ravel().view(self._real_dtype), a, b, vr, vi, pumps[0], pumps[1],
                 out.ravel().view(self._real_dtype), out_a, out_b, np.int32(self._n),
+                np.int32(self._spatial_n), np.int32(pumps[0].size), np.int32(pumps[1].size),
                 scales[0], scales[1], vi_scale, scalar(self.config.solver.dt),
                 scalar(1 / p.hbar), scalar(p.g_C), scalar(p.g_R), scalar(p.g_I),
                 scalar(p.R), scalar(p.gamma_C), scalar(p.gamma_R), scalar(p.gamma_I),
@@ -233,7 +243,8 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             vr, vi, pumps[0], pumps[1], out.ravel().view(self._real_dtype),
             out_fields[0].ravel(),
             out_fields[1].ravel() if len(fields) > 1 else out_fields[0].ravel(),
-            np.int32(self._n), *scale_args, vi_scale, scalar(self.config.solver.dt),
+            np.int32(self._n), np.int32(self._spatial_n),
+            np.int32(pumps[0].size), np.int32(pumps[1].size), *scale_args, vi_scale, scalar(self.config.solver.dt),
             scalar(1 / p.hbar), scalar(p.g_C), scalar(p.g_R), scalar(p.g_I),
             scalar(p.R), scalar(p.gamma_C), scalar(p.gamma_R), scalar(p.gamma_I),
             scalar(p.gamma_A), scalar(p.R_IA), scalar(p.R_AI), scalar(p.kappa),
@@ -243,8 +254,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
     def _graph_kernel(self, model):
         if not hasattr(self, "_graph_kernel_cache"):
             self._graph_kernel_cache = {}
-        if model not in self._graph_kernel_cache:
-            source = kernel_source(self._precision, model)
+        key = (model, len(self._shape) == 3)
+        if key not in self._graph_kernel_cache:
+            source = kernel_source(self._precision, model, key[1])
             source = source.replace(
                 "real scale1, real scale2, real vi_scale,",
                 "const real* scales, int scale_index, real vi_scale,",
@@ -253,11 +265,12 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             source = source.replace("scale2", "scales[scale_index+1]")
             kernel = self.xp.RawKernel(source, "local_step", options=("--std=c++11",))
             kernel.compile()
-            self._graph_kernel_cache[model] = kernel
-        return self._graph_kernel_cache[model]
+            self._graph_kernel_cache[key] = kernel
+        return self._graph_kernel_cache[key]
 
     def _ensure_advance_buffers(self, n_fields):
         if (hasattr(self, "_advance_buffers")
+                and self._advance_shape == self._shape
                 and len(self._advance_buffers[1][0]) == n_fields):
             return
         xp = self.xp
@@ -272,6 +285,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         fields = tuple(tuple(xp.empty(self._shape, self._real_dtype)
                              for _ in range(n_fields)) for _ in range(2))
         self._advance_buffers = (spectrum, fields, local, out, multiplied)
+        self._advance_shape = self._shape
         self._graph_scales = xp.empty(64 * 2, self._real_dtype)
         self._advance_stream = xp.cuda.Stream(non_blocking=True)
         self._advance_plan = self._plan(spectrum[0])
@@ -286,7 +300,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
 
     def _graph_for(self, length, model, potential, envelope, pump_flat,
                    combiner=None):
-        signature = (model, id(potential), id(envelope),
+        signature = (self._shape, model, id(potential), id(envelope),
                      combiner.signature if combiner is not None else int(pump_flat.data.ptr))
         if signature != self._graph_signature:
             self._graph_cache.clear()
@@ -330,11 +344,23 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         self._graph_cache[length] = (graph, combiner if combiner is not None else pump_flat)
         return graph
 
+    def _activate_shape(self, state):
+        shape = (state.psi_k.shape if state.psi_k is not None else state.psi.shape)
+        if shape != self._shape:
+            self._shape = shape
+            self._n = int(np.prod(shape))
+            self._graph_cache.clear()
+            self._graph_signature = None
+            self._pump_combiner = None
+            if hasattr(self, "_zero_pump"):
+                del self._zero_pump
+
     def advance(self, potential, pump, reservoir, boundary_condition, state,
                 start_step: int, n_steps: int) -> None:
         """Run supported periodic chunks with planned FFTs and optional graphs."""
         if n_steps <= 0:
             return
+        self._activate_shape(state)
         from polarism.reservoir.single_reservoir import SingleReservoir
         from polarism.reservoir.double_reservoir import DoubleReservoir
         from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
@@ -354,8 +380,12 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
         term = (terms[0] if terms is not None and len(terms) == 1 else
                 pump.separable_term() if terms is None and hasattr(pump, "separable_term") else None)
-        multi = terms is not None and len(terms) > 1
+        multi = (terms is not None and len(terms) > 1
+                 and (len(self._shape) == 2 or
+                      all(np.ndim(coefficient(state.t)) == 0 for _, coefficient in terms)))
         no_lasers = not getattr(pump, "lasers", [True])
+        if len(self._shape) == 3 and term is not None and np.ndim(term[1](state.t)) != 0:
+            term = None
         if term is not None:
             envelope, coefficient = term
             pump_flat = self._flat_gpu_input(envelope, self._real_dtype)
@@ -381,10 +411,10 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         self._ensure_advance_buffers(len(fields_in))
         if multi:
             from polarism.solver.cuda_pump import CudaPumpCombiner
-            if not hasattr(self, "_pump_combiner"):
+            if getattr(self, "_pump_combiner", None) is None:
                 self._pump_combiner = CudaPumpCombiner(xp, self._real_dtype, self._n)
             combiner = self._pump_combiner
-            combiner.prepare(terms, 2, 2 * 64)
+            combiner.prepare(terms, 2, 2 * 64, shape=self._shape)
             xp.cuda.get_current_stream().synchronize()
         else:
             combiner = None
@@ -474,6 +504,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
     def step(self, potential, pump, reservoir: AbstractReservoir,
              boundary_condition: BoundaryCondition, state: SimulationState) -> None:
         """Advance K(dt/2) [R(dt/2) N(dt) R(dt/2)] K(dt/2)."""
+        self._activate_shape(state)
         from polarism.reservoir.single_reservoir import SingleReservoir
         from polarism.reservoir.double_reservoir import DoubleReservoir
         from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
@@ -516,4 +547,5 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         else:
             materialized = self._fft.ifft2(psi_k, plan=self._plan(psi_k))
             state.psi = boundary_condition.after_step_action(materialized)
-            state.psi_k = self._fft.fft2(state.psi, plan=self._plan(state.psi))
+            psi = self.xp.ascontiguousarray(state.psi)
+            state.psi_k = self._fft.fft2(psi, plan=self._plan(psi))
