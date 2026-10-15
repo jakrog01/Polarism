@@ -1308,7 +1308,7 @@ class RK4CudaSolver(AbstractSolver):
         """Run a chunk with reusable buffers and, when eligible, a CUDA graph."""
         if n_steps <= 0:
             return
-        if not self._use_gpu:
+        if not self._use_gpu or state.psi.ndim == 3:
             return super().advance(potential, pump, reservoir, boundary_condition,
                                    state, start_step, n_steps)
         from polarism.reservoir.single_reservoir import SingleReservoir
@@ -1477,58 +1477,62 @@ class RK4CudaSolver(AbstractSolver):
     def _cpu_laplacian(self, psi, out):
         """Apply the CPU Laplacian stencil."""
         if self._laplacian_type == "isotropic-9pt":
-            self._cpu_laplacian_9pt(psi, out)
+            if psi.ndim == 3:
+                for member in range(psi.shape[0]):
+                    self._cpu_laplacian_9pt(psi[member], out[member])
+            else:
+                self._cpu_laplacian_9pt(psi, out)
             return
         xp = self.xp
         inv_dx2 = self._inv_dx2
         inv_dy2 = self._inv_dy2
         if self.grid_type == "periodic":
-            out[:] = (
-                xp.roll(psi, -1, axis=0) - 2 * psi + xp.roll(psi, 1, axis=0)
+            out[..., :] = (
+                xp.roll(psi, -1, axis=-2) - 2 * psi + xp.roll(psi, 1, axis=-2)
             ) * inv_dy2 + (
-                xp.roll(psi, -1, axis=1) - 2 * psi + xp.roll(psi, 1, axis=1)
+                xp.roll(psi, -1, axis=-1) - 2 * psi + xp.roll(psi, 1, axis=-1)
             ) * inv_dx2
             return
 
         ny, nx = self.ny, self.nx
         out.fill(0)
         if ny > 2 and nx > 2:
-            out[1:-1, 1:-1] = (
-                psi[2:, 1:-1] - 2 * psi[1:-1, 1:-1] + psi[:-2, 1:-1]
+            out[..., 1:-1, 1:-1] = (
+                psi[..., 2:, 1:-1] - 2 * psi[..., 1:-1, 1:-1] + psi[..., :-2, 1:-1]
             ) * inv_dy2 + (
-                psi[1:-1, 2:] - 2 * psi[1:-1, 1:-1] + psi[1:-1, :-2]
+                psi[..., 1:-1, 2:] - 2 * psi[..., 1:-1, 1:-1] + psi[..., 1:-1, :-2]
             ) * inv_dx2
         if nx > 2:
-            out[0, 1:-1] = (
-                2 * (psi[1, 1:-1] - psi[0, 1:-1]) * inv_dy2
-                + (psi[0, 2:] - 2 * psi[0, 1:-1] + psi[0, :-2]) * inv_dx2
+            out[..., 0, 1:-1] = (
+                2 * (psi[..., 1, 1:-1] - psi[..., 0, 1:-1]) * inv_dy2
+                + (psi[..., 0, 2:] - 2 * psi[..., 0, 1:-1] + psi[..., 0, :-2]) * inv_dx2
             )
-            out[-1, 1:-1] = (
-                2 * (psi[-2, 1:-1] - psi[-1, 1:-1]) * inv_dy2
-                + (psi[-1, 2:] - 2 * psi[-1, 1:-1] + psi[-1, :-2]) * inv_dx2
+            out[..., -1, 1:-1] = (
+                2 * (psi[..., -2, 1:-1] - psi[..., -1, 1:-1]) * inv_dy2
+                + (psi[..., -1, 2:] - 2 * psi[..., -1, 1:-1] + psi[..., -1, :-2]) * inv_dx2
             )
         if ny > 2:
-            out[1:-1, 0] = (
-                psi[2:, 0] - 2 * psi[1:-1, 0] + psi[:-2, 0]
-            ) * inv_dy2 + 2 * (psi[1:-1, 1] - psi[1:-1, 0]) * inv_dx2
-            out[1:-1, -1] = (
-                psi[2:, -1] - 2 * psi[1:-1, -1] + psi[:-2, -1]
-            ) * inv_dy2 + 2 * (psi[1:-1, -2] - psi[1:-1, -1]) * inv_dx2
-        out[0, 0] = (
-            2 * (psi[1, 0] - psi[0, 0]) * inv_dy2
-            + 2 * (psi[0, 1] - psi[0, 0]) * inv_dx2
+            out[..., 1:-1, 0] = (
+                psi[..., 2:, 0] - 2 * psi[..., 1:-1, 0] + psi[..., :-2, 0]
+            ) * inv_dy2 + 2 * (psi[..., 1:-1, 1] - psi[..., 1:-1, 0]) * inv_dx2
+            out[..., 1:-1, -1] = (
+                psi[..., 2:, -1] - 2 * psi[..., 1:-1, -1] + psi[..., :-2, -1]
+            ) * inv_dy2 + 2 * (psi[..., 1:-1, -2] - psi[..., 1:-1, -1]) * inv_dx2
+        out[..., 0, 0] = (
+            2 * (psi[..., 1, 0] - psi[..., 0, 0]) * inv_dy2
+            + 2 * (psi[..., 0, 1] - psi[..., 0, 0]) * inv_dx2
         )
-        out[0, -1] = (
-            2 * (psi[1, -1] - psi[0, -1]) * inv_dy2
-            + 2 * (psi[0, -2] - psi[0, -1]) * inv_dx2
+        out[..., 0, -1] = (
+            2 * (psi[..., 1, -1] - psi[..., 0, -1]) * inv_dy2
+            + 2 * (psi[..., 0, -2] - psi[..., 0, -1]) * inv_dx2
         )
-        out[-1, 0] = (
-            2 * (psi[-2, 0] - psi[-1, 0]) * inv_dy2
-            + 2 * (psi[-1, 1] - psi[-1, 0]) * inv_dx2
+        out[..., -1, 0] = (
+            2 * (psi[..., -2, 0] - psi[..., -1, 0]) * inv_dy2
+            + 2 * (psi[..., -1, 1] - psi[..., -1, 0]) * inv_dx2
         )
-        out[-1, -1] = (
-            2 * (psi[-2, -1] - psi[-1, -1]) * inv_dy2
-            + 2 * (psi[-1, -2] - psi[-1, -1]) * inv_dx2
+        out[..., -1, -1] = (
+            2 * (psi[..., -2, -1] - psi[..., -1, -1]) * inv_dy2
+            + 2 * (psi[..., -1, -2] - psi[..., -1, -1]) * inv_dx2
         )
 
     def _cpu_psi_rhs(self, psi, n_active, V, n_inactive, rho):
@@ -1592,7 +1596,7 @@ class RK4CudaSolver(AbstractSolver):
         state: SimulationState,
     ) -> None:
         """Advance the solver by one time step."""
-        if not self._use_gpu:
+        if not self._use_gpu or state.psi.ndim == 3:
             self._step_cpu(potential, pump, reservoir, boundary_condition, state)
             return
 

@@ -80,3 +80,7 @@ registration decorators in context.
 ::: polarism.grid.register_grid
 
 ::: polarism.boundary_conditions.absorption.register_absorption
+
+## Batched state and reservoir API
+
+`SimulationState(grid, eps=1e-3, precision="double", *, mode="legacy_positive_uniform", k_cutoff_um=None, seed=None, batch_size=None)` creates identical seeded initial fields along the batch axis. `create_reservoir(reservoir_config, physics, grid, precision="double", *, batch_size=None)` creates matching zero density fields. Built-in reservoirs support `reset(batch_size=None)` to clear and resize their density fields. See [Batched simulations](../user-guide/time-evolution.md#batched-simulations) for a working pattern.

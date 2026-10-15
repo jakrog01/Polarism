@@ -47,9 +47,9 @@ class RK4FDMSolver(AbstractSolver):
     def _laplacian_periodic(self, psi, out) -> None:
         """Apply the periodic Laplacian stencil."""
         out[:] = (
-            self.xp.roll(psi, -1, axis=0) - 2 * psi + self.xp.roll(psi, 1, axis=0)
+            self.xp.roll(psi, -1, axis=-2) - 2 * psi + self.xp.roll(psi, 1, axis=-2)
         ) / (self.dy**2) + (
-            self.xp.roll(psi, -1, axis=1) - 2 * psi + self.xp.roll(psi, 1, axis=1)
+            self.xp.roll(psi, -1, axis=-1) - 2 * psi + self.xp.roll(psi, 1, axis=-1)
         ) / (
             self.dx**2
         )
@@ -59,37 +59,37 @@ class RK4FDMSolver(AbstractSolver):
         out.fill(0)
 
         if self.ny > 2 and self.nx > 2:
-            out[1:-1, 1:-1] = (psi[2:, 1:-1] - 2 * psi[1:-1, 1:-1] + psi[:-2, 1:-1]) / (
+            out[..., 1:-1, 1:-1] = (psi[..., 2:, 1:-1] - 2 * psi[..., 1:-1, 1:-1] + psi[..., :-2, 1:-1]) / (
                 self.dy**2
-            ) + (psi[1:-1, 2:] - 2 * psi[1:-1, 1:-1] + psi[1:-1, :-2]) / (self.dx**2)
+            ) + (psi[..., 1:-1, 2:] - 2 * psi[..., 1:-1, 1:-1] + psi[..., 1:-1, :-2]) / (self.dx**2)
 
         if self.nx > 2:
-            out[0, 1:-1] = 2 * (psi[1, 1:-1] - psi[0, 1:-1]) / (self.dy**2) + (
-                psi[0, 2:] - 2 * psi[0, 1:-1] + psi[0, :-2]
+            out[..., 0, 1:-1] = 2 * (psi[..., 1, 1:-1] - psi[..., 0, 1:-1]) / (self.dy**2) + (
+                psi[..., 0, 2:] - 2 * psi[..., 0, 1:-1] + psi[..., 0, :-2]
             ) / (self.dx**2)
-            out[-1, 1:-1] = 2 * (psi[-2, 1:-1] - psi[-1, 1:-1]) / (self.dy**2) + (
-                psi[-1, 2:] - 2 * psi[-1, 1:-1] + psi[-1, :-2]
+            out[..., -1, 1:-1] = 2 * (psi[..., -2, 1:-1] - psi[..., -1, 1:-1]) / (self.dy**2) + (
+                psi[..., -1, 2:] - 2 * psi[..., -1, 1:-1] + psi[..., -1, :-2]
             ) / (self.dx**2)
 
         if self.ny > 2:
-            out[1:-1, 0] = (psi[2:, 0] - 2 * psi[1:-1, 0] + psi[:-2, 0]) / (
+            out[..., 1:-1, 0] = (psi[..., 2:, 0] - 2 * psi[..., 1:-1, 0] + psi[..., :-2, 0]) / (
                 self.dy**2
-            ) + 2 * (psi[1:-1, 1] - psi[1:-1, 0]) / (self.dx**2)
-            out[1:-1, -1] = (psi[2:, -1] - 2 * psi[1:-1, -1] + psi[:-2, -1]) / (
+            ) + 2 * (psi[..., 1:-1, 1] - psi[..., 1:-1, 0]) / (self.dx**2)
+            out[..., 1:-1, -1] = (psi[..., 2:, -1] - 2 * psi[..., 1:-1, -1] + psi[..., :-2, -1]) / (
                 self.dy**2
-            ) + 2 * (psi[1:-1, -2] - psi[1:-1, -1]) / (self.dx**2)
+            ) + 2 * (psi[..., 1:-1, -2] - psi[..., 1:-1, -1]) / (self.dx**2)
 
-        out[0, 0] = 2 * (psi[1, 0] - psi[0, 0]) / (self.dy**2) + 2 * (
-            psi[0, 1] - psi[0, 0]
+        out[..., 0, 0] = 2 * (psi[..., 1, 0] - psi[..., 0, 0]) / (self.dy**2) + 2 * (
+            psi[..., 0, 1] - psi[..., 0, 0]
         ) / (self.dx**2)
-        out[0, -1] = 2 * (psi[1, -1] - psi[0, -1]) / (self.dy**2) + 2 * (
-            psi[0, -2] - psi[0, -1]
+        out[..., 0, -1] = 2 * (psi[..., 1, -1] - psi[..., 0, -1]) / (self.dy**2) + 2 * (
+            psi[..., 0, -2] - psi[..., 0, -1]
         ) / (self.dx**2)
-        out[-1, 0] = 2 * (psi[-2, 0] - psi[-1, 0]) / (self.dy**2) + 2 * (
-            psi[-1, 1] - psi[-1, 0]
+        out[..., -1, 0] = 2 * (psi[..., -2, 0] - psi[..., -1, 0]) / (self.dy**2) + 2 * (
+            psi[..., -1, 1] - psi[..., -1, 0]
         ) / (self.dx**2)
-        out[-1, -1] = 2 * (psi[-2, -1] - psi[-1, -1]) / (self.dy**2) + 2 * (
-            psi[-1, -2] - psi[-1, -1]
+        out[..., -1, -1] = 2 * (psi[..., -2, -1] - psi[..., -1, -1]) / (self.dy**2) + 2 * (
+            psi[..., -1, -2] - psi[..., -1, -1]
         ) / (self.dx**2)
 
     def _laplacian(self, psi, out) -> None:
