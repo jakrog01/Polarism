@@ -26,7 +26,7 @@ from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.simulation_state import SimulationState
 from polarism.solver import AbstractSolver, create_solver, RK4CudaSolver
 
-__version__ = "0.3.7"
+__version__ = "0.3.8"
 __all__ = [
     "BoundaryCondition",
     "Config",
