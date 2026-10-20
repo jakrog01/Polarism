@@ -6,10 +6,10 @@ authors:
     given-names: Jakub
   - family-names: Tyszka
     given-names: Krzysztof
-    affiliation: "University of Warsaw, Faculty of Physics, Division of Solid State Physics (ZFCS)"
+    affiliation: "University of Warsaw, Faculty of Physics, Division of Solid State Physics"
   - family-names: Opala
     given-names: Andrzej
-    affiliation: "University of Warsaw, Faculty of Physics, Division of Solid State Physics (ZFCS)"
+    affiliation: "University of Warsaw, Faculty of Physics, Division of Solid State Physics"
 version: 0.3.8
 date-released: 2026-10-11
 license: MIT
