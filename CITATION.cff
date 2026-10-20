@@ -4,7 +4,13 @@ title: Polarism
 authors:
   - family-names: Rogala
     given-names: Jakub
-version: 0.3.8
+  - family-names: Tyszka
+    given-names: Krzysztof
+    affiliation: "University of Warsaw, Faculty of Physics, Division of Solid State Physics"
+  - family-names: Opala
+    given-names: Andrzej
+    affiliation: "University of Warsaw, Faculty of Physics, Division of Solid State Physics"
+version: 0.3.9
 date-released: 2026-10-11
 license: MIT
 repository-code: https://github.com/jakrog01/Polarism
