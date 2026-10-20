@@ -10,7 +10,7 @@ authors:
   - family-names: Opala
     given-names: Andrzej
     affiliation: "University of Warsaw, Faculty of Physics, Division of Solid State Physics"
-version: 0.3.8
+version: 0.3.9
 date-released: 2026-10-11
 license: MIT
 repository-code: https://github.com/jakrog01/Polarism
