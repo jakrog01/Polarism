@@ -15,11 +15,11 @@ from polarism.laser import register_laser
 from polarism.laser.abstract_laser import AbstractLaser
 
 OUT = Path(__file__).resolve().parent.parent / "docs" / "assets" / "readme"
-FRAME_EVERY = 100   # steps between frames (5 ps)
-FIRST_FRAME = 60    # frames skipped while the reservoir builds up (300 ps)
+FRAME_EVERY = 100
+FIRST_FRAME = 60
 N_FRAMES = 180
-CROP = 0.62         # central fraction of the box shown, hides periodic-edge waves
-PANEL = 300         # px per panel
+CROP = 0.62
+PANEL = 300
 GAP = 8
 BACKGROUND = (13, 17, 23)
 
@@ -74,7 +74,7 @@ def render(psi):
     n = psi.shape[0]
     a = int(n * (1 - CROP) / 2)
     psi = psi[a:n - a, a:n - a]
-    psi = psi * np.exp(-1j * np.angle(psi.sum()))  # remove the global phase rotation
+    psi = psi * np.exp(-1j * np.angle(psi.sum()))
     density = np.abs(psi) ** 2
     frame = Image.new("RGB", (2 * PANEL + GAP, PANEL), BACKGROUND)
     frame.paste(colorize(density, "inferno", 0.0, density.max()), (0, 0))

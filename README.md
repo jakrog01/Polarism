@@ -115,7 +115,7 @@ class RingLaser(AbstractLaser):
 
 
 cfg = ps.Config()
-cfg.laser.laser_type = "ring"  # the name registered above
+cfg.laser.laser_type = "ring"
 cfg.laser.extra = {"ring_radius": 20.0}
 cfg.laser.sigma_space = 4.0
 ```
