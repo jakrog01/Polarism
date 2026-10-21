@@ -4,7 +4,7 @@
 
 Polarism is a Python package for 2-D driven-dissipative Gross-Pitaevskii simulations of exciton-polariton systems. It provides configurable pumps, reservoirs, solvers, and result output for CPU and optional CUDA runs.
 
-[![PyPI version](https://img.shields.io/pypi/v/polarism.svg)](https://pypi.org/project/polarism/) [![Python versions](https://img.shields.io/pypi/pyversions/polarism.svg)](https://pypi.org/project/polarism/) [![Tests](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml) [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://jakrog01.github.io/Polarism/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/jakrog01/Polarism/blob/master/LICENSE)
+[![PyPI version](https://img.shields.io/pypi/v/polarism.svg)](https://pypi.org/project/polarism/) [![Python versions](https://img.shields.io/pypi/pyversions/polarism.svg)](https://pypi.org/project/polarism/) [![Tests](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml) [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://jakrog01.github.io/Polarism/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/jakrog01/Polarism/blob/master/LICENSE) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jakrog01/Polarism/blob/master/examples/colab_quickstart.ipynb)
 
 ## Highlights
 
@@ -75,6 +75,47 @@ ps.SimulationController(cfg).run()
 ```
 
 For GPU execution, set `cfg.compute_engine.use_gpu = True`, choose `cfg.solver.method = "rk4-cuda"`, `"split-step-fft-cuda"`, or `"ifrk-fft-cuda"`, and consider `cfg.solver.precision = "single"` on consumer GPUs. FFT solvers require a periodic grid. Inspect CLI options with `polarism --help`.
+
+To try Polarism on a GPU without installing CUDA, open the [Colab notebook](https://colab.research.google.com/github/jakrog01/Polarism/blob/master/examples/colab_quickstart.ipynb).
+
+## Adding your own pump
+
+Pumps, reservoirs, potentials, solvers, grids, and absorption strategies are selected by name from registries. Subclass the base class, register it, and select the name in the config. This ring-shaped pump traps vortices inside the ring:
+
+```python
+import polarism as ps
+from polarism.laser import register_laser
+from polarism.laser.abstract_laser import AbstractLaser
+
+
+@register_laser("ring")
+class RingLaser(AbstractLaser):
+    """Continuous Gaussian ring of radius `ring_radius` and width `sigma_space`."""
+
+    def __init__(self, laser_config, X, Y, precision="double"):
+        super().__init__(laser_config, X, Y, precision)
+        self.radius = laser_config.extra.get("ring_radius", 20.0)
+        self.width = laser_config.sigma_space
+        self._finalize_spatial_envelope(X, Y)
+
+    def _amplitude(self, t):
+        return self.P0
+
+    def _P_space(self, X, Y):
+        r = self.xp.sqrt((X - self.x0) ** 2 + (Y - self.y0) ** 2)
+        return self.xp.exp(-0.5 * ((r - self.radius) / self.width) ** 2)
+
+    def _P_time(self, t):
+        return 1.0
+
+
+cfg = ps.Config()
+cfg.laser.laser_type = "ring"  # the name registered above
+cfg.laser.extra = {"ring_radius": 20.0}
+cfg.laser.sigma_space = 4.0
+```
+
+The class works on both NumPy and CuPy through `self.xp`. Put it in `polarism_plugins/` to have it discovered automatically, including by the `polarism` CLI. The [plugin guide](https://jakrog01.github.io/Polarism/plugins/) covers the contract for each component type.
 
 ## Choosing a solver
 
