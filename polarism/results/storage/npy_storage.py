@@ -22,6 +22,9 @@ class NPYStorage(BaseStorage):
         """Set up NumPy batch storage."""
         super().__init__(output_dir, batch_size)
         self.batch_number = 0
+        self.members = getattr(config, "_storage_members", None)
+        if getattr(config, "_storage_resume", False):
+            self.batch_number = len(list(self.output_dir.glob("batch_*.npz")))
         if isinstance(config, bool):
             compress = config if compress is None else compress
             config = None
@@ -33,6 +36,9 @@ class NPYStorage(BaseStorage):
             "datasets": {"time": {"label": "time", "units": "ps"}},
             "config": asdict(config) if is_dataclass(config) else config or {},
         }
+        if self.members is not None:
+            self.metadata["members"] = self.members
+            np.save(self.output_dir / "member_index.npy", np.asarray(config._storage_indices))
         if x is not None:
             np.save(self.output_dir / "grid_x.npy", np.asarray(x))
             self.metadata["datasets"]["grid/x"] = {"units": "µm"}
@@ -82,4 +88,9 @@ class NPYStorage(BaseStorage):
         """Flush remaining data and close NumPy storage."""
         if self.batch_count > 0:
             self.dump_batch()
-        (self.output_dir / "metadata.json").write_text(json.dumps(self.metadata, sort_keys=True))
+        path = self.output_dir / "metadata.json"
+        if path.exists() and self.batch_number > 0:
+            previous = json.loads(path.read_text())
+            previous["datasets"].update(self.metadata["datasets"])
+            self.metadata = previous
+        path.write_text(json.dumps(self.metadata, sort_keys=True))

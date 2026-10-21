@@ -36,9 +36,11 @@ def assert_cpu_matches_separate(cfg, members, batched=None):
             assert np.array_equal(whole[index], single)
 
 
+@pytest.mark.parametrize("precision", ["single", "double"])
 @pytest.mark.parametrize("method", CPU_METHODS)
-def test_batched_members_equal_separate(method):
+def test_batched_members_equal_separate(method, precision):
     cfg = small_config(method)
+    cfg.solver.precision = precision
     members = [
         {"physics.g_C": 0.002, "physics.init_seed": 11, "laser.P0": 0.3,
          "laser.sigma_space": 8.0, "potential.V1": -0.002},
@@ -106,8 +108,8 @@ def test_sweep_errors():
     with pytest.raises(ValueError, match="equal lengths"):
         Sweep(cfg, {"laser.P0": [1, 2], "physics.g_C": [0.1]}, mode="zip")
     cfg.result.save_results = True
-    with pytest.raises(NotImplementedError, match="Stage 3"):
-        SimulationController(cfg, members=[{}, {}])
+    controller = SimulationController(cfg, members=[{}, {}])
+    assert controller.state.psi.shape == (2, 8, 8)
 
 
 def test_autotune_chooses_peak_and_stops_after_two_drops():

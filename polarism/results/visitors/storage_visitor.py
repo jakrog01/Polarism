@@ -38,10 +38,11 @@ class StorageVisitor(ResultVisitor):
     batch_size: int
     storages: list[BaseStorage]
 
-    def __init__(self, cfg: Config, x=None, y=None):
+    def __init__(self, cfg: Config, x=None, y=None, output_dir=None):
         """Set up the storage backends for the config."""
         self.cfg = cfg
-        self.output_dir = create_run_directory(self.cfg.result.output_directory)
+        self.output_dir = Path(output_dir) if output_dir is not None else create_run_directory(self.cfg.result.output_directory)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.batch_size = self.cfg.result.batch_size
         self.storages = []
         names = dict.fromkeys((
@@ -103,6 +104,8 @@ class StorageVisitor(ResultVisitor):
         frame_bytes = 0
         for node in selected:
             value = cached[node.name][0]
+            if getattr(self.cfg, "_storage_members", None) == 1 and not node.static:
+                value = compute_engine.xp.expand_dims(value, axis=0)
             if self._gpu:
                 import cupy as cp
 
@@ -117,6 +120,8 @@ class StorageVisitor(ResultVisitor):
         for group, values in context.get("scalar_groups", {}).items():
             groups[group] = {}
             for label, value in values.items():
+                if getattr(self.cfg, "_storage_members", None) == 1:
+                    value = compute_engine.xp.expand_dims(value, axis=0)
                 copied = compute_engine.xp.array(value, copy=True)
                 groups[group][label] = copied
                 frame_bytes += copied.nbytes

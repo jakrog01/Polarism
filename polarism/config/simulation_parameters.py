@@ -111,6 +111,7 @@ class SolverParameters:
 class ResultParameters:
     """Store result-output settings."""
     real_time_view: bool = False
+    view_member: int = 0
     real_time_refresh_interval: float = 0.1
     save_results: bool = False
     save_hdf5: bool = False

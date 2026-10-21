@@ -115,6 +115,8 @@ def _validate_solver(cfg: Config) -> None:
 
 def _validate_result(cfg: Config) -> None:
     r = cfg.result
+    if type(r.view_member) is not int or r.view_member < 0:
+        raise ConfigValidationError("result.view_member must be a nonnegative integer")
     for field, names, registry in (("formats", r.formats, available_storages),
                                    ("observables", r.observables, available_observables)):
         if not isinstance(names, (tuple, list)) or any(not isinstance(name, str) for name in names):

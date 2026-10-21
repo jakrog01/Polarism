@@ -100,6 +100,8 @@ class BatchedPumpField:
         self.precision = precision
         self.xp = compute_engine.xp
         self._terms = self._build_terms()
+        self.last_components = []
+        self.capture_components = False
 
     def _build_terms(self):
         if len({len(lasers) for lasers in self.member_lasers}) != 1:
@@ -117,10 +119,10 @@ class BatchedPumpField:
                    for laser in slot[1:]):
                 coefficient = slot[0].power_coefficient
             else:
-                def coefficient(t, slot=slot):
+                def coefficient(t, slot=slot, dtype=envelope.dtype):
                     if self.xp is np or len({type(laser) for laser in slot}) != 1:
-                        return np.asarray([laser.power_coefficient(t) for laser in slot])
-                    return type(slot[0]).batch_power_coefficient(slot, [t])[0]
+                        return np.asarray([laser.power_coefficient(t) for laser in slot], dtype=dtype)
+                    return type(slot[0]).batch_power_coefficient(slot, [t])[0].astype(dtype)
             terms.append((envelope, coefficient))
         return terms
 
@@ -132,11 +134,17 @@ class BatchedPumpField:
         """Evaluate all members, including non-separable plugin lasers."""
         if self._terms is not None:
             total = 0
+            components = [] if self.capture_components else None
             for envelope, coefficient in self._terms:
                 value = self.xp.asarray(coefficient(t))
                 if value.ndim:
                     value = value[:, None, None]
-                total = total + envelope * value
+                component = envelope * value
+                if components is not None:
+                    components.append(component)
+                total = total + component
+            if components is not None:
+                self.last_components = components
             return total
         return self.xp.stack([PumpField(lasers, self.grid, self.precision)(t)
                               for lasers in self.member_lasers])
