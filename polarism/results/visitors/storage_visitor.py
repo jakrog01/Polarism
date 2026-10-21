@@ -11,9 +11,7 @@ import numpy as np
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import Config
 from polarism.results.result_node import ResultNode
-from polarism.results.storage.hdf5_storage import HDF5Storage
-from polarism.results.storage.json_storage import JSONStorage
-from polarism.results.storage.npy_storage import NPYStorage
+from polarism.results.storage import BaseStorage, available_storages
 from polarism.results.visitors.result_visitor import ResultVisitor
 
 
@@ -23,7 +21,7 @@ class StorageVisitor(ResultVisitor):
     cfg: Config
     output_dir: Path
     batch_size: int
-    storages: list[HDF5Storage | JSONStorage | NPYStorage]
+    storages: list[BaseStorage]
 
     def __init__(self, cfg: Config, x=None, y=None):
         """Set up the storage backends for the config."""
@@ -41,15 +39,16 @@ class StorageVisitor(ResultVisitor):
                 suffix += 1
         self.batch_size = self.cfg.result.batch_size
         self.storages = []
-        if self.cfg.result.save_hdf5:
-            self.storages.append(HDF5Storage(self.output_dir, self.batch_size, config=self.cfg, x=x, y=y))
-        if self.cfg.result.save_json:
-            self.storages.append(JSONStorage(self.output_dir, self.batch_size))
-        if self.cfg.result.save_npy:
-            self.storages.append(NPYStorage(
-                self.output_dir, self.batch_size, compress=self.cfg.result.compression != "none",
-                config=self.cfg, x=x, y=y,
-            ))
+        names = dict.fromkeys((
+            *self.cfg.result.formats,
+            *(name for enabled, name in (
+                (self.cfg.result.save_hdf5, "hdf5"),
+                (self.cfg.result.save_npy, "npy"),
+                (self.cfg.result.save_json, "json"),
+            ) if enabled),
+        ))
+        for name in names:
+            self.storages.append(available_storages[name](self.output_dir, self.batch_size, self.cfg, x, y))
         self._queue: queue.Queue | None = None
         self._thread: threading.Thread | None = None
         self._error: BaseException | None = None

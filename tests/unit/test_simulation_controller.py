@@ -8,6 +8,9 @@ from polarism.laser.laser_factory import LaserFactory
 from polarism.laser.pump_field import PumpField
 from polarism.laser.uniform_laser import UniformLaser
 from polarism.simulation_controller import SimulationController
+from polarism.results import ResultNode, ResultVisitor, register_observable
+from polarism.results.observable_registry import available_observables
+from polarism.results.visitors.visualization_visitor import VisualizationVisitor
 from tests.unit.conftest import small_config
 
 
@@ -39,6 +42,76 @@ def test_total_pump_matches_zero_initialized_sum_without_mutating_lasers() -> No
     assert all(actual is not field for field in fields)
     assert controller.lasers[2].P is zero
     assert np.count_nonzero(zero) == 0
+
+
+def test_custom_visitor_receives_frames_and_finalizes() -> None:
+    cfg = small_config()
+    cfg.solver.dt = 0.001
+    cfg.solver.total_time = 0.004
+    cfg.result.save_results = False
+    cfg.result.save_interval = 2
+    controller = SimulationController(cfg)
+
+    class Collector(ResultVisitor):
+        def __init__(self):
+            self.times = []
+            self.finalized = False
+
+        def needs(self, nodes):
+            return {"norm"}
+
+        def visit_all(self, nodes, **context):
+            self.times.append((context["t"], float(context["cached"]["norm"][0])))
+
+        def finalize(self):
+            self.finalized = True
+
+    visitor = Collector()
+    controller.add_visitor(visitor)
+    controller.run()
+    assert [t for t, _ in visitor.times] == pytest.approx([0, 0.002, 0.004])
+    assert all(np.isfinite(value) for _, value in visitor.times)
+    assert visitor.finalized
+
+
+def test_observable_factory_selected(monkeypatch) -> None:
+    @register_observable("test-observable")
+    def factory(controller):
+        return ResultNode(
+            name="test_scalar", compute_fn=lambda **context: np.array(2.0),
+            reduce_dim_fn=lambda value: value, cmap=None, scaling=None,
+            clim=None, expose=False, save=True, cut=None, is_field=False,
+        )
+
+    cfg = small_config()
+    cfg.result.observables = ("test-observable",)
+    controller = SimulationController(cfg)
+
+    class Collector(ResultVisitor):
+        def needs(self, nodes):
+            return {"test_scalar"}
+
+        def visit_all(self, nodes, **context):
+            self.value = float(context["cached"]["test_scalar"][0])
+
+    visitor = Collector()
+    controller.add_visitor(visitor)
+    controller.run()
+    assert visitor.value == 2.0
+    monkeypatch.delitem(available_observables, "test-observable")
+
+
+def test_storage_formats_merge_with_legacy_flags_once(tmp_path) -> None:
+    cfg = small_config()
+    cfg.result.save_results = True
+    cfg.result.save_hdf5 = True
+    cfg.result.formats = ("hdf5", "json")
+    cfg.result.output_directory = str(tmp_path)
+    controller = SimulationController(cfg)
+    assert [type(storage).__name__ for storage in controller.storage_visitor.storages] == [
+        "HDF5Storage", "JSONStorage",
+    ]
+    controller.run()
 
 
 def test_pump_field_matches_laser_sum_and_exposes_standard_terms() -> None:
@@ -203,3 +276,19 @@ def test_mask_absorption_converges_to_cap() -> None:
     errors = [np.linalg.norm(final_psi("mask", dt) - cap) for dt in (4e-3, 2e-3, 1e-3)]
     assert errors[0] / errors[1] == pytest.approx(2.0, rel=0.1)
     assert errors[1] / errors[2] == pytest.approx(2.0, rel=0.1)
+
+
+def test_visualization_visitor_alone_does_not_trigger_per_step_recording() -> None:
+    class Recorder:
+        updates = 0
+
+        def update(self, **kwargs):
+            self.updates += 1
+
+    cfg = small_config()
+    cfg.result.save_interval = 1
+    controller = SimulationController(cfg)
+    recorder = Recorder()
+    controller.add_visitor(VisualizationVisitor(recorder))
+    controller.run()
+    assert recorder.updates == 1

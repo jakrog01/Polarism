@@ -94,6 +94,8 @@ The user-facing result configuration exposes these main storage choices:
 | `save_hdf5` | structured binary storage for large runs |
 | `save_json` | lightweight metadata-oriented serialization |
 | `save_npy` | NumPy array dumps |
+| `formats` | additional registered formats; combined with enabled `save_*` flags |
+| `observables` | registered factories that add result nodes |
 | `real_time_view` | interactive visualization during a run |
 | `animate` | stream an online animation during the run |
 
@@ -108,6 +110,9 @@ The reusable storage module also exports append-only HDF5 helpers used by batch 
 | `create_hdf5_writer` | backend-selection factory for CPU vs GPU runs |
 
 These helpers are separate from the visitor-based `cfg.result` path.
+
+See [storage plugins](../plugins/storage.md) and [observable plugins](../plugins/observables.md)
+for the result extension contracts, including custom visitors.
 
 The storage visitor snapshots backend arrays when a frame is visited and sends
 them to one background writer. A bounded queue limits pending device snapshots

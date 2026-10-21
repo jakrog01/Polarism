@@ -31,6 +31,8 @@ nav:
           - Solvers: plugins/solvers.md
           - Grids: plugins/grids.md
           - Absorption strategies: plugins/absorption.md
+          - Storage formats: plugins/storage.md
+          - Observables: plugins/observables.md
   - Reference:
       - Overview: api/overview.md
       - Option Matrix: api/option-matrix.md

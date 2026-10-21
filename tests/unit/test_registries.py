@@ -12,6 +12,9 @@ from polarism.potential.create_potential import create_potential
 from polarism.potential.potential_registy import available_potentials, register_potential
 from polarism.solver.create_solver import create_solver
 from polarism.solver.solver_registry import available_solvers, register_solver
+from polarism.results import register_observable
+from polarism.results.observable_registry import available_observables
+from polarism.results.storage import available_storages, register_storage
 from tests.unit.conftest import grid, small_config
 
 
@@ -59,3 +62,28 @@ def test_reservoir_factory_supports_builtin_models() -> None:
     for name in ("single", "double", "quadratic-double"):
         reservoir = create_reservoir(ReservoirParameters(reservoir_type=name), physics, g)
         assert reservoir.get_reservoir_density().shape == (g.ny, g.nx)
+
+
+def test_result_registries_warn_on_replacement(monkeypatch) -> None:
+    @register_storage("example")
+    class FirstStorage:
+        pass
+
+    with pytest.warns(UserWarning, match="already registered"):
+        @register_storage("example")
+        class SecondStorage:
+            pass
+
+    @register_observable("example")
+    def first(controller):
+        return None
+
+    with pytest.warns(UserWarning, match="already registered"):
+        @register_observable("example")
+        def second(controller):
+            return None
+
+    assert available_storages["example"] is SecondStorage
+    assert available_observables["example"] is second
+    monkeypatch.delitem(available_storages, "example")
+    monkeypatch.delitem(available_observables, "example")

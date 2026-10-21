@@ -21,7 +21,9 @@ from polarism.reservoir.create_reservoir import create_reservoir
 from polarism.results.real_time_visualization import RealTimeVisualization
 from polarism.results.result_groups import Results2D, ResultScalar, ResultScalarGroup
 from polarism.results.result_node import ResultNode
+from polarism.results.observable_registry import available_observables
 from polarism.results.results_manager import ResultsManager
+from polarism.results.visitors.result_visitor import ResultVisitor
 from polarism.results.visitors.animation_visitor import AnimationFieldSpec, AnimationVisitor
 from polarism.results.visitors.storage_visitor import StorageVisitor
 from polarism.results.visitors.visualization_visitor import VisualizationVisitor
@@ -203,12 +205,13 @@ class SimulationController:
         )
 
         self.results_manager.nodes = nodes
-        self.results_manager.add_visitor(VisualizationVisitor(self.visualizer))
+        self.add_visitor(VisualizationVisitor(self.visualizer))
 
     def _init_storage(self) -> None:
         """Set up result storage."""
         if not (
-            self.cfg.result.save_hdf5
+            self.cfg.result.formats
+            or self.cfg.result.save_hdf5
             or self.cfg.result.save_json
             or self.cfg.result.save_npy
         ):
@@ -220,7 +223,7 @@ class SimulationController:
         self.storage_visitor = StorageVisitor(
             self.cfg, x=compute_engine.to_cpu(self.grid.X[0, :]), y=compute_engine.to_cpu(self.grid.Y[:, 0])
         )
-        self.results_manager.add_visitor(self.storage_visitor)
+        self.add_visitor(self.storage_visitor)
 
     def _init_animation(self) -> None:
         """Set up the online animation visitor from ResultParameters config."""
@@ -267,7 +270,13 @@ class SimulationController:
             backend=rcfg.animation_backend,
             encoder_name=rcfg.animation_encoder,
         )
-        self.results_manager.add_visitor(self.animation_visitor)
+        self.add_visitor(self.animation_visitor)
+
+    def add_visitor(self, visitor: ResultVisitor) -> None:
+        """Register a visitor and build result nodes if this is the first one."""
+        if not self.results_manager.nodes:
+            self.results_manager.nodes = self._build_result_nodes()
+        self.results_manager.add_visitor(visitor)
 
     def _build_result_nodes(self) -> list[ResultNode]:
         """Build the result nodes for this run."""
@@ -331,6 +340,9 @@ class SimulationController:
                 )
             )
 
+        for name in self.cfg.result.observables:
+            produced = available_observables[name](self)
+            nodes.extend(produced if isinstance(produced, list) else [produced])
         return nodes
 
     def run(self) -> None:
@@ -340,7 +352,7 @@ class SimulationController:
         n_steps = round(self.cfg.solver.total_time / dt)
 
         try:
-            if any((self.storage_visitor, self.animation_visitor, self.visualizer)):
+            if self.results_manager.visitors or self.storage_visitor is not None or self.animation_visitor is not None:
                 self._record_results(self.state.t)
                 if self.visualizer is not None:
                     self.next_viz_time += self.cfg.result.real_time_refresh_interval
@@ -349,7 +361,14 @@ class SimulationController:
             step = 0
             with tqdm(total=n_steps, desc="Simulating") as progress:
                 while step < n_steps:
-                    recording = self.storage_visitor is not None or self.animation_visitor is not None
+                    recording = (
+                        self.storage_visitor is not None
+                        or self.animation_visitor is not None
+                        or any(
+                            not isinstance(visitor, VisualizationVisitor)
+                            for visitor in self.results_manager.visitors
+                        )
+                    )
                     if self.visualizer is not None:
                         end = step + 1
                     elif recording:
@@ -363,10 +382,7 @@ class SimulationController:
                     progress.update(end - step)
                     step = end
                     t_after = step * dt
-                    should_save = (
-                        self.storage_visitor is not None
-                        and step % save_interval == 0
-                    )
+                    should_save = recording and step % save_interval == 0
                     should_viz = (
                         self.visualizer is not None and t_after >= self.next_viz_time
                     )
@@ -388,14 +404,20 @@ class SimulationController:
                         if should_viz:
                             self.next_viz_time += self.cfg.result.real_time_refresh_interval
         finally:
-            if self.storage_visitor is not None:
+            for visitor in self.results_manager.visitors:
+                finalize = getattr(visitor, "finalize", None)
+                if not callable(finalize):
+                    continue
+                if visitor is self.animation_visitor:
+                    try:
+                        finalize()
+                    except Exception as exc:
+                        import sys
+                        print(f"WARNING: animation finalize failed: {exc}", file=sys.stderr)
+                    continue
+                finalize()
+            if self.storage_visitor is not None and self.storage_visitor not in self.results_manager.visitors:
                 self.storage_visitor.finalize()
-            if self.animation_visitor is not None:
-                try:
-                    self.animation_visitor.finalize()
-                except Exception as exc:
-                    import sys
-                    print(f"WARNING: animation finalize failed: {exc}", file=sys.stderr)
 
     def _record_results(self, t: float) -> None:
         """Evaluate the pump and send the current state to result visitors."""

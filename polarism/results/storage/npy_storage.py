@@ -8,19 +8,24 @@ from dataclasses import asdict, is_dataclass
 import numpy as np
 
 from polarism.results.storage.base_storage import BaseStorage
+from polarism.results.storage.storage_registry import register_storage
 
 
+@register_storage("npy")
 class NPYStorage(BaseStorage):
     """Store result batches in NumPy files."""
     output_dir: Path
     batch_number: int
 
-    def __init__(self, output_dir: Path, batch_size: int, compress: bool = False,
-                 config=None, x=None, y=None):
+    def __init__(self, output_dir: Path, batch_size: int, config=None, x=None, y=None,
+                 compress: bool | None = None):
         """Set up NumPy batch storage."""
         super().__init__(output_dir, batch_size)
         self.batch_number = 0
-        self.compress = compress
+        if isinstance(config, bool):
+            compress = config if compress is None else compress
+            config = None
+        self.compress = (config.result.compression != "none") if compress is None and config is not None else bool(compress)
         from polarism import __version__
         self.metadata = {
             "format_version": 2,

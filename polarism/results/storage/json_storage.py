@@ -7,14 +7,16 @@ from pathlib import Path
 import numpy as np
 
 from polarism.results.storage.base_storage import BaseStorage
+from polarism.results.storage.storage_registry import register_storage
 
 
+@register_storage("json")
 class JSONStorage(BaseStorage):
     """Store result batches in JSON files."""
     output_dir: Path
     batch_number: int
 
-    def __init__(self, output_dir: Path, batch_size: int):
+    def __init__(self, output_dir: Path, batch_size: int, config=None, x=None, y=None):
         """Set up JSON batch storage."""
         super().__init__(output_dir, batch_size)
         self.batch_number = 0

@@ -9,6 +9,8 @@ from polarism.boundary_conditions.absorption.absorption_registry import (
     available_boundary_conditions,
 )
 from polarism.grid.create_grid import grid_boundary
+from polarism.results.observable_registry import available_observables
+from polarism.results.storage import available_storages
 
 if TYPE_CHECKING:
     from polarism.config.simulation_parameters import Config
@@ -111,6 +113,16 @@ def _validate_solver(cfg: Config) -> None:
 
 def _validate_result(cfg: Config) -> None:
     r = cfg.result
+    for field, names, registry in (("formats", r.formats, available_storages),
+                                   ("observables", r.observables, available_observables)):
+        if not isinstance(names, (tuple, list)) or any(not isinstance(name, str) for name in names):
+            raise ConfigValidationError(f"result.{field} must be a tuple of names")
+        for name in names:
+            if name not in registry:
+                raise ConfigValidationError(
+                    f"result.{field} name '{name}' is not recognised. "
+                    f"Available: {list(registry.keys())}."
+                )
     if not isinstance(r.compression, str) or r.compression not in {"none", "lzf", "gzip"}:
         raise ConfigValidationError("result.compression must be one of none, lzf, gzip")
     if type(r.compression_level) is not int or not 0 <= r.compression_level <= 9:

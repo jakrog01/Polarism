@@ -148,6 +148,8 @@ with reduced grid-direction anisotropy.
 | `real_time_refresh_interval` | UI refresh cadence | positive float |
 | `save_results` | enable result processing | boolean |
 | `save_hdf5`, `save_json`, `save_npy` | storage backends | booleans |
+| `formats` | additional registered storage formats, combined with enabled `save_*` options | tuple of names, default `()` |
+| `observables` | registered observable factories that add result nodes | tuple of names, default `()` |
 | `save_interval` | number of solver steps between writes after the initial state | positive integer |
 | `batch_size` | buffered result chunk size | positive integer |
 | `compression` | compression for every HDF5 dataset | `none` (default), `lzf`, `gzip` |

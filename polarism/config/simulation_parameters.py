@@ -116,6 +116,8 @@ class ResultParameters:
     save_hdf5: bool = False
     save_json: bool = False
     save_npy: bool = False
+    formats: tuple[str, ...] = ()
+    observables: tuple[str, ...] = ()
     compression: str = "none"
     compression_level: int = 4
     save_psi: bool = False

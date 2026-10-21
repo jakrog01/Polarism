@@ -10,8 +10,10 @@ import h5py
 import numpy as np
 
 from polarism.results.storage.base_storage import BaseStorage
+from polarism.results.storage.storage_registry import register_storage
 
 
+@register_storage("hdf5")
 class HDF5Storage(BaseStorage):
     """Store result batches in HDF5 files."""
     h5_path: Path
