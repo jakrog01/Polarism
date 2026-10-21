@@ -33,6 +33,7 @@ class BaseStorage(ABC):
         self.scalar_group_buffers = {}
         self.static_fields: dict[str, np.ndarray] = {}
         self.node_metadata: dict[str, dict[str, str]] = {}
+        self.members: int | None = None
 
     def add_to_batch(self, t: float, nodes: list, **context) -> None:
         """Add one result step to the current batch."""
@@ -51,8 +52,13 @@ class BaseStorage(ABC):
             if node.is_field:
                 if node.static:
                     if node.name not in self.static_fields:
-                        self.static_fields[node.name] = field
-                        self.write_static(node.name, field)
+                        static = field
+                        if self.members is not None and field.ndim == 3 and all(
+                            np.array_equal(field[0], item) for item in field[1:]
+                        ):
+                            static = field[0]
+                        self.static_fields[node.name] = static
+                        self.write_static(node.name, static)
                     continue
                 if node.name not in self.field_buffers:
                     self.field_buffers[node.name] = []
@@ -60,16 +66,25 @@ class BaseStorage(ABC):
             else:
                 if node.name not in self.scalar_buffers:
                     self.scalar_buffers[node.name] = []
-                self.scalar_buffers[node.name].append(float(field if reduced is None else reduced))
+                value = field if reduced is None else reduced
+                if self.members is not None and np.shape(value) != (self.members,):
+                    raise ValueError(f"batched scalar {node.name!r} must have one value per member")
+                self.scalar_buffers[node.name].append(
+                    np.asarray(value) if self.members is not None else float(value)
+                )
 
         scalar_groups = context.get("scalar_groups", {})
         for group_name, values in scalar_groups.items():
             if group_name not in self.scalar_group_buffers:
                 self.scalar_group_buffers[group_name] = {}
             for label, value in values.items():
+                if self.members is not None and np.shape(value) != (self.members,):
+                    raise ValueError(f"batched scalar group {group_name}/{label} must have one value per member")
                 if label not in self.scalar_group_buffers[group_name]:
                     self.scalar_group_buffers[group_name][label] = []
-                self.scalar_group_buffers[group_name][label].append(float(value))
+                self.scalar_group_buffers[group_name][label].append(
+                    np.asarray(value) if self.members is not None else float(value)
+                )
 
         self.batch_count += 1
 
@@ -90,6 +105,11 @@ class BaseStorage(ABC):
     def finalize(self) -> None:
         """Flush remaining data and close resources."""
         pass
+
+    def flush(self) -> None:
+        """Persist all buffered frames without closing the storage."""
+        if self.batch_count > 0:
+            self.dump_batch()
 
     def _clear_buffers(self) -> None:
         """Clear all in-memory buffers."""

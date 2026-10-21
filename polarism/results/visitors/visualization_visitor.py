@@ -10,9 +10,10 @@ class VisualizationVisitor(ResultVisitor):
     """Send result nodes to the live visualizer."""
     visualizer: RealTimeVisualization
 
-    def __init__(self, visualizer: RealTimeVisualization):
+    def __init__(self, visualizer: RealTimeVisualization, member: int | None = None):
         """Store the live visualizer."""
         self.visualizer = visualizer
+        self.member = member
 
     def needs(self, nodes: list[ResultNode]) -> set[str]:
         """Return names of nodes that are exposed for visualization."""
@@ -29,13 +30,17 @@ class VisualizationVisitor(ResultVisitor):
             if not node.expose:
                 continue
             field, reduced = cached[node.name]
+            if self.member is not None:
+                field = field[self.member] if getattr(field, "ndim", 0) else field
+                reduced = reduced[self.member] if getattr(reduced, "ndim", 0) else reduced
             if getattr(node, "cmap", None) is not None:
                 fields[node.name] = field
             else:
                 scalars[node.name] = float(reduced)
         if "scalar_groups" in context and context["scalar_groups"]:
             scalar_groups = {
-                group: {label: float(value) for label, value in values.items()}
+                group: {label: float(value[self.member] if self.member is not None else value)
+                        for label, value in values.items()}
                 for group, values in context["scalar_groups"].items()
             }
 

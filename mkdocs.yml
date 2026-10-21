@@ -23,6 +23,7 @@ nav:
       - Time Evolution: user-guide/time-evolution.md
       - Output and Visualization: user-guide/output-and-visualization.md
       - Checkpoint and Restart: user-guide/checkpoint-and-restart.md
+      - Parameter Sweeps: user-guide/parameter-sweeps.md
       - Plugins:
           - Overview: plugins/index.md
           - Your first plugin: plugins/first-plugin.md

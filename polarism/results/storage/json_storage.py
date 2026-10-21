@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,27 @@ class JSONStorage(BaseStorage):
         """Set up JSON batch storage."""
         super().__init__(output_dir, batch_size)
         self.batch_number = 0
+        self._resume = getattr(config, "_storage_resume", False)
+        self.members = getattr(config, "_storage_members", None)
+        if self._resume:
+            self.batch_number = len(list(self.output_dir.glob("batch_*.json")))
+        if self.members is not None:
+            member_path = self.output_dir / "member_index.json"
+            if not self._resume or not member_path.exists():
+                member_path.write_text(json.dumps(config._storage_indices))
+        if self.members is not None:
+            from polarism import __version__
+            self.metadata = {"format_version": 2, "polarism_version": __version__,
+                             "config": asdict(config) if is_dataclass(config) else config or {},
+                             "members": self.members}
+            if x is not None:
+                grid_path = self.output_dir / "grid_x.json"
+                if not self._resume or not grid_path.exists():
+                    grid_path.write_text(json.dumps(np.asarray(x).tolist()))
+            if y is not None:
+                grid_path = self.output_dir / "grid_y.json"
+                if not self._resume or not grid_path.exists():
+                    grid_path.write_text(json.dumps(np.asarray(y).tolist()))
 
     def dump_batch(self) -> None:
         """Write the current batch to JSON."""
@@ -42,12 +64,12 @@ class JSONStorage(BaseStorage):
             batch_data["fields"][field_name] = [self._json_field(f) for f in field_list]
 
         for scalar_name, scalar_list in self.scalar_buffers.items():
-            batch_data["scalars"][scalar_name] = scalar_list[:]
+            batch_data["scalars"][scalar_name] = np.asarray(scalar_list).tolist()
 
         for group_name, group_dict in self.scalar_group_buffers.items():
             batch_data["scalar_groups"][group_name] = {}
             for label, value_list in group_dict.items():
-                batch_data["scalar_groups"][group_name][label] = value_list[:]
+                batch_data["scalar_groups"][group_name][label] = np.asarray(value_list).tolist()
 
         batch_path = self.output_dir / f"batch_{self.batch_number:06d}.json"
         with open(batch_path, "w") as f:
@@ -72,3 +94,5 @@ class JSONStorage(BaseStorage):
         """Flush remaining data and close JSON storage."""
         if self.batch_count > 0:
             self.dump_batch()
+        if self.members is not None:
+            (self.output_dir / "metadata.json").write_text(json.dumps(self.metadata, sort_keys=True))

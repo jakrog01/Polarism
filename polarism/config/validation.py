@@ -34,6 +34,7 @@ def validate_config(cfg: Config) -> None:
     _validate_solver(cfg)
     _validate_result(cfg)
     _validate_checkpoint(cfg)
+    _validate_sweep(cfg)
     _validate_boundary(cfg)
     _validate_laser(cfg)
     _warn_explicit_stability(cfg)
@@ -114,6 +115,8 @@ def _validate_solver(cfg: Config) -> None:
 
 def _validate_result(cfg: Config) -> None:
     r = cfg.result
+    if type(r.view_member) is not int or r.view_member < 0:
+        raise ConfigValidationError("result.view_member must be a nonnegative integer")
     for field, names, registry in (("formats", r.formats, available_storages),
                                    ("observables", r.observables, available_observables)):
         if not isinstance(names, (tuple, list)) or any(not isinstance(name, str) for name in names):
@@ -146,6 +149,16 @@ def _validate_checkpoint(cfg: Config) -> None:
             raise ConfigValidationError(f"checkpoint.{name} must be a nonempty path or None")
     if not isinstance(c.on_signal, bool):
         raise ConfigValidationError("checkpoint.on_signal must be a boolean")
+
+
+def _validate_sweep(cfg: Config) -> None:
+    sweep = cfg.sweep
+    for name in ("batch_size", "max_batch"):
+        value = getattr(sweep, name)
+        if value is not None and (type(value) is not int or value < 1):
+            raise ConfigValidationError(f"sweep.{name} must be a positive integer or None")
+    if not 0 < sweep.memory_fraction <= 1:
+        raise ConfigValidationError("sweep.memory_fraction must be in (0, 1]")
 
 
 def _validate_boundary(cfg: Config) -> None:

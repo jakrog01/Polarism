@@ -4,6 +4,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Union
 
+import numpy as np
+
 from polarism.compute_engine import compute_engine
 from polarism.config.dtype_utils import real_dtype
 from polarism.config.simulation_parameters import LaserParameters
@@ -75,6 +77,12 @@ class AbstractLaser(ABC):
             return 0.0
         t_eff = t - self.delay
         return self._amplitude(t_eff) * self._P_time(t_eff)
+
+    @classmethod
+    def batch_power_coefficient(cls, lasers, times):
+        """Return one power coefficient per time and laser."""
+        return np.asarray([[laser.power_coefficient(t) for laser in lasers]
+                           for t in times]).reshape(len(times), len(lasers))
 
     def get_power(
         self,

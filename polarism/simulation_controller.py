@@ -23,7 +23,7 @@ from polarism.config.validation import validate_config
 from polarism.grid.create_grid import create_grid
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.laser.laser_factory import LaserFactory
-from polarism.laser.pump_field import PumpField
+from polarism.laser.pump_field import BatchedPumpField, PumpField
 from polarism.plugins import load_plugins
 from polarism.potential.create_potential import create_potential
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
@@ -59,7 +59,10 @@ def _compute_total_norm(**ctx):
     """Compute the total condensate norm."""
     xp = compute_engine.xp
     grid = ctx["grid"]
-    return (xp.abs(ctx["state"].psi) ** 2).sum() * grid.dx * grid.dy
+    psi = ctx["state"].psi
+    if psi.ndim == 3:
+        return (xp.abs(psi) ** 2).sum(axis=(-2, -1)) * grid.dx * grid.dy
+    return (xp.abs(psi) ** 2).sum() * grid.dx * grid.dy
 
 
 def _compute_psi(**ctx):
@@ -91,9 +94,26 @@ class SimulationController:
     storage_visitor: StorageVisitor | None
     animation_visitor: AnimationVisitor | None
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, members: list[dict] | None = None,
+                 output_dir: str | Path | None = None, member_indices: list[int] | None = None):
         """Set up the simulation from the config."""
+        from polarism.sweep_config import apply_overrides
+        if members is not None:
+            load_plugins()
+        if members is not None and len(members) == 0:
+            raise ValueError("members must contain at least one override mapping")
+        member_configs = ([apply_overrides(cfg, overrides) for overrides in members]
+                          if members is not None else None)
+        if member_configs is not None and len(member_configs) == 1:
+            cfg = member_configs[0]
+        batched = member_configs is not None and len(member_configs) >= 2
         self.cfg = cfg
+        self._batched = batched
+        self._member_configs = member_configs
+        self._output_dir = Path(output_dir) if output_dir is not None else None
+        self._member_indices = member_indices or list(range(len(member_configs or [cfg])))
+        if member_configs is not None and cfg.result.view_member >= len(member_configs):
+            raise ValueError("result.view_member is outside the batch")
         compute_engine.configure(cfg.compute_engine)
         self.xp = compute_engine.xp
 
@@ -121,22 +141,56 @@ class SimulationController:
         check_solver_compatibility(cfg)
 
         self.grid = create_grid(cfg.grid)
+        batch_physics = None
+        if batched:
+            from polarism.config.batch_physics import _FLOAT_FIELDS
+            batch_physics = {
+                name: np.asarray([getattr(member.physics, name) for member in member_configs])
+                for name in _FLOAT_FIELDS
+                if any(getattr(member.physics, name) != getattr(member_configs[0].physics, name)
+                       for member in member_configs[1:])
+            }
         self.boundary_condition = BoundaryCondition(
-            self.grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt
+            self.grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt,
+            batch_physics=batch_physics,
         )
-        self.potential = create_potential(cfg.potential, self.grid)
-        self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self.grid.Y, cfg.solver.precision)
-        self.pump_field = PumpField(self.lasers, self.grid, cfg.solver.precision)
-        self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid, cfg.solver.precision)
-        self.state = SimulationState(
-            self.grid,
-            cfg.physics.init_eps,
-            cfg.solver.precision,
-            mode=getattr(cfg.physics, "init_mode", "legacy_positive_uniform"),
-            k_cutoff_um=getattr(cfg.physics, "init_k_cutoff_um", None),
-            seed=getattr(cfg.physics, "init_seed", None),
-        )
-        self.solver = create_solver(cfg, self.grid)
+        if batched:
+            potentials = [create_potential(member.potential, self.grid)
+                          for member in member_configs]
+            self.potential = (potentials[0] if all(bool(self.xp.array_equal(potentials[0], item))
+                              for item in potentials[1:]) else self.xp.stack(potentials))
+            member_lasers = [LaserFactory.create_laser(
+                member.laser, self.grid.X, self.grid.Y, cfg.solver.precision,
+                getattr(member, "_laser_entry_overrides", None)) for member in member_configs]
+            self.lasers = member_lasers[0]
+            self.pump_field = BatchedPumpField(member_lasers, self.grid, cfg.solver.precision)
+            self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid,
+                                              cfg.solver.precision, batch_size=len(member_configs),
+                                              batch_physics=batch_physics)
+            states = [SimulationState(
+                self.grid, member.physics.init_eps, cfg.solver.precision,
+                mode=member.physics.init_mode,
+                k_cutoff_um=member.physics.init_k_cutoff_um,
+                seed=member.physics.init_seed,
+            ) for member in member_configs]
+            self.state = states[0]
+            self.state.psi = self.xp.stack([state.psi for state in states])
+        else:
+            self.potential = create_potential(cfg.potential, self.grid)
+            self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self.grid.Y, cfg.solver.precision,
+                                                    getattr(cfg, "_laser_entry_overrides", None))
+            self.pump_field = PumpField(self.lasers, self.grid, cfg.solver.precision)
+            self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid, cfg.solver.precision)
+            self.state = SimulationState(
+                self.grid,
+                cfg.physics.init_eps,
+                cfg.solver.precision,
+                mode=getattr(cfg.physics, "init_mode", "legacy_positive_uniform"),
+                k_cutoff_um=getattr(cfg.physics, "init_k_cutoff_um", None),
+                seed=getattr(cfg.physics, "init_seed", None),
+            )
+        self.solver = create_solver(cfg, self.grid, batch_physics=batch_physics)
+        self._batch_physics = batch_physics
         self.max_laser_power = self._compute_max_laser_power()
 
         cap = self.boundary_condition.before_step_action()
@@ -158,10 +212,13 @@ class SimulationController:
         self.storage_visitor = None
         self.animation_visitor = None
         self._step = 0
-        self._state_shape_explicit = False
+        self._state_shape_explicit = batched
         self._stop_requested = False
         self._resumed = False
         self.run_directory = None
+
+        if cfg.checkpoint.resume_from is not None:
+            self.load_checkpoint(cfg.checkpoint.resume_from)
 
         if cfg.result.real_time_view:
             self._init_visualizer()
@@ -178,13 +235,12 @@ class SimulationController:
         if cfg.result.animate:
             self._init_animation()
 
-        if cfg.checkpoint.resume_from is not None:
-            self.load_checkpoint(cfg.checkpoint.resume_from)
-
     def _compute_max_laser_power(self) -> float:
         """Return the largest configured laser power."""
         max_power = 0.0
-        for laser in self.lasers:
+        lasers = (self.pump_field.member_lasers[self.cfg.result.view_member]
+                  if self._batched else self.lasers)
+        for laser in lasers:
             if hasattr(laser, "Pmax"):
                 max_power = max(max_power, laser.Pmax)
             elif hasattr(laser, "P0"):
@@ -229,7 +285,7 @@ class SimulationController:
         )
 
         self.results_manager.nodes = nodes
-        self.add_visitor(VisualizationVisitor(self.visualizer))
+        self.add_visitor(VisualizationVisitor(self.visualizer, self.cfg.result.view_member if self._batched else None))
 
     def _init_storage(self) -> None:
         """Set up result storage."""
@@ -244,8 +300,13 @@ class SimulationController:
         if not self.results_manager.nodes:
             self.results_manager.nodes = self._build_result_nodes()
 
+        self.cfg._storage_members = len(self._member_configs) if self._member_configs is not None and (self._output_dir is not None or self._batched) else None
+        self.cfg._storage_indices = self._member_indices
+        self.cfg._storage_resume = self.cfg.checkpoint.resume_from is not None
+        self.cfg._storage_resume_time = self.state.t if self._resumed else None
         self.storage_visitor = StorageVisitor(
-            self.cfg, x=compute_engine.to_cpu(self.grid.X[0, :]), y=compute_engine.to_cpu(self.grid.Y[:, 0])
+            self.cfg, x=compute_engine.to_cpu(self.grid.X[0, :]), y=compute_engine.to_cpu(self.grid.Y[:, 0]),
+            output_dir=self._output_dir,
         )
         self.add_visitor(self.storage_visitor)
 
@@ -293,6 +354,7 @@ class SimulationController:
             target_seconds=rcfg.animation_target_seconds,
             backend=rcfg.animation_backend,
             encoder_name=rcfg.animation_encoder,
+            member=rcfg.view_member if self._batched else None,
         )
         self.add_visitor(self.animation_visitor)
 
@@ -334,6 +396,14 @@ class SimulationController:
         ]
         if hasattr(self.reservoir, "make_result_nodes"):
             nodes.extend(self.reservoir.make_result_nodes())
+        if self._batched:
+            field_nodes = {node.name: node for node in nodes if node.is_field}
+            for node in nodes:
+                if not node.is_field and node.name.endswith("_max"):
+                    field_node = field_nodes.get(node.name[:-4])
+                    if field_node is not None:
+                        node.compute_fn = lambda field_node=field_node, **ctx: field_node.compute_fn(**ctx).max(axis=(-2, -1))
+                        node.reduce_dim_fn = lambda value: value
 
         if self.cfg.result.save_psi:
             nodes.append(
@@ -442,6 +512,8 @@ class SimulationController:
         if self.state.t != step * self.cfg.solver.dt:
             raise ValueError("checkpoint requires a solver step boundary")
         self._step = step
+        if self.storage_visitor is not None:
+            self.storage_visitor.flush()
         psi = compute_engine.to_cpu(self.state.psi)
         psi_k = self.state.psi_k
         fields = tuple(compute_engine.to_cpu(value) for value in self.reservoir.get_state())
@@ -457,6 +529,12 @@ class SimulationController:
                 h5.attrs["dt"] = self.cfg.solver.dt
                 h5.attrs["reservoir_type"] = self.cfg.reservoir.reservoir_type
                 h5.attrs["config_json"] = json.dumps(asdict(self.cfg))
+                if self._member_configs is not None:
+                    h5.attrs["member_configs_json"] = json.dumps([
+                        {**{name: asdict(member)[name] for name in ("physics", "laser", "potential")},
+                         "laser_entries": getattr(member, "_laser_entry_overrides", {})}
+                        for member in self._member_configs
+                    ], sort_keys=True)
                 h5.create_dataset("psi", data=psi)
                 if psi_k is not None:
                     h5.create_dataset("psi_k", data=compute_engine.to_cpu(psi_k))
@@ -477,6 +555,14 @@ class SimulationController:
                 raise ValueError("reservoir type mismatch")
             if h5.attrs["dt"] != self.cfg.solver.dt:
                 raise ValueError("checkpoint dt mismatch")
+            if self._member_configs is not None:
+                expected = json.dumps([
+                    {**{name: asdict(member)[name] for name in ("physics", "laser", "potential")},
+                     "laser_entries": getattr(member, "_laser_entry_overrides", {})}
+                    for member in self._member_configs
+                ], sort_keys=True)
+                if h5.attrs.get("member_configs_json") != expected:
+                    raise ValueError("checkpoint member physics, pump or potential mismatch")
             psi = h5["psi"][:]
             shape = psi.shape
             if shape[-2:] != (self.grid.ny, self.grid.nx) or len(shape) not in (2, 3):
@@ -506,7 +592,7 @@ class SimulationController:
         self._resumed = True
         if psi_k is not None:
             self.state.psi_k = self.xp.asarray(psi_k, dtype=dtype).copy()
-        self.solver = create_solver(self.cfg, self.grid)
+        self.solver = create_solver(self.cfg, self.grid, batch_physics=self._batch_physics)
 
     def run(self) -> None:
         """Run the simulation loop."""
@@ -615,18 +701,27 @@ class SimulationController:
     def _record_results(self, t: float) -> None:
         """Evaluate the pump and send the current state to result visitors."""
         P_total = self._compute_total_pump(t)
+        scalar_groups = self._get_scalar_groups()
+        if self._batched:
+            self.pump_field.last_components = []
         self.results_manager.step(
             t,
             state=self.state,
             grid=self.grid,
             P_total=P_total,
-            scalar_groups=self._get_scalar_groups(),
+            scalar_groups=scalar_groups,
         )
 
     def _compute_total_pump(self, t: float) -> Union[np.ndarray, cp.ndarray]:
         """Sum laser fields at time t; callers must treat the result as read-only."""
         self.pump_field.lasers = self.lasers
-        return self.pump_field(t)
+        if not self._batched:
+            return self.pump_field(t)
+        self.pump_field.capture_components = True
+        try:
+            return self.pump_field(t)
+        finally:
+            self.pump_field.capture_components = False
 
     def _get_scalar_groups(self) -> dict[str, dict[str, float]]:
         """Build scalar groups from the last computed laser fields.
@@ -636,6 +731,21 @@ class SimulationController:
         """
         if not self.cfg.laser.expose_results:
             return {}
+        if self._batched:
+            terms = self.pump_field.separable_terms()
+            if terms is not None:
+                values = {}
+                for i, field in enumerate(self.pump_field.last_components):
+                    if field.ndim == 2:
+                        values[f"L{i}"] = self.xp.broadcast_to(field.max(), (len(self._member_configs),))
+                    else:
+                        values[f"L{i}"] = field.max(axis=(-2, -1))
+                return {"P_lasers": values}
+            return {"P_lasers": {
+                f"L{i}": self.xp.stack([self.xp.max(lasers[i].get_power(self.grid.X, self.grid.Y, self.state.t))
+                                           for lasers in self.pump_field.member_lasers])
+                for i in range(len(self.lasers))
+            }}
         return {
             "P_lasers": {
                 f"L{i}": self.xp.max(laser.P)

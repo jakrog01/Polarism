@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Union
 
+from polarism.config.batch_physics import BatchPhysics
+from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -22,16 +24,17 @@ class SplitStepFFTSolver(AbstractSolver):
     """Solve the model with split-step FFT."""
     _kinetic_propagator_half: Union[np.ndarray, cp.ndarray]
 
-    def __init__(self, config: Config, grid: SimulationGrid2D):
+    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None):
         """Set up the split step fft solver."""
         super().__init__(config)
+        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
 
         self._kinetic_propagator_half = self.xp.exp(
             -1j
-            * self.config.physics.hbar
+            * self.batch_physics.get("hbar")
             * grid.k_squared
             * (self.config.solver.dt / 2)
-            / (2 * self.config.physics.m_eff)
+            / (2 * self.batch_physics.get("m_eff"))
         )
 
     def _kinetic_half_step_fft(
@@ -51,15 +54,16 @@ class SplitStepFFTSolver(AbstractSolver):
         state: SimulationState,
     ) -> None:
         """Advance the solver by one time step."""
+        self.batch_physics.check(state.psi)
         dt = self.config.solver.dt
-        hbar = self.config.physics.hbar
-        g_C = self.config.physics.g_C
-        g_R = self.config.physics.g_R
-        g_I = getattr(self.config.physics, "g_I", 0.0)
-        R = self.config.physics.R
-        gamma_C = self.config.physics.gamma_C
+        hbar = self.batch_physics.get("hbar")
+        g_C = self.batch_physics.get("g_C")
+        g_R = self.batch_physics.get("g_R")
+        g_I = self.batch_physics.get("g_I")
+        R = self.batch_physics.get("R")
+        gamma_C = self.batch_physics.get("gamma_C")
 
-        reservoir.step(dt / 2, state.psi, pump(state.t + dt / 4))
+        reservoir.step(dt / 2, state.psi, evaluate_pump(pump, state.t + dt / 4))
         res_state = reservoir.get_state()
         nR = reservoir.get_active_density(res_state)
         nI = reservoir.get_inactive_density(res_state)
@@ -83,5 +87,5 @@ class SplitStepFFTSolver(AbstractSolver):
 
         state.psi = self._kinetic_half_step_fft(state.psi)
 
-        reservoir.step(dt / 2, state.psi, pump(state.t + 3 * dt / 4))
+        reservoir.step(dt / 2, state.psi, evaluate_pump(pump, state.t + 3 * dt / 4))
         state.psi = boundary_condition.after_step_action(state.psi)

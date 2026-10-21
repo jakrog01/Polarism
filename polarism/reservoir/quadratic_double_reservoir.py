@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
 
+from polarism.config.batch_physics import BatchPhysics
 from polarism.compute_engine import compute_engine
 from polarism.config.dtype_utils import real_dtype
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
@@ -60,16 +61,18 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
         physics: PhysicsConstants,
         grid: SimulationGrid2D,
         precision: str = "double",
+        batch_physics=None,
     ) -> None:
         """Set up the quadratic double reservoir."""
         self.xp = compute_engine.xp
         self.config = reservoir_config
-        self.R = physics.R
-        self.gamma_R = physics.gamma_R
-        self.gamma_I = physics.gamma_I
-        self.kappa = physics.kappa
-        self.reservoir_diffusion_I = getattr(physics, "reservoir_diffusion_I", 0.0)
-        self.reservoir_diffusion_R = getattr(physics, "reservoir_diffusion_R", 0.0)
+        self.batch_physics = BatchPhysics(physics, batch_physics, self.xp, precision)
+        self.R = self.batch_physics.get("R")
+        self.gamma_R = self.batch_physics.get("gamma_R")
+        self.gamma_I = self.batch_physics.get("gamma_I")
+        self.kappa = self.batch_physics.get("kappa")
+        self.reservoir_diffusion_I = self.batch_physics.get("reservoir_diffusion_I")
+        self.reservoir_diffusion_R = self.batch_physics.get("reservoir_diffusion_R")
         self.dx = grid.dx
         self.dy = grid.dy
         self.grid_type = grid.boundary
@@ -132,6 +135,7 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
         Union["np.ndarray", "cp.ndarray"], Union["np.ndarray", "cp.ndarray"]
     ]:
         """Return time derivatives ``(dnR, dnI)``."""
+        self.batch_physics.check(psi)
         nR, nI = state
         abs_psi2 = rho if rho is not None else psi.real * psi.real + psi.imag * psi.imag
 
@@ -168,11 +172,11 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
                 self.R,
             )
 
-        if self.reservoir_diffusion_R != 0.0:
+        if self.batch_physics.any_nonzero("reservoir_diffusion_R"):
             dnR = dnR + self.reservoir_diffusion_R * real_laplacian(
                 nR, self.xp, self.dx, self.dy, self.grid_type
             )
-        if self.reservoir_diffusion_I != 0.0:
+        if self.batch_physics.any_nonzero("reservoir_diffusion_I"):
             dnI = dnI + self.reservoir_diffusion_I * real_laplacian(
                 nI, self.xp, self.dx, self.dy, self.grid_type
             )

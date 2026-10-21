@@ -122,6 +122,7 @@ class AnimationVisitor(ResultVisitor):
         target_seconds: int = 60,
         backend: str = "auto",
         encoder_name: str = "h264_nvenc",
+        member: int | None = None,
         sample_frames: int = 50,
         clim_margin: float = 0.10,
         log_every: int = 50,
@@ -132,6 +133,7 @@ class AnimationVisitor(ResultVisitor):
         self._target_seconds = target_seconds
         self._backend = backend
         self._encoder_name = encoder_name
+        self.member = member
         self._sample_frames = sample_frames
         self._clim_margin = clim_margin
         self._log_every = log_every
@@ -181,7 +183,8 @@ class AnimationVisitor(ResultVisitor):
         needed = self.needs(nodes)
         if not all(spec.source in cached for spec in self._panel_specs if spec.source in needed):
             return
-        already_transformed = [cached[spec.source][0] for spec in self._panel_specs]
+        already_transformed = [cached[spec.source][0][self.member] if self.member is not None
+                               else cached[spec.source][0] for spec in self._panel_specs]
         self._encode_frame(already_transformed, t=t)
 
     def record_frame(self, raw_fields: dict[str, Any], t: float | None = None) -> None:

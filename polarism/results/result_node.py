@@ -11,7 +11,11 @@ if TYPE_CHECKING:
 
 
 class ResultNode:
-    """Describe one computed result."""
+    """Describe one computed result.
+
+    A scalar observable in a batched run must compute a device vector with
+    one value per member. Field observables must retain the member axis.
+    """
     name: str
     compute_fn: FunctionType
     reduce_dim_fn: FunctionType

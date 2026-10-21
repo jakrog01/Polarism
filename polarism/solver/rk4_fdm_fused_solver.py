@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Union
 
+from polarism.config.batch_physics import BatchPhysics
+from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -21,29 +23,30 @@ if TYPE_CHECKING:
 class RK4FDMFusedSolver(AbstractSolver):
 
     """Solve the model with fused finite-difference RK4."""
-    def __init__(self, config: Config, grid: SimulationGrid2D):
+    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None):
         """Set up the fused RK4 solver."""
         super().__init__(config)
+        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
         self.dx = grid.dx
         self.dy = grid.dy
         self.nx = grid.nx
         self.ny = grid.ny
         self.grid_type = grid.boundary
 
-        self._hbar = config.physics.hbar
-        self._m_eff = config.physics.m_eff
-        self._g_C = config.physics.g_C
-        self._g_R = config.physics.g_R
-        self._g_I = getattr(config.physics, "g_I", 0.0)
-        self._R = config.physics.R
-        self._gamma_C = config.physics.gamma_C
+        self._hbar = self.batch_physics.get("hbar")
+        self._m_eff = self.batch_physics.get("m_eff")
+        self._g_C = self.batch_physics.get("g_C")
+        self._g_R = self.batch_physics.get("g_R")
+        self._g_I = self.batch_physics.get("g_I")
+        self._R = self.batch_physics.get("R")
+        self._gamma_C = self.batch_physics.get("gamma_C")
         self._dt = config.solver.dt
 
         self._inv_dx2 = 1.0 / (self.dx**2)
         self._inv_dy2 = 1.0 / (self.dy**2)
         self._kinetic_coeff = -(self._hbar**2) / (2.0 * self._m_eff)
         self._minus_i_over_hbar = -1j / self._hbar
-        self._kinetic_relaxation_eta = getattr(config.physics, "kinetic_relaxation_eta", 0.0)
+        self._kinetic_relaxation_eta = self.batch_physics.get("kinetic_relaxation_eta")
         self._hbar_over_2m = self._hbar / (2.0 * self._m_eff)
 
         self._buf_initialized = False
@@ -61,7 +64,7 @@ class RK4FDMFusedSolver(AbstractSolver):
 
     def _setup_fused_kernels(self):
         """Build fused array kernels when the backend supports them."""
-        if not hasattr(self.xp, "fuse"):
+        if self.batch_physics.size is not None or not hasattr(self.xp, "fuse"):
             return
 
         xp = self.xp
@@ -218,11 +221,12 @@ class RK4FDMFusedSolver(AbstractSolver):
         on the next call. Consumers that need to persist ``psi`` across steps
         must copy it.
         """
+        self.batch_physics.check(state.psi)
         dt = self._dt
         t = state.t
-        p0 = pump(t)
-        p_half = pump(t + 0.5 * dt)
-        p1 = pump(t + dt)
+        p0 = evaluate_pump(pump, t)
+        p_half = evaluate_pump(pump, t + 0.5 * dt)
+        p1 = evaluate_pump(pump, t + dt)
         psi0 = state.psi
         self._ensure_buffers(psi0)
 

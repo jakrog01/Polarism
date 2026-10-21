@@ -9,7 +9,8 @@ import time
 from polarism.compute_engine import has_cuda_device
 
 
-def _controller(method: str, size: int, precision: str, reservoir: str, tableau: str = "rk4"):
+def _controller(method: str, size: int, precision: str, reservoir: str,
+                tableau: str = "rk4", batch: int = 1):
     from polarism.config.simulation_parameters import Config
     from polarism.simulation_controller import SimulationController
 
@@ -29,7 +30,7 @@ def _controller(method: str, size: int, precision: str, reservoir: str, tableau:
     cfg.solver.total_time = 1.0
     cfg.solver.precision = precision
     cfg.compute_engine.use_gpu = True
-    controller = SimulationController(cfg)
+    controller = SimulationController(cfg, members=[{} for _ in range(batch)] if batch > 1 else None)
     controller.pump_field.lasers = controller.lasers
     return controller
 
@@ -69,6 +70,27 @@ def _time_run(method, size, precision, reservoir, steps, chunked, cp, tableau="r
     return (time.perf_counter() - start) * 1e6 / steps
 
 
+def _time_batched(method, size, precision, reservoir, steps, batch, cp, tableau="rk4"):
+    def timed_advance(controller):
+        args = _arguments(controller)
+        controller.solver.advance(*args, 0, steps)
+        cp.cuda.Device().synchronize()
+        start = time.perf_counter()
+        controller.solver.advance(*args, steps, steps)
+        cp.cuda.Device().synchronize()
+        return time.perf_counter() - start
+
+    batched = _controller(method, size, precision, reservoir, tableau, batch)
+    batched_seconds = timed_advance(batched)
+    del batched
+    sequential_seconds = 0.0
+    for _ in range(batch):
+        single = _controller(method, size, precision, reservoir, tableau)
+        sequential_seconds += timed_advance(single)
+        del single
+    return sequential_seconds, batched_seconds
+
+
 def _copy_bandwidth(cp):
     source = cp.empty(256 * 1024 * 1024, dtype=cp.uint8)
     target = cp.empty_like(source)
@@ -98,9 +120,10 @@ def main(argv: list[str] | None = None) -> int:
                         default="single")
     parser.add_argument("--tableau", choices=("rk4", "dp5", "dop853", "vern7", "vern9"),
                         default="rk4")
+    parser.add_argument("--batch", type=int, help="compare one batch with this many sequential runs")
     args = parser.parse_args(argv)
-    if args.steps < 1 or any(n < 2 for n in args.grid_sizes):
-        parser.error("steps must be positive and grid sizes must be at least 2")
+    if args.steps < 1 or any(n < 2 for n in args.grid_sizes) or (args.batch is not None and args.batch < 2):
+        parser.error("steps must be positive, grid sizes at least 2, and batch at least 2")
     if not has_cuda_device():
         print("polarism-bench requires CuPy and an available CUDA GPU.", file=sys.stderr)
         return 1
@@ -120,6 +143,33 @@ def main(argv: list[str] | None = None) -> int:
     for method in args.methods:
         for precision in args.precisions:
             for size in args.grid_sizes:
+                if args.batch is not None:
+                    try:
+                        sequential_seconds, batched_seconds = _time_batched(
+                            method, size, precision, args.reservoir, args.steps, args.batch, cp,
+                            args.tableau)
+                    except cp.cuda.memory.OutOfMemoryError:
+                        cp.get_default_memory_pool().free_all_blocks()
+                        print(f"{method:22} {precision:6} {size:5}  batch {args.batch:4}  "
+                              "skipped: out of device memory")
+                        continue
+                    record = {
+                        "method": method, "tableau": args.tableau, "precision": precision,
+                        "grid": size, "reservoir": args.reservoir, "steps": args.steps,
+                        "batch": args.batch, "sequential_s": sequential_seconds,
+                        "batched_s": batched_seconds,
+                        "speedup": sequential_seconds / batched_seconds,
+                        "ns_per_member_element_step": batched_seconds * 1e9 /
+                        (args.batch * size * size * args.steps),
+                        "device": name, "compute_capability": capability,
+                        "cuda_runtime": runtime, "cuda_driver": driver,
+                        "cupy": cp.__version__, "copy_gbps": bandwidth,
+                    }
+                    print(f"{method:22} {precision:6} {size:5}  batch {args.batch:4}  "
+                          f"{record['speedup']:5.2f}x  "
+                          f"{record['ns_per_member_element_step']:.3f} ns/member·element·step")
+                    print(json.dumps(record, sort_keys=True))
+                    continue
                 step_us = _time_run(method, size, precision, args.reservoir,
                                     args.steps, False, cp, args.tableau)
                 advance_us = _time_run(method, size, precision, args.reservoir,

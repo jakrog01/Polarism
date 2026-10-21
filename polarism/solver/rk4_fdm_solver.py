@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Union
 
+from polarism.config.batch_physics import BatchPhysics
+from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -20,9 +22,10 @@ if TYPE_CHECKING:
 @register_solver("rk4-fdm")
 class RK4FDMSolver(AbstractSolver):
     """Solve the model with finite-difference RK4."""
-    def __init__(self, config: Config, grid: SimulationGrid2D):
+    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None):
         """Set up the rk 4 fdm solver."""
         super().__init__(config)
+        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
         self.dx = grid.dx
         self.dy = grid.dy
         self.nx = grid.nx
@@ -113,11 +116,12 @@ class RK4FDMSolver(AbstractSolver):
         state: SimulationState,
     ) -> None:
         """Advance the solver by one time step."""
+        self.batch_physics.check(state.psi)
         dt = self.config.solver.dt
         t = state.t
-        p0 = pump(t)
-        p_half = pump(t + 0.5 * dt)
-        p1 = pump(t + dt)
+        p0 = evaluate_pump(pump, t)
+        p_half = evaluate_pump(pump, t + 0.5 * dt)
+        p1 = evaluate_pump(pump, t + dt)
 
         psi0 = state.psi
         self._ensure_buffers(psi0)
@@ -168,21 +172,21 @@ class RK4FDMSolver(AbstractSolver):
 
         self._laplacian(psi, lap)
 
-        kinetic = -(self.config.physics.hbar**2) / (2 * self.config.physics.m_eff) * lap
+        kinetic = -(self.batch_physics.get("hbar")**2) / (2 * self.batch_physics.get("m_eff")) * lap
 
         eff_energy = (
             potential
-            + self.config.physics.g_C * self.xp.abs(psi) ** 2
-            + self.config.physics.g_R * n_active
-            + getattr(self.config.physics, "g_I", 0.0) * n_inactive
+            + self.batch_physics.get("g_C") * self.xp.abs(psi) ** 2
+            + self.batch_physics.get("g_R") * n_active
+            + self.batch_physics.get("g_I") * n_inactive
         )
         gain_loss = (
-            self.config.physics.R * n_active - self.config.physics.gamma_C
+            self.batch_physics.get("R") * n_active - self.batch_physics.get("gamma_C")
         ) / 2.0
 
-        eta = getattr(self.config.physics, "kinetic_relaxation_eta", 0.0)
-        hbar_over_2m = self.config.physics.hbar / (2.0 * self.config.physics.m_eff)
-        dpsi_dt = (-1j / self.config.physics.hbar) * (
+        eta = self.batch_physics.get("kinetic_relaxation_eta")
+        hbar_over_2m = self.batch_physics.get("hbar") / (2.0 * self.batch_physics.get("m_eff"))
+        dpsi_dt = (-1j / self.batch_physics.get("hbar")) * (
             kinetic + eff_energy * psi
         ) + gain_loss * psi + eta * n_active * hbar_over_2m * lap
 

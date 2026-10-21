@@ -111,6 +111,7 @@ class SolverParameters:
 class ResultParameters:
     """Store result-output settings."""
     real_time_view: bool = False
+    view_member: int = 0
     real_time_refresh_interval: float = 0.1
     save_results: bool = False
     save_hdf5: bool = False
@@ -150,6 +151,14 @@ class CheckpointParameters:
 
 
 @dataclass
+class SweepParameters:
+    """Control sweep batching and GPU memory use."""
+    batch_size: int | None = None
+    memory_fraction: float = 0.8
+    max_batch: int | None = None
+
+
+@dataclass
 class Config:
     """Store the full simulation configuration."""
     grid: GridParameters = field(default_factory=GridParameters)
@@ -166,3 +175,4 @@ class Config:
         default_factory=ComputeEngineParameters
     )
     checkpoint: CheckpointParameters = field(default_factory=CheckpointParameters)
+    sweep: SweepParameters = field(default_factory=SweepParameters)

@@ -9,6 +9,7 @@ from polarism.results import (
     RealTimeVisualization,
     ResultNode,
     Results,
+    SweepResults,
     load_results,
     ResultProvider,
     Results2D,
@@ -24,11 +25,12 @@ from polarism.results import (
     npy_storage,
 )
 from polarism.simulation_controller import SimulationController
+from polarism.sweep import Sweep
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.simulation_state import SimulationState
 from polarism.solver import AbstractSolver, create_solver, RK4CudaSolver
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "BoundaryCondition",
     "Config",
@@ -42,9 +44,11 @@ __all__ = [
     "RealTimeVisualization",
     "ResultNode",
     "Results",
+    "SweepResults",
     "load_results",
     "ResultProvider",
     "SimulationController",
+    "Sweep",
     "SimulationGrid2D",
     "SimulationState",
     "Results2D",

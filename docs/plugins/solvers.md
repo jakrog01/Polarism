@@ -13,6 +13,14 @@ without inheriting a built-in solver's `step`.
 call `super().__init__(config)` to get `self.config`, `self.physics`, and
 `self.xp`.
 
+For per-member physics, the factory calls
+`SolverClass(config, grid, batch_physics=values)`, where `values` maps a
+`PhysicsConstants` float field to a one-dimensional array of length `B`.
+Accept this optional constructor argument only if the solver supports a leading
+batch axis on the state and applies each member's constants. The factory keeps
+the two-argument call for ordinary runs and raises a named error if a physics
+batch selects a plugin without `batch_physics`.
+
 | Name and signature | Caller and timing | Return or state | Status |
 | --- | --- | --- | --- |
 | `__init__(config, grid)` | Factory, after grid and reservoir setup | Validate method constraints; retain grid data | Required |

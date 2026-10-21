@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
 
+import numpy as np
+
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import LaserParameters
 from polarism.laser.abstract_laser import AbstractLaser
@@ -17,6 +19,13 @@ if TYPE_CHECKING:
 class UniformLaser(AbstractLaser):
     """Represent an uniform laser."""
     time_independent = True
+    @classmethod
+    def batch_power_coefficient(cls, lasers, times):
+        times = np.asarray(times)[:, None]
+        power = np.asarray([laser.P0 for laser in lasers])[None, :]
+        delay = np.asarray([laser.delay for laser in lasers])[None, :]
+        return np.broadcast_to(np.where(times < delay, 0.0, power),
+                               (len(times), len(lasers))).copy()
     def __init__(
         self,
         laser_config: LaserParameters,

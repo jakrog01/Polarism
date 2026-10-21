@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import numpy as np
+import re
+
+from polarism.laser.pump_field import evaluate_pump
 
 
 _SOURCE = r"""
@@ -105,6 +108,99 @@ extern "C" __global__ void finish_res(
 """
 
 
+def _stage_finish_source(source, physics_fields):
+    signature = ("real ria, real rai, real kappa, real eta, int vr_n, int vi_n,"
+                 " const real* batch_constants) {" if physics_fields else
+                 "real ria, real rai, real kappa, real eta) {")
+    source = source.replace(
+        signature,
+        signature.replace(") {", ", const real* b, real* res_out) {")
+    )
+    source = source.replace("    real active = res0[k];",
+                            "    real active0 = res0[k];\n    real active = active0;")
+    source = source.replace("    real inactive = MODEL == 0 ? (real)0 : res0[n+k];",
+                            "    real inactive0 = MODEL == 0 ? (real)0 : res0[n+k];\n"
+                            "    real inactive = inactive0;")
+    source = source.replace("out_dr[(stage*FIELDS)*n+k] =", "real deriv_active =")
+    source = source.replace("out_dr[(stage*FIELDS+1)*n+k] =", "real deriv_inactive =")
+    before, after = source.split('extern "C" __global__ void finish_res(', 1)
+    end = before.rfind("\n}")
+    finish = """
+    if (stage == STAGES-1) {
+        for (int field = 0; field < FIELDS; ++field) {
+            int point = field*n+k;
+            real val = field == 0 ? active0 : inactive0;
+            for (int j = 0; j < STAGES-1; ++j) {
+                if (b[j] != (real)0)
+                    val += dt*b[j]*dr[(j*FIELDS+field)*n+k];
+            }
+            real derivative = deriv_active;
+#if MODEL != 0
+            if (field == 1) derivative = deriv_inactive;
+#endif
+            if (b[STAGES-1] != (real)0) val += dt*b[STAGES-1]*derivative;
+            res_out[point] = val < (real)0 ? (real)0 : val;
+        }
+    } else {
+        out_dr[(stage*FIELDS)*n+k] = deriv_active;
+#if MODEL != 0
+        out_dr[(stage*FIELDS+1)*n+k] = deriv_inactive;
+#endif
+    }"""
+    return before[:end] + finish + before[end:] + 'extern "C" __global__ void finish_res(' + after
+
+
+def fused_source(real, model, eta, stages, fields, spatial_index, pump_index,
+                 sincos, physics_fields=(), stage0_direct=False,
+                 finish_in_stage=False):
+    """Render the unchanged scalar source or a member-indexed physics variant."""
+    source = _SOURCE.format(real=real, model=model, eta=eta, stages=stages,
+                            fields=fields, spatial_index=spatial_index,
+                            pump_index=pump_index, sincos=sincos)
+    if stage0_direct:
+        source = source.replace(
+            "    real pre = psi[2*k], pim = psi[2*k+1];",
+            "    real pre = psi[2*k], pim = psi[2*k+1];\n"
+            "    if (stage == 0) {\n"
+            "        pre *= (real)1 / (real)spatial_n;\n"
+            "        pim *= (real)1 / (real)spatial_n;\n"
+            "    }",
+        )
+    if not physics_fields:
+        return _stage_finish_source(source, False) if finish_in_stage else source
+    loads = {name: index for index, name in enumerate(physics_fields)}
+    source = source.replace(
+        "real dt, real phase_rate) {",
+        "real dt, real phase_rate, const real* batch_constants) {",
+    ).replace(
+        "real ria, real rai, real kappa, real eta) {",
+        "real ria, real rai, real kappa, real eta, int vr_n, int vi_n,"
+        " const real* batch_constants) {",
+    )
+    source = source.replace("vr[k % spatial_n]", "vr[k % vr_n]")
+    source = source.replace("vi[k % spatial_n]", "vi[k % vi_n]")
+    start, rest = source.split("    if (k >= n) return;", 1)
+    combine, rest = rest.split('extern "C" __global__ void stage_rhs(', 1)
+    if "phase_rate" in loads:
+        combine = re.sub(r"\bphase_rate\b", "phase_rate_member", combine)
+        combine = (f"\n    real phase_rate_member = batch_constants[{loads['phase_rate']}*(n/spatial_n)+k/spatial_n];"
+                   + combine)
+    source = start + "    if (k >= n) return;" + combine + 'extern "C" __global__ void stage_rhs(' + rest
+    before_stage = source.split("    if (k >= n) return;", 2)
+    prefix = "    if (k >= n) return;".join(before_stage[:2]) + "    if (k >= n) return;"
+    rest = before_stage[2]
+    stage, finish = rest.split('extern "C" __global__ void finish_res(', 1)
+    names = tuple(name for name in physics_fields if name != "phase_rate")
+    for name in names:
+        stage = re.sub(rf"\b{name}\b", f"{name}_member", stage)
+    stage = "".join(
+        f"\n    real {name}_member = batch_constants[{loads[name]}*(n/spatial_n)+k/spatial_n];"
+        for name in names
+    ) + stage
+    source = prefix + stage + 'extern "C" __global__ void finish_res(' + finish
+    return _stage_finish_source(source, True) if finish_in_stage else source
+
+
 class FusedIFRK:
     """Own fixed tableau coefficients, stage storage, and cuFFT plans."""
 
@@ -130,9 +226,29 @@ class FusedIFRK:
         self.dt = self.scalar(solver.config.solver.dt)
         # Host-side times use the configured dt, not its kernel-precision copy.
         self.host_dt = float(solver.config.solver.dt)
-        self.rate = self.scalar(solver._phase_rate)
-        self.eta = solver._eta != 0.0
+        physics = solver.batch_physics
         self.p = solver.config.physics
+        self.rate = self.scalar(-self.p.hbar / (2.0 * self.p.m_eff))
+        self.eta = physics.any_nonzero("kinetic_relaxation_eta")
+        values = {}
+        if "hbar" in physics.host or "m_eff" in physics.host:
+            hbar = physics.host.get("hbar", np.full(physics.size, self.p.hbar))
+            mass = physics.host.get("m_eff", np.full(physics.size, self.p.m_eff))
+            values["phase_rate"] = -hbar / (2.0 * mass)
+            values["hbar_over_2m"] = hbar / (2.0 * mass)
+        if "hbar" in physics.host:
+            values["inv_hbar"] = 1.0 / physics.host["hbar"]
+        direct = {"g_C": "gC", "g_R": "gR", "g_I": "gI", "R": "R",
+                  "gamma_C": "gammaC", "gamma_R": "gammaR", "gamma_I": "gammaI",
+                  "gamma_A": "gammaA", "R_IA": "ria", "R_AI": "rai",
+                  "kappa": "kappa", "kinetic_relaxation_eta": "eta"}
+        for name, kernel_name in direct.items():
+            if name in physics.host:
+                values[kernel_name] = physics.host[name]
+        self._physics_fields = tuple(values)
+        self._physics_device = (self.xp.asarray(np.stack(tuple(values.values())), dtype=self.real).ravel()
+                                if values else None)
+        self._physics_arg = (self._physics_device,) if values else ()
         self._kernels = {}
         self._plan = None
         self._buffers = None
@@ -152,7 +268,7 @@ class FusedIFRK:
                   QuadraticDoubleReservoir: (2, 2)}
         if type(reservoir) not in models:
             return None
-        if any(getattr(reservoir, name, 0.0) != 0.0 for name in
+        if any(reservoir.batch_physics.any_nonzero(name) for name in
                ("reservoir_diffusion_R", "reservoir_diffusion_A", "reservoir_diffusion_I")):
             return None
         return models[type(reservoir)]
@@ -180,6 +296,10 @@ class FusedIFRK:
             return
         self._model_id = model_id
         self._buffer_shape = self.shape
+        self._stage0_direct = (len(self.shape) == 3 and not self.eta
+                               and self.solver._c[0] == 0
+                               and all(value == 0 for value in self.solver._a[0]))
+        self._finish_in_stage = len(self.shape) == 3
         spec = tuple(xp.empty(self.shape, self.complex) for _ in range(2))
         res = tuple(xp.empty((fields, *self.shape), self.real) for _ in range(2))
         f = xp.empty((self.s, *self.shape), self.complex)
@@ -190,12 +310,15 @@ class FusedIFRK:
         lap_psi = xp.empty_like(stage_k)
         rhs = xp.empty_like(stage_k)
         self._buffers = (spec, res, f, dr, stage_k, stage_psi, lap_k, lap_psi, rhs)
-        source = _SOURCE.format(real="float" if self.real == xp.float32 else "double",
-                                model=model_id, eta=int(self.eta), stages=self.s,
-                                fields=fields,
-                                spatial_index="k" if len(self.shape) == 2 else "k % spatial_n",
-                                pump_index="k" if len(self.shape) == 2 else "k % pump_n",
-                                sincos="sincosf" if self.real == xp.float32 else "sincos")
+        source = fused_source(real="float" if self.real == xp.float32 else "double",
+                              model=model_id, eta=int(self.eta), stages=self.s,
+                              fields=fields,
+                              spatial_index="k" if len(self.shape) == 2 else "k % spatial_n",
+                              pump_index="k" if len(self.shape) == 2 else "k % pump_n",
+                              sincos="sincosf" if self.real == xp.float32 else "sincos",
+                              physics_fields=self._physics_fields,
+                              stage0_direct=self._stage0_direct,
+                              finish_in_stage=self._finish_in_stage)
         module = xp.RawModule(code=source, options=("--std=c++11",))
         self._kernels = {name: module.get_function(name)
                          for name in ("combine_k", "stage_rhs", "finish_res")}
@@ -212,9 +335,23 @@ class FusedIFRK:
 
     def _pump(self, pump, t):
         term = pump.separable_term() if hasattr(pump, "separable_term") else None
+        terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
+        active_terms = terms if terms is not None else (term,) if term is not None else ()
         no_lasers = not getattr(pump, "lasers", [True])
-        if len(self.shape) == 3 and term is not None and np.ndim(term[1](t)) != 0:
-            term = None
+        if len(self.shape) == 3 and any(np.ndim(coefficient(t)) != 0
+                                        for _, coefficient in active_terms):
+            from polarism.solver.cuda_pump import CudaPumpCombiner
+            if getattr(self, "_pump_combiner", None) is None:
+                self._pump_combiner = CudaPumpCombiner(self.xp, self.real, self.n)
+            combiner = self._pump_combiner
+            combiner.prepare(active_terms, len(self.unique_c), len(self.unique_c),
+                             shape=self.shape)
+            times = [t + c * self.host_dt for c in self.unique_c]
+            stream = self.xp.cuda.get_current_stream()
+            combiner.coefficients(active_terms, times, stream)
+            stream.synchronize()
+            samples = [combiner.combine(i, i) for i in range(len(times))]
+            return ([samples[i] for i in self.c_index], [1] * len(times), None, None)
         if term is not None:
             envelope, coefficient = term
             field = self._array(envelope, self.real).ravel()
@@ -223,7 +360,7 @@ class FusedIFRK:
         if no_lasers:
             return ([self._zero_pump.ravel()] * self.s,
                     [1] * len(self.unique_c), self._zero_pump.ravel(), lambda time: 1)
-        samples = [self._array(pump(t + c * self.host_dt), self.real).ravel()
+        samples = [self._array(evaluate_pump(pump, t + c * self.host_dt), self.real).ravel()
                    for c in self.unique_c]
         return [samples[i] for i in self.c_index], [1] * len(samples), None, None
 
@@ -237,13 +374,17 @@ class FusedIFRK:
         block = (256,)
         scalar = self.scalar
         p = self.p
+        finish_args = ((self.b, res_out.ravel()) if self._finish_in_stage else ())
         for i in range(self.s):
-            self._kernels["combine_k"](launch, block, (
-                spectrum_in.view(self.real).ravel(), f.view(self.real).ravel(), self.k2,
-                self.a, self.b, self.c, stage_k.view(self.real).ravel(),
-                lap_k.view(self.real).ravel(), np.int32(self.n), np.int32(self.spatial_n), np.int32(i),
-                self.dt, self.rate))
-            self._plan.fft(stage_k, stage_psi, cufft.CUFFT_INVERSE)
+            if i == 0 and self._stage0_direct:
+                self._plan.fft(spectrum_in, stage_psi, cufft.CUFFT_INVERSE)
+            else:
+                self._kernels["combine_k"](launch, block, (
+                    spectrum_in.view(self.real).ravel(), f.view(self.real).ravel(), self.k2,
+                    self.a, self.b, self.c, stage_k.view(self.real).ravel(),
+                    lap_k.view(self.real).ravel(), np.int32(self.n), np.int32(self.spatial_n), np.int32(i),
+                    self.dt, self.rate) + self._physics_arg)
+                self._plan.fft(stage_k, stage_psi, cufft.CUFFT_INVERSE)
             if self.eta:
                 self._plan.fft(lap_k, lap_psi, cufft.CUFFT_INVERSE)
             self._kernels["stage_rhs"](launch, block, (
@@ -256,16 +397,19 @@ class FusedIFRK:
                 scalar(p.g_C), scalar(p.g_R), scalar(p.g_I), scalar(p.R),
                 scalar(p.gamma_C), scalar(p.gamma_R), scalar(p.gamma_I),
                 scalar(p.gamma_A), scalar(p.R_IA), scalar(p.R_AI),
-                scalar(p.kappa), scalar(p.kinetic_relaxation_eta)))
+                scalar(p.kappa), scalar(p.kinetic_relaxation_eta))
+                + ((np.int32(self.vr.size), np.int32(self.vi.size)) + self._physics_arg
+                   if self._physics_fields else ()) + finish_args)
             self._plan.fft(rhs, f[i], cufft.CUFFT_FORWARD)
         self._kernels["combine_k"](launch, block, (
             spectrum_in.view(self.real).ravel(), f.view(self.real).ravel(), self.k2,
             self.a, self.b, self.c, spectrum_out.view(self.real).ravel(),
             lap_k.view(self.real).ravel(), np.int32(self.n), np.int32(self.spatial_n), np.int32(self.s),
-            self.dt, self.rate))
-        self._kernels["finish_res"](((self.n*res_in.shape[0]+255)//256,), block, (
-            res_in.ravel(), dr.ravel(), self.b, res_out.ravel(),
-            np.int32(self.n), self.dt))
+            self.dt, self.rate) + self._physics_arg)
+        if not self._finish_in_stage:
+            self._kernels["finish_res"](((self.n*res_in.shape[0]+255)//256,), block, (
+                res_in.ravel(), dr.ravel(), self.b, res_out.ravel(),
+                np.int32(self.n), self.dt))
 
     def _copy_in(self, state, reservoir):
         xp = self.xp
@@ -360,9 +504,13 @@ class FusedIFRK:
         with stream:
             self._copy_in(state, reservoir)
             terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
-            multi = (terms is not None and len(terms) > 1
-                     and (len(self.shape) == 2 or
-                          all(np.ndim(coefficient(state.t)) == 0 for _, coefficient in terms)))
+            if terms is None and hasattr(pump, "separable_term"):
+                term = pump.separable_term()
+                if term is not None:
+                    terms = (term,)
+            multi = terms is not None and (len(terms) > 1 or
+                    (len(self.shape) == 3 and len(terms) == 1 and
+                     np.ndim(terms[0][1](state.t)) != 0))
             if multi:
                 from polarism.solver.cuda_pump import CudaPumpCombiner
                 if getattr(self, "_pump_combiner", None) is None:
@@ -380,6 +528,7 @@ class FusedIFRK:
             pending_hosts = []
             if graph_ok:
                 nodes_per_step = ((4 + int(self.eta))*self.s + 2
+                                  - int(self._stage0_direct) - int(self._finish_in_stage)
                                   + (len(self.unique_c) if multi else 0))
                 max_length = max(2, min(64, (1800 // nodes_per_step) // 2 * 2))
                 signature = (self.shape, model, id(potential),

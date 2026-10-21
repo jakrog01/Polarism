@@ -23,6 +23,7 @@ class LaserFactory:
         X: Union[np.ndarray, cp.ndarray],
         Y: Union[np.ndarray, cp.ndarray],
         precision: str = "double",
+        entry_overrides=None,
     ) -> list[AbstractLaser]:
         """Create one or more lasers from the config."""
         if laser_config.mode == "multiple":
@@ -31,7 +32,7 @@ class LaserFactory:
                     "config_file must be provided for multiple laser mode."
                 )
 
-            return LaserFactory._create_multiple_lasers(laser_config, X, Y, precision)
+            return LaserFactory._create_multiple_lasers(laser_config, X, Y, precision, entry_overrides)
 
         return LaserFactory._create_single_laser(laser_config, X, Y, precision)
 
@@ -57,6 +58,7 @@ class LaserFactory:
         X: Union[np.ndarray, cp.ndarray],
         Y: Union[np.ndarray, cp.ndarray],
         precision: str = "double",
+        entry_overrides=None,
     ) -> list[AbstractLaser]:
         """Create all lasers listed in the config file."""
         with open(laser_config.config_file, "r") as f:
@@ -64,6 +66,16 @@ class LaserFactory:
 
         lasers = []
         for i, item in enumerate(data.get("lasers", [])):
+            item = {**item}
+            for field, value in (entry_overrides or {}).get(i, {}).items():
+                if field.startswith("extra."):
+                    key = field[6:]
+                    if key in item and key not in {f.name for f in fields(LaserParameters)}:
+                        item[key] = value
+                    else:
+                        item["extra"] = {**item.get("extra", {}), key: value}
+                else:
+                    item[field] = value
             laser_type = item.get("laser_type")
             if laser_type is None:
                 raise ValueError(
