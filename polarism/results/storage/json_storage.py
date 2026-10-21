@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
+
 from polarism.results.storage.base_storage import BaseStorage
 
 
@@ -28,9 +30,14 @@ class JSONStorage(BaseStorage):
             "scalars": {},
             "scalar_groups": {},
         }
+        if self.batch_number == 0 and self.static_fields:
+            batch_data["static"] = {
+                name: self._json_field(field)
+                for name, field in self.static_fields.items()
+            }
 
         for field_name, field_list in self.field_buffers.items():
-            batch_data["fields"][field_name] = [f.tolist() for f in field_list]
+            batch_data["fields"][field_name] = [self._json_field(f) for f in field_list]
 
         for scalar_name, scalar_list in self.scalar_buffers.items():
             batch_data["scalars"][scalar_name] = scalar_list[:]
@@ -47,6 +54,17 @@ class JSONStorage(BaseStorage):
         self.batch_number += 1
         self.total_saved += len(self.time_buffer)
         self._clear_buffers()
+
+    def write_static(self, name: str, field: np.ndarray) -> None:
+        """Keep a static field for the first JSON batch."""
+        pass
+
+    @staticmethod
+    def _json_field(field: np.ndarray):
+        """Encode real or complex arrays as JSON values."""
+        if np.iscomplexobj(field):
+            return {"real": field.real.tolist(), "imag": field.imag.tolist()}
+        return field.tolist()
 
     def finalize(self) -> None:
         """Flush remaining data and close JSON storage."""

@@ -111,6 +111,12 @@ def _validate_solver(cfg: Config) -> None:
 
 def _validate_result(cfg: Config) -> None:
     r = cfg.result
+    if not isinstance(r.compression, str) or r.compression not in {"none", "lzf", "gzip"}:
+        raise ConfigValidationError("result.compression must be one of none, lzf, gzip")
+    if type(r.compression_level) is not int or not 0 <= r.compression_level <= 9:
+        raise ConfigValidationError("result.compression_level must be an integer in [0, 9]")
+    if not isinstance(r.save_psi, bool):
+        raise ConfigValidationError("result.save_psi must be a boolean")
     if r.save_interval < 1:
         raise ConfigValidationError(f"result.save_interval must be >= 1, got {r.save_interval}")
     if r.batch_size < 1:

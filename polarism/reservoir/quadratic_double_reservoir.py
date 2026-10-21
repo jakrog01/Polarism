@@ -259,7 +259,7 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
             nodes.append(
                 ResultNode(
                     "nR_max",
-                    compute_fn=lambda **ctx: float(self.nR.max()),
+                    compute_fn=lambda **ctx: self.nR.max(),
                     reduce_dim_fn=lambda v: float(v),
                     cmap=None,
                     scaling=None,
@@ -273,7 +273,7 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
             nodes.append(
                 ResultNode(
                     "nI_max",
-                    compute_fn=lambda **ctx: float(self.nI.max()),
+                    compute_fn=lambda **ctx: self.nI.max(),
                     reduce_dim_fn=lambda v: float(v),
                     cmap=None,
                     scaling=None,

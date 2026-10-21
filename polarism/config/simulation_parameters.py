@@ -116,6 +116,9 @@ class ResultParameters:
     save_hdf5: bool = False
     save_json: bool = False
     save_npy: bool = False
+    compression: str = "none"
+    compression_level: int = 4
+    save_psi: bool = False
     save_interval: int = 1
     batch_size: int = 1000
     output_directory: str = "simulation_results"

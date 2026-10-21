@@ -29,6 +29,8 @@ class HDF5Storage(BaseStorage):
         self.h5_path = self.output_dir / "results.h5"
         self.h5_file = h5py.File(self.h5_path, "w")
         self.h5_datasets = {}
+        self.compression = getattr(config.result, "compression", "none") if config is not None else "none"
+        self.compression_level = getattr(config.result, "compression_level", 4) if config is not None else 4
         if config is not None:
             config_group = self.h5_file.create_group("config")
             config_group.attrs["json"] = json.dumps(
@@ -67,14 +69,17 @@ class HDF5Storage(BaseStorage):
 
     def _write_dataset(self, name: str, data: np.ndarray, is_scalar: bool) -> None:
         """Write one dataset to the HDF5 file."""
+        compression = None if self.compression == "none" else self.compression
+        options = self.compression_level if compression == "gzip" else None
         if name not in self.h5_datasets:
             if is_scalar:
                 self.h5_datasets[name] = self.h5_file.create_dataset(
                     name,
                     data=data,
                     maxshape=(None,),
-                    compression="gzip",
-                    compression_opts=4,
+                    compression=compression,
+                    compression_opts=options,
+                    shuffle=compression is not None,
                     chunks=(min(1000, self.batch_size),),
                 )
             else:
@@ -83,8 +88,9 @@ class HDF5Storage(BaseStorage):
                     name,
                     data=data,
                     maxshape=(None, *shape[1:]),
-                    compression="gzip",
-                    compression_opts=4,
+                    compression=compression,
+                    compression_opts=options,
+                    shuffle=compression is not None,
                     chunks=(1, *shape[1:]),
                 )
         else:
@@ -94,6 +100,15 @@ class HDF5Storage(BaseStorage):
 
             ds.resize((new_size, *ds.shape[1:]))
             ds[old_size:new_size] = data
+
+    def write_static(self, name: str, field: np.ndarray) -> None:
+        """Store a field once outside the frame axis."""
+        compression = None if self.compression == "none" else self.compression
+        options = self.compression_level if compression == "gzip" else None
+        self.h5_file.create_dataset(
+            f"static/{name}", data=field, compression=compression,
+            compression_opts=options, shuffle=compression is not None,
+        )
 
     def finalize(self) -> None:
         """Flush remaining data and close the HDF5 file."""

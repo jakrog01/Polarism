@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 @register_laser("uniform")
 class UniformLaser(AbstractLaser):
     """Represent an uniform laser."""
+    time_independent = True
     def __init__(
         self,
         laser_config: LaserParameters,

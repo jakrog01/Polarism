@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 @register_laser("continuous-gaussian")
 class ContinuousGaussian(AbstractLaser):
     """Represent a continuous gaussian."""
+    time_independent = True
     sigma_space: float
 
     def __init__(self, laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray], precision: str = "double"):

@@ -13,10 +13,11 @@ class NPYStorage(BaseStorage):
     output_dir: Path
     batch_number: int
 
-    def __init__(self, output_dir: Path, batch_size: int):
+    def __init__(self, output_dir: Path, batch_size: int, compress: bool = False):
         """Set up NumPy batch storage."""
         super().__init__(output_dir, batch_size)
         self.batch_number = 0
+        self.compress = compress
 
     def dump_batch(self) -> None:
         """Write the current batch to NumPy files."""
@@ -38,11 +39,15 @@ class NPYStorage(BaseStorage):
                 arrays[key] = np.array(value_list)
 
         batch_path = self.output_dir / f"batch_{self.batch_number:06d}.npz"
-        np.savez_compressed(batch_path, **arrays)
+        (np.savez_compressed if self.compress else np.savez)(batch_path, **arrays)
 
         self.batch_number += 1
         self.total_saved += len(self.time_buffer)
         self._clear_buffers()
+
+    def write_static(self, name: str, field: np.ndarray) -> None:
+        """Store a field once as a NumPy file."""
+        np.save(self.output_dir / f"static_{name}.npy", field)
 
     def finalize(self) -> None:
         """Flush remaining data and close NumPy storage."""

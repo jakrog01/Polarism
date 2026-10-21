@@ -24,6 +24,8 @@ cfg.result.save_json = False
 cfg.result.save_npy = False
 cfg.result.save_interval = 10
 cfg.result.batch_size = 1000
+cfg.result.compression = "none"
+cfg.result.save_psi = False
 cfg.result.output_directory = "simulation_results"
 ```
 
@@ -40,6 +42,15 @@ Format guidance:
 - `save_npy`: useful when you want lightweight NumPy reloads for downstream analysis.
 - `save_json`: useful for debugging small outputs, but not efficient for large fields.
 - `batch_size`: controls how many result frames the library visitors buffer before flushing to disk.
+- `compression`: HDF5 compression for every dataset; choose `"none"` (default), `"lzf"`, or `"gzip"`. Set `compression_level` from `0` to `9` for gzip. Compressed datasets also use the HDF5 shuffle filter. NPY batches are written with `numpy.savez_compressed` when any compression is selected and with `numpy.savez` otherwise. Simulation fields compress poorly (typically to 60–90 % of their size) while compression costs roughly ten times the write time, so enable it only when disk space matters more than run time.
+- `save_psi`: save the complex condensate field as `psi`; JSON stores its real and imaginary parts separately.
+
+Storage takes a snapshot at each output step and writes on a background thread.
+Its queue is bounded by frame count and device memory, so the simulation waits
+when the writer falls behind. Pending frames are drained when the run ends or
+is interrupted. A continuous pump with no positive delay is stored once as a
+static field: `static/Pump` in HDF5, `static_Pump.npy` in NPY, or under
+`"static"` in the first JSON batch.
 
 ## Online animation
 

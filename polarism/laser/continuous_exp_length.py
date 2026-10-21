@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 @register_laser("continuous-exp-length")
 class ContinuousExponentialLengthPump(ContinuousExponentialPump):
     """Represent a continuous exponential pump with a length decay scale."""
+    time_independent = True
 
     def _P_space(
         self,

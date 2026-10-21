@@ -46,7 +46,12 @@ def _compute_total_norm(**ctx):
     """Compute the total condensate norm."""
     xp = compute_engine.xp
     grid = ctx["grid"]
-    return float((xp.abs(ctx["state"].psi) ** 2).sum()) * grid.dx * grid.dy
+    return (xp.abs(ctx["state"].psi) ** 2).sum() * grid.dx * grid.dy
+
+
+def _compute_psi(**ctx):
+    """Return the current condensate field."""
+    return ctx["state"].psi
 
 
 def _compute_pump_field(**ctx):
@@ -281,6 +286,15 @@ class SimulationController:
         if hasattr(self.reservoir, "make_result_nodes"):
             nodes.extend(self.reservoir.make_result_nodes())
 
+        if self.cfg.result.save_psi:
+            nodes.append(
+                ResultNode(
+                    name="psi", compute_fn=_compute_psi, reduce_dim_fn=lambda f: f,
+                    cmap=None, scaling=None, clim=None, expose=False, save=True,
+                    cut=None, is_field=True,
+                )
+            )
+
         if self.cfg.laser.expose_results:
             nodes.append(
                 ResultNode(
@@ -296,6 +310,7 @@ class SimulationController:
                     save=True,
                     cut=None,
                     is_field=True,
+                    static=all(laser.time_independent and laser.delay <= 0 for laser in self.lasers),
                 )
             )
 
@@ -391,7 +406,7 @@ class SimulationController:
             return {}
         return {
             "P_lasers": {
-                f"L{i}": float(self.xp.max(laser.P))
+                f"L{i}": self.xp.max(laser.P)
                 for i, laser in enumerate(self.lasers)
             }
         }

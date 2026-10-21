@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 class AbstractLaser(ABC):
     """Define the interface for laser profiles."""
+    time_independent = False
     P0: float
     x0: float
     y0: float

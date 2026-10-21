@@ -22,6 +22,7 @@ class ResultNode:
     save: bool
     cut: bool | None
     is_field: bool
+    static: bool
 
     def __init__(
         self,
@@ -35,6 +36,7 @@ class ResultNode:
         save: bool,
         cut: bool | None,
         is_field: bool | None = None,
+        static: bool = False,
     ):
         """Store the functions and metadata for one result."""
         self.name = name
@@ -47,6 +49,7 @@ class ResultNode:
         self.save = save
         self.cut = cut
         self.is_field = is_field if is_field is not None else (cmap is not None)
+        self.static = static
 
     def compute_field_device(self, **context) -> Any:
         """Compute the field on the active backend without evaluating the scalar reduction."""

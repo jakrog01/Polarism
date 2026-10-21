@@ -177,7 +177,7 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
             nodes.append(
                 ResultNode(
                     "nA_max",
-                    compute_fn=lambda **ctx: float(self.nA.max()),
+                    compute_fn=lambda **ctx: self.nA.max(),
                     reduce_dim_fn=lambda v: float(v),
                     cmap=None,
                     scaling=None,
@@ -191,7 +191,7 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
             nodes.append(
                 ResultNode(
                     "nI_max",
-                    compute_fn=lambda **ctx: float(self.nI.max()),
+                    compute_fn=lambda **ctx: self.nI.max(),
                     reduce_dim_fn=lambda v: float(v),
                     cmap=None,
                     scaling=None,

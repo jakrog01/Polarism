@@ -150,6 +150,9 @@ with reduced grid-direction anisotropy.
 | `save_hdf5`, `save_json`, `save_npy` | storage backends | booleans |
 | `save_interval` | number of solver steps between writes after the initial state | positive integer |
 | `batch_size` | buffered result chunk size | positive integer |
+| `compression` | compression for every HDF5 dataset | `none` (default), `lzf`, `gzip` |
+| `compression_level` | gzip level, used only when `compression="gzip"` | integer from 0 to 9; default `4` |
+| `save_psi` | store the complex condensate field as `psi` | boolean, default `False` |
 | `output_directory` | parent directory for uniquely named run directories | directory string |
 | `animate` | stream an online animation during the run | boolean |
 | `animation_fps` | encoded movie frame rate | positive integer |

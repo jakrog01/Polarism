@@ -32,9 +32,12 @@ class VisualizationVisitor(ResultVisitor):
             if getattr(node, "cmap", None) is not None:
                 fields[node.name] = field
             else:
-                scalars[node.name] = reduced
+                scalars[node.name] = float(reduced)
         if "scalar_groups" in context and context["scalar_groups"]:
-            scalar_groups = context["scalar_groups"]
+            scalar_groups = {
+                group: {label: float(value) for label, value in values.items()}
+                for group, values in context["scalar_groups"].items()
+            }
 
         self.visualizer.update(
             t=context.get("t", 0.0),

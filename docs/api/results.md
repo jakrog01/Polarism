@@ -96,6 +96,19 @@ The reusable storage module also exports append-only HDF5 helpers used by batch 
 
 These helpers are separate from the visitor-based `cfg.result` path.
 
+The storage visitor snapshots backend arrays when a frame is visited and sends
+them to one background writer. A bounded queue limits pending device snapshots
+to at most about 1 GiB or one quarter of free device memory. The writer waits
+for the CUDA event before transfer, preserves frame order, and reports write
+errors to the simulation thread. Finalization drains pending frames.
+
+HDF5 datasets are uncompressed by default. `cfg.result.compression` also accepts
+`"lzf"` and `"gzip"` (with the shuffle filter); `compression_level` controls gzip only. The pump is
+stored once under `static/Pump` when every laser is time independent and has
+no positive delay. NPY writes `static_Pump.npy`, and JSON puts the field under
+`"static"` in the first batch. `save_psi=True` adds a complex `psi` field;
+JSON represents each complex array with `"real"` and `"imag"` arrays.
+
 ## Why this abstraction matters
 
 The physics and solver layers do not need to know whether a quantity will be plotted, written to HDF5, or ignored. They only expose result nodes. That keeps numerical code separate from output boilerplate.
