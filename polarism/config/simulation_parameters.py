@@ -150,6 +150,14 @@ class CheckpointParameters:
 
 
 @dataclass
+class SweepParameters:
+    """Control sweep batching and GPU memory use."""
+    batch_size: int | None = None
+    memory_fraction: float = 0.8
+    max_batch: int | None = None
+
+
+@dataclass
 class Config:
     """Store the full simulation configuration."""
     grid: GridParameters = field(default_factory=GridParameters)
@@ -166,3 +174,4 @@ class Config:
         default_factory=ComputeEngineParameters
     )
     checkpoint: CheckpointParameters = field(default_factory=CheckpointParameters)
+    sweep: SweepParameters = field(default_factory=SweepParameters)

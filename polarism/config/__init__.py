@@ -6,6 +6,7 @@ from polarism.config.simulation_parameters import (
     GridParameters,
     PhysicsConstants,
     PotentialParameters,
+    SweepParameters,
 )
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "PotentialParameters",
     "BoundaryConditionParameters",
     "CheckpointParameters",
+    "SweepParameters",
 ]

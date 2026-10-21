@@ -23,7 +23,7 @@ from polarism.config.validation import validate_config
 from polarism.grid.create_grid import create_grid
 from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.laser.laser_factory import LaserFactory
-from polarism.laser.pump_field import PumpField
+from polarism.laser.pump_field import BatchedPumpField, PumpField
 from polarism.plugins import load_plugins
 from polarism.potential.create_potential import create_potential
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
@@ -91,9 +91,27 @@ class SimulationController:
     storage_visitor: StorageVisitor | None
     animation_visitor: AnimationVisitor | None
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, members: list[dict] | None = None):
         """Set up the simulation from the config."""
+        from polarism.sweep_config import apply_overrides
+        if members is not None:
+            load_plugins()
+        if members is not None and len(members) == 0:
+            raise ValueError("members must contain at least one override mapping")
+        member_configs = ([apply_overrides(cfg, overrides) for overrides in members]
+                          if members is not None else None)
+        if member_configs is not None and len(member_configs) == 1:
+            cfg = member_configs[0]
+        batched = member_configs is not None and len(member_configs) >= 2
+        if batched and (cfg.result.real_time_view or cfg.result.save_results
+                        or cfg.result.save_hdf5 or cfg.result.save_json
+                        or cfg.result.save_npy or cfg.result.formats
+                        or cfg.result.animate or cfg.checkpoint.every_steps
+                        or cfg.checkpoint.path is not None
+                        or cfg.checkpoint.resume_from is not None):
+            raise NotImplementedError("Batched sweep output, visualization, animation and checkpoints are planned for Stage 3")
         self.cfg = cfg
+        self._batched = batched
         compute_engine.configure(cfg.compute_engine)
         self.xp = compute_engine.xp
 
@@ -121,22 +139,55 @@ class SimulationController:
         check_solver_compatibility(cfg)
 
         self.grid = create_grid(cfg.grid)
+        batch_physics = None
+        if batched:
+            from polarism.config.batch_physics import _FLOAT_FIELDS
+            batch_physics = {
+                name: np.asarray([getattr(member.physics, name) for member in member_configs])
+                for name in _FLOAT_FIELDS
+                if any(getattr(member.physics, name) != getattr(member_configs[0].physics, name)
+                       for member in member_configs[1:])
+            }
         self.boundary_condition = BoundaryCondition(
-            self.grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt
+            self.grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt,
+            batch_physics=batch_physics,
         )
-        self.potential = create_potential(cfg.potential, self.grid)
-        self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self.grid.Y, cfg.solver.precision)
-        self.pump_field = PumpField(self.lasers, self.grid, cfg.solver.precision)
-        self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid, cfg.solver.precision)
-        self.state = SimulationState(
-            self.grid,
-            cfg.physics.init_eps,
-            cfg.solver.precision,
-            mode=getattr(cfg.physics, "init_mode", "legacy_positive_uniform"),
-            k_cutoff_um=getattr(cfg.physics, "init_k_cutoff_um", None),
-            seed=getattr(cfg.physics, "init_seed", None),
-        )
-        self.solver = create_solver(cfg, self.grid)
+        if batched:
+            potentials = [create_potential(member.potential, self.grid)
+                          for member in member_configs]
+            self.potential = (potentials[0] if all(bool(self.xp.array_equal(potentials[0], item))
+                              for item in potentials[1:]) else self.xp.stack(potentials))
+            member_lasers = [LaserFactory.create_laser(
+                member.laser, self.grid.X, self.grid.Y, cfg.solver.precision,
+                getattr(member, "_laser_entry_overrides", None)) for member in member_configs]
+            self.lasers = member_lasers[0]
+            self.pump_field = BatchedPumpField(member_lasers, self.grid, cfg.solver.precision)
+            self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid,
+                                              cfg.solver.precision, batch_size=len(member_configs),
+                                              batch_physics=batch_physics)
+            states = [SimulationState(
+                self.grid, member.physics.init_eps, cfg.solver.precision,
+                mode=member.physics.init_mode,
+                k_cutoff_um=member.physics.init_k_cutoff_um,
+                seed=member.physics.init_seed,
+            ) for member in member_configs]
+            self.state = states[0]
+            self.state.psi = self.xp.stack([state.psi for state in states])
+        else:
+            self.potential = create_potential(cfg.potential, self.grid)
+            self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self.grid.Y, cfg.solver.precision,
+                                                    getattr(cfg, "_laser_entry_overrides", None))
+            self.pump_field = PumpField(self.lasers, self.grid, cfg.solver.precision)
+            self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid, cfg.solver.precision)
+            self.state = SimulationState(
+                self.grid,
+                cfg.physics.init_eps,
+                cfg.solver.precision,
+                mode=getattr(cfg.physics, "init_mode", "legacy_positive_uniform"),
+                k_cutoff_um=getattr(cfg.physics, "init_k_cutoff_um", None),
+                seed=getattr(cfg.physics, "init_seed", None),
+            )
+        self.solver = create_solver(cfg, self.grid, batch_physics=batch_physics)
         self.max_laser_power = self._compute_max_laser_power()
 
         cap = self.boundary_condition.before_step_action()
@@ -158,7 +209,7 @@ class SimulationController:
         self.storage_visitor = None
         self.animation_visitor = None
         self._step = 0
-        self._state_shape_explicit = False
+        self._state_shape_explicit = batched
         self._stop_requested = False
         self._resumed = False
         self.run_directory = None
@@ -298,6 +349,8 @@ class SimulationController:
 
     def add_visitor(self, visitor: ResultVisitor) -> None:
         """Register a visitor and build result nodes if this is the first one."""
+        if self._batched:
+            raise NotImplementedError("Batched result visitors are planned for Stage 3")
         if not self.results_manager.nodes:
             self.results_manager.nodes = self._build_result_nodes()
         self.results_manager.add_visitor(visitor)
@@ -434,6 +487,8 @@ class SimulationController:
 
     def save_checkpoint(self, path: str | os.PathLike) -> None:
         """Atomically save the current step boundary to an HDF5 checkpoint."""
+        if self._batched:
+            raise NotImplementedError("Batched checkpoints are planned for Stage 3")
         from polarism import __version__
 
         target = Path(path)
@@ -470,6 +525,8 @@ class SimulationController:
 
     def load_checkpoint(self, path: str | os.PathLike) -> None:
         """Validate and restore a checkpoint for the current configuration."""
+        if self._batched:
+            raise NotImplementedError("Batched checkpoints are planned for Stage 3")
         with h5py.File(path, "r") as h5:
             if h5.attrs.get("checkpoint_version") != 1:
                 raise ValueError("unsupported checkpoint version")
