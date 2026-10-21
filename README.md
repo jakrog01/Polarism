@@ -18,6 +18,7 @@ Polarism is a Python package for 2-D driven-dissipative Gross-Pitaevskii simulat
 - Single, double, and quadratic-double reservoirs; continuous and pulsed pumps.
 - HDF5, NPY, and JSON output written on a background thread, so saving frames barely slows GPU runs; `ps.load_results` reads runs back lazily.
 - Checkpoint and restart, including a clean stop on SLURM time-limit signals.
+- Parameter sweeps with batched device execution, saved member results, and resume.
 - Live visualization and online GPU-rendered animation.
 - Registries for custom solvers, model components, output formats, and observables, documented in the [plugin guide](https://jakrog01.github.io/Polarism/plugins/); a `tyro`-generated `polarism` CLI.
 - `polarism-bench` for measuring per-step and chunked GPU execution on your hardware.
@@ -129,6 +130,22 @@ cfg.laser.sigma_space = 4.0
 ```
 
 The class works on both NumPy and CuPy through `self.xp`. Put it in `polarism_plugins/` to have it discovered automatically, including by the `polarism` CLI. The [plugin guide](https://jakrog01.github.io/Polarism/plugins/) covers the contract for each component type.
+
+## Parameter sweeps
+
+Sweep related configs together and read any saved member by index:
+
+```python
+import polarism as ps
+
+cfg = ps.Config()
+cfg.result.save_results = True
+cfg.result.save_hdf5 = True
+with ps.Sweep(cfg, {"laser.P0": [0.02, 0.03], "physics.g_C": [0.001, 0.002]}).run() as results:
+    density = results.member(0).fields["density"][:]
+```
+
+See the [parameter sweeps guide](https://jakrog01.github.io/Polarism/user-guide/parameter-sweeps/) for batching, output, and restart.
 
 ## Choosing a solver
 

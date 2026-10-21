@@ -22,6 +22,8 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - ResultNode
         - ResultProvider
         - SimulationController
+        - Sweep
+        - SweepResults
         - SimulationGrid2D
         - SimulationState
         - Results2D
@@ -50,7 +52,14 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - SolverParameters
         - ResultParameters
         - ComputeEngineParameters
+        - SweepParameters
         - Config
+
+## Parameter sweeps
+
+::: polarism.sweep.Sweep
+
+::: polarism.results.reader.SweepResults
 
 ## Controller and solver extension
 

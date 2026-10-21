@@ -38,6 +38,10 @@ grid shape, reservoir type, batch shape, or timestep is rejected. A different
 precision casts the saved arrays and emits a warning, so bitwise continuation
 is only expected at the original precision.
 
+For parameter sweeps, each batch has its own checkpoint. Resume by passing the
+sweep directory to `Sweep.run(resume=...)`; completed batches are skipped. See
+[Parameter Sweeps](parameter-sweeps.md#output-and-restart) for details.
+
 For a manually prepared field, call
 `controller.set_initial_state(psi, reservoir_state=None, t=0.0)` before `run()`.
 The optional density tuple must match the condensate shape, including a leading

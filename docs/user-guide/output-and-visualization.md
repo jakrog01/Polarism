@@ -98,6 +98,11 @@ array. NPY runs return NumPy arrays. `attrs` holds the file metadata
 (`format_version`, `polarism_version`). Files written by Polarism 0.3 load with
 their old names mapped to the new ones.
 
+For saved parameter sweeps, `polarism.load_results` accepts the sweep directory
+and returns a `SweepResults` view with lazy frame and member slicing. See
+[Parameter Sweeps](parameter-sweeps.md#output-and-restart) for its layout and
+reader API.
+
 The HDF5 layout (`format_version = 2`) is:
 
 | Path | Content |

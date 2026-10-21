@@ -9,6 +9,9 @@ Checkpoints are separate HDF5 state files. They are written by
 for a resumed run begin at the next configured output step, since the checkpoint
 frame belongs to the earlier run.
 
+For sweep output, `load_results` returns `SweepResults` with a member axis and
+per-member views. See [Parameter Sweeps](../user-guide/parameter-sweeps.md#output-and-restart).
+
 ## Result provider interface
 
 Objects that want to expose outputs implement the `ResultProvider` contract by returning a list of result nodes.
