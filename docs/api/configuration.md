@@ -157,7 +157,7 @@ with reduced grid-direction anisotropy.
 | `animate` | stream an online animation during the run | boolean |
 | `animation_fps` | encoded movie frame rate | positive integer |
 | `animation_target_seconds` | nominal target duration used for logging | positive integer |
-| `animation_fields` | optional tuple of result-node names to include | tuple of strings |
+| `animation_fields` | optional tuple of result-node names such as `density`, `pump`, `nA` | tuple of strings |
 | `animation_backend` | video backend selector | `auto`, `ffmpeg`; `pynvvideocodec` currently fails explicitly |
 | `animation_encoder` | preferred ffmpeg encoder | e.g. `h264_nvenc`, `libx264`, `ffv1`, `mpeg4` |
 | `animation_output` | output movie path | path string or `None` |

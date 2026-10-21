@@ -10,7 +10,7 @@ nI : inactive reservoir density
 
 Equations of motion (state order: ``(nR, nI)``)
 -------------------------------------------------
-``dnR/dt = kappa * nI² - gammaR * nR - R * nR * |ψ|²``
+``dnR/dt = kappa * nI² - gammaR * nR - R * nR * abs(psi)^2``
 ``dnI/dt = P(x,y,t) - kappa * nI² - gammaI * nI``
 
 The active density ``nR`` is passed to the GPE as the reservoir source term.

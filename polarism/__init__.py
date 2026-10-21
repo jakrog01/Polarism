@@ -8,6 +8,8 @@ from polarism.reservoir import create_reservoir
 from polarism.results import (
     RealTimeVisualization,
     ResultNode,
+    Results,
+    load_results,
     ResultProvider,
     Results2D,
     ResultScalar,
@@ -39,6 +41,8 @@ __all__ = [
     "load_plugins",
     "RealTimeVisualization",
     "ResultNode",
+    "Results",
+    "load_results",
     "ResultProvider",
     "SimulationController",
     "SimulationGrid2D",

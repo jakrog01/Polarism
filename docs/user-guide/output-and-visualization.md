@@ -49,10 +49,28 @@ Storage takes a snapshot at each output step and writes on a background thread.
 Its queue is bounded by frame count and device memory, so the simulation waits
 when the writer falls behind. Pending frames are drained when the run ends or
 is interrupted. A continuous pump with no positive delay is stored once as a
-static field: `static/Pump` in HDF5, `static_Pump.npy` in NPY, or under
+static field: `static/pump` in HDF5, `static_pump.npy` in NPY, or under
 `"static"` in the first JSON batch.
 
 ## Online animation
+
+Use `density`, `norm`, and `pump` as saved result names. The older animation
+names still work with a deprecation warning. Plot titles retain their display
+labels: `|ψ|²`, `N(t)`, and `Pump`.
+
+Read a saved run with the same API for HDF5 and NPY output:
+
+```python
+import polarism as ps
+
+with ps.load_results("simulation_results/20260101-120000") as result:
+    density = result.fields["density"][::10]
+    norm = result.scalars["norm"][:]
+    pump = result.static["pump"][:]
+    x, y = result.x, result.y
+```
+
+For HDF5 runs, `fields`, `scalars` and `static` return `h5py` datasets, so slicing reads only the selected frames from disk; use `[:]` for the whole array. NPY runs return NumPy arrays.
 
 The core library can stream a movie while the simulation is running:
 
@@ -60,7 +78,7 @@ The core library can stream a movie while the simulation is running:
 cfg.result.animate = True
 cfg.result.animation_fps = 8
 cfg.result.animation_target_seconds = 60
-cfg.result.animation_fields = ("|ψ|²", "nA", "nI", "Pump")
+cfg.result.animation_fields = ("density", "nA", "nI", "pump")
 cfg.result.animation_backend = "auto"
 cfg.result.animation_encoder = "h264_nvenc"
 cfg.result.animation_output = "simulation_results/animation.mp4"

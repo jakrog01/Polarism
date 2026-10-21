@@ -32,6 +32,7 @@ class BaseStorage(ABC):
         self.scalar_buffers = {}
         self.scalar_group_buffers = {}
         self.static_fields: dict[str, np.ndarray] = {}
+        self.node_metadata: dict[str, dict[str, str]] = {}
 
     def add_to_batch(self, t: float, nodes: list, **context) -> None:
         """Add one result step to the current batch."""
@@ -41,6 +42,10 @@ class BaseStorage(ABC):
         for node in nodes:
             if not node.save:
                 continue
+            self.node_metadata[node.name] = {
+                "label": node.label or node.name,
+                **({"units": node.units} if node.units is not None else {}),
+            }
 
             field, reduced = cached[node.name]
             if node.is_field:

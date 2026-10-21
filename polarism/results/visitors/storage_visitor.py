@@ -25,7 +25,7 @@ class StorageVisitor(ResultVisitor):
     batch_size: int
     storages: list[HDF5Storage | JSONStorage | NPYStorage]
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, x=None, y=None):
         """Set up the storage backends for the config."""
         self.cfg = cfg
         root = Path(self.cfg.result.output_directory)
@@ -42,12 +42,13 @@ class StorageVisitor(ResultVisitor):
         self.batch_size = self.cfg.result.batch_size
         self.storages = []
         if self.cfg.result.save_hdf5:
-            self.storages.append(HDF5Storage(self.output_dir, self.batch_size, config=self.cfg))
+            self.storages.append(HDF5Storage(self.output_dir, self.batch_size, config=self.cfg, x=x, y=y))
         if self.cfg.result.save_json:
             self.storages.append(JSONStorage(self.output_dir, self.batch_size))
         if self.cfg.result.save_npy:
             self.storages.append(NPYStorage(
-                self.output_dir, self.batch_size, compress=self.cfg.result.compression != "none"
+                self.output_dir, self.batch_size, compress=self.cfg.result.compression != "none",
+                config=self.cfg, x=x, y=y,
             ))
         self._queue: queue.Queue | None = None
         self._thread: threading.Thread | None = None

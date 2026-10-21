@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
+import warnings
 
 from tqdm import tqdm
 
@@ -181,9 +182,9 @@ class SimulationController:
             if not node.expose:
                 continue
             if node.cmap is not None:
-                fields_2d.append(Results2D(node.name, cmap=node.cmap, clim=node.clim))
+                fields_2d.append(Results2D(node.name, cmap=node.cmap, clim=node.clim, label=node.label))
             else:
-                scalars.append(ResultScalar(node.name))
+                scalars.append(ResultScalar(node.name, label=node.label))
 
         scalar_groups = []
         if self.cfg.laser.expose_results:
@@ -216,7 +217,9 @@ class SimulationController:
         if not self.results_manager.nodes:
             self.results_manager.nodes = self._build_result_nodes()
 
-        self.storage_visitor = StorageVisitor(self.cfg)
+        self.storage_visitor = StorageVisitor(
+            self.cfg, x=compute_engine.to_cpu(self.grid.X[0, :]), y=compute_engine.to_cpu(self.grid.Y[:, 0])
+        )
         self.results_manager.add_visitor(self.storage_visitor)
 
     def _init_animation(self) -> None:
@@ -225,11 +228,22 @@ class SimulationController:
             self.results_manager.nodes = self._build_result_nodes()
 
         rcfg = self.cfg.result
-        wanted = set(rcfg.animation_fields) if rcfg.animation_fields else None
+        old_names = {"|ψ|²": "density", "N(t)": "norm", "Pump": "pump"}
+        wanted = None
+        if rcfg.animation_fields:
+            wanted = set()
+            for name in rcfg.animation_fields:
+                if name in old_names:
+                    warnings.warn(
+                        f"animation_fields name {name!r} is deprecated; use {old_names[name]!r}",
+                        DeprecationWarning, stacklevel=2,
+                    )
+                wanted.add(old_names.get(name, name))
 
         panel_specs = [
             AnimationFieldSpec(
                 source=node.name,
+                label=node.label or node.name,
                 cmap=node.cmap,
                 transform=None,
                 clim=node.clim,
@@ -259,7 +273,8 @@ class SimulationController:
         """Build the result nodes for this run."""
         nodes = [
             ResultNode(
-                name="|ψ|²",
+                name="density",
+                label="|ψ|²",
                 compute_fn=_compute_density,
                 reduce_dim_fn=lambda f: float(f.sum()),
                 cmap="magma",
@@ -271,7 +286,8 @@ class SimulationController:
                 is_field=True,
             ),
             ResultNode(
-                name="N(t)",
+                name="norm",
+                label="N(t)",
                 compute_fn=_compute_total_norm,
                 reduce_dim_fn=lambda v: v,
                 cmap=None,
@@ -298,7 +314,8 @@ class SimulationController:
         if self.cfg.laser.expose_results:
             nodes.append(
                 ResultNode(
-                    name="Pump",
+                    name="pump",
+                    label="Pump",
                     compute_fn=_compute_pump_field,
                     reduce_dim_fn=lambda f: (
                         float(f.max()) if hasattr(f, "max") else float(f)

@@ -57,24 +57,24 @@ def test_invalid_compression_rejected(compression):
 
 
 def test_static_and_complex_round_trip_all_backends(tmp_path):
-    nodes = [_node("psi"), _node("Pump", static=True)]
+    nodes = [_node("psi"), _node("pump", static=True)]
     psi = np.array([[1 + 2j, 3 - 4j]], dtype=np.complex64)
     pump = np.array([[4.0, 5.0]], dtype=np.float32)
     storages = [HDF5Storage(tmp_path / "h5", 2), NPYStorage(tmp_path / "npy", 2), JSONStorage(tmp_path / "json", 2)]
     for storage in storages:
         for t in (0.0, 1.0):
-            storage.add_to_batch(t, nodes, cached={"psi": (psi, None), "Pump": (pump, None)})
+            storage.add_to_batch(t, nodes, cached={"psi": (psi, None), "pump": (pump, None)})
         storage.finalize()
     with h5py.File(tmp_path / "h5" / "results.h5") as result:
         assert np.array_equal(result["fields/psi"][:], np.stack([psi, psi]))
-        assert np.array_equal(result["static/Pump"][:], pump)
-        assert "fields/Pump" not in result
+        assert np.array_equal(result["static/pump"][:], pump)
+        assert "fields/pump" not in result
     with np.load(tmp_path / "npy" / "batch_000000.npz") as result:
         assert np.array_equal(result["field_psi"], np.stack([psi, psi]))
-        assert "field_Pump" not in result
-    assert np.array_equal(np.load(tmp_path / "npy" / "static_Pump.npy"), pump)
+        assert "field_pump" not in result
+    assert np.array_equal(np.load(tmp_path / "npy" / "static_pump.npy"), pump)
     result = json.loads((tmp_path / "json" / "batch_000000.json").read_text())
-    assert result["static"]["Pump"] == pump.tolist()
+    assert result["static"]["pump"] == pump.tolist()
     encoded = result["fields"]["psi"][0]
     assert np.array_equal(np.array(encoded["real"]) + 1j * np.array(encoded["imag"]), psi)
 
@@ -151,16 +151,16 @@ def test_continuous_pump_static_flag_respects_delay():
     for laser_type in ("continuous-gaussian", "continuous-exp", "continuous-exp-length", "uniform"):
         cfg = small_config(laser__laser_type=laser_type)
         controller = SimulationController(cfg)
-        pump = next(node for node in controller._build_result_nodes() if node.name == "Pump")
+        pump = next(node for node in controller._build_result_nodes() if node.name == "pump")
         assert pump.static
         assert all(laser.power_coefficient(0.0) == laser.power_coefficient(1.0) for laser in controller.lasers)
         cfg.laser.delay = 0.1
         controller = SimulationController(cfg)
-        pump = next(node for node in controller._build_result_nodes() if node.name == "Pump")
+        pump = next(node for node in controller._build_result_nodes() if node.name == "pump")
         assert not pump.static
     cfg = small_config(laser__laser_type="pulse-gaussian")
     controller = SimulationController(cfg)
-    pump = next(node for node in controller._build_result_nodes() if node.name == "Pump")
+    pump = next(node for node in controller._build_result_nodes() if node.name == "pump")
     assert not pump.static
 
 

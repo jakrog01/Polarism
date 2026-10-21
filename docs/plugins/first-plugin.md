@@ -78,20 +78,20 @@ check. The output writer creates a timestamped directory below `results/`.
 
 ## 4. Inspect the pump in HDF5 output
 
-The controller exposes a `Pump` result node when
-`cfg.laser.expose_results` is true (its default). HDF5 stores that field at
-`fields/Pump`. Check the latest run:
+The controller exposes a `pump` result node when
+`cfg.laser.expose_results` is true (its default). A continuous pump is stored
+once as a static field. Check the latest run:
 
 ```python
 from pathlib import Path
-import h5py
+import polarism as ps
 
 files = sorted(Path("results").glob("*/results.h5"))
 assert files, "run.py did not write results.h5"
-with h5py.File(files[-1], "r") as saved:
-    pump = saved["fields/Pump"][:]
-    print(pump.shape)           # (saved frames, 32, 32)
-    assert pump.shape[1:] == (32, 32)
+with ps.load_results(files[-1]) as saved:
+    pump = saved.static["pump"][:]
+    print(pump.shape)
+    assert pump.shape == (32, 32)
     assert pump.max() > 0
 ```
 

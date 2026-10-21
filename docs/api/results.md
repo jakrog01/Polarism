@@ -74,6 +74,19 @@ GPU-capable NVENC when available and falling back to CPU encoders when needed.
 
 ## Output backends
 
+`polarism.load_results(path)` accepts a run directory or `results.h5` and returns
+a `Results` object. Its `time`, `fields`, `scalars`, `scalar_groups`, `static`,
+`config`, `x`, `y`, and `attrs` properties provide the saved values. HDF5 fields
+are read when accessed. Use it as a context manager or call `close()` when done.
+Built-in names are ASCII: `density`, `norm`, and `pump`; their display labels
+remain `|ψ|²`, `N(t)`, and `Pump`. Older HDF5 files are read with these names
+mapped automatically.
+
+HDF5 format version 2 records `format_version` and `polarism_version` at the
+root, 1-D coordinates in `grid/x` and `grid/y`, and dataset labels. Time uses
+ps and coordinates use µm. NPY output writes the coordinates as `grid_x.npy`
+and `grid_y.npy` with `metadata.json` holding the same metadata.
+
 The user-facing result configuration exposes these main storage choices:
 
 | Flag | Meaning |
@@ -104,8 +117,8 @@ errors to the simulation thread. Finalization drains pending frames.
 
 HDF5 datasets are uncompressed by default. `cfg.result.compression` also accepts
 `"lzf"` and `"gzip"` (with the shuffle filter); `compression_level` controls gzip only. The pump is
-stored once under `static/Pump` when every laser is time independent and has
-no positive delay. NPY writes `static_Pump.npy`, and JSON puts the field under
+stored once under `static/pump` when every laser is time independent and has
+no positive delay. NPY writes `static_pump.npy`, and JSON puts the field under
 `"static"` in the first batch. `save_psi=True` adds a complex `psi` field;
 JSON represents each complex array with `"real"` and `"imag"` arrays.
 

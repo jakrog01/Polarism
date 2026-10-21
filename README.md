@@ -79,6 +79,10 @@ compute_engine.configure(cfg.compute_engine)
 ps.SimulationController(cfg).run()
 ```
 
+Open a saved run with `ps.load_results(run_dir)`. Its `fields["density"]`,
+`scalars["norm"]`, and `static["pump"]` use stable ASCII names; `x` and `y`
+contain the grid coordinates. HDF5 datasets are read lazily, so `fields["density"][::10]` loads every tenth frame only. Use the returned object as a context manager for HDF5 output.
+
 For GPU execution, set `cfg.compute_engine.use_gpu = True`, choose `cfg.solver.method = "rk4-cuda"`, `"split-step-fft-cuda"`, or `"ifrk-fft-cuda"`, and consider `cfg.solver.precision = "single"` on consumer GPUs. FFT solvers require a periodic grid. Inspect CLI options with `polarism --help`.
 
 To try Polarism on a GPU without installing CUDA, open the [Colab notebook](https://colab.research.google.com/github/jakrog01/Polarism/blob/master/examples/colab_quickstart.ipynb).

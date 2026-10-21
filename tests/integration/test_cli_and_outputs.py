@@ -28,7 +28,7 @@ def test_programmatic_hdf5_output_and_figure(tmp_path) -> None:
     output = controller.storage_visitor.output_dir / "results.h5"
     with h5py.File(output) as result:
         time = result["time"][:]
-        norm = result["scalars/N(t)"][:]
+        norm = result["scalars/norm"][:]
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     plt.plot(time, norm); figure = tmp_path / "fig.png"; plt.savefig(figure); plt.close()
@@ -73,15 +73,15 @@ def test_fast_output_matches_uncompressed_cpu_run(tmp_path) -> None:
         simulation.run()
         paths.append(simulation.storage_visitor.output_dir)
     with h5py.File(paths[0] / "results.h5") as plain, h5py.File(paths[1] / "results.h5") as fast:
-        for name in ("time", "fields/|ψ|²", "fields/N_R", "fields/psi", "static/Pump", "scalars/N(t)"):
+        for name in ("time", "fields/density", "fields/N_R", "fields/psi", "static/pump", "scalars/norm"):
             assert np.array_equal(plain[name][:], fast[name][:])
         with np.load(paths[1] / "batch_000000.npz") as npy:
             assert np.array_equal(npy["field_psi"], fast["fields/psi"][:3])
-            assert np.array_equal(np.load(paths[1] / "static_Pump.npy"), fast["static/Pump"][:])
+            assert np.array_equal(np.load(paths[1] / "static_pump.npy"), fast["static/pump"][:])
         data = json.loads((paths[1] / "batch_000000.json").read_text())
         encoded = data["fields"]["psi"][0]
         assert np.array_equal(np.array(encoded["real"]) + 1j * np.array(encoded["imag"]), fast["fields/psi"][0])
-        assert np.array_equal(np.array(data["static"]["Pump"]), fast["static/Pump"][:])
+        assert np.array_equal(np.array(data["static"]["pump"]), fast["static/pump"][:])
 
 
 @pytest.mark.gpu
@@ -124,7 +124,7 @@ def test_gpu_fast_output_matches_synchronous_fields(tmp_path, monkeypatch) -> No
     reference = SimulationController(cfg)
     reference.run()
     with h5py.File(fast.storage_visitor.output_dir / "results.h5") as actual, h5py.File(reference.storage_visitor.output_dir / "results.h5") as expected:
-        for name in ("time", "fields/|ψ|²", "fields/N_R", "fields/psi", "static/Pump"):
+        for name in ("time", "fields/density", "fields/N_R", "fields/psi", "static/pump"):
             assert np.array_equal(actual[name][:], expected[name][:])
 
 
@@ -174,8 +174,8 @@ def test_cpu_fast_output_matches_synchronous_path(tmp_path, monkeypatch) -> None
         for name in actual.files:
             assert np.array_equal(actual[name], expected[name])
     assert np.array_equal(
-        np.load(fast.storage_visitor.output_dir / "static_Pump.npy"),
-        np.load(reference.storage_visitor.output_dir / "static_Pump.npy"),
+        np.load(fast.storage_visitor.output_dir / "static_pump.npy"),
+        np.load(reference.storage_visitor.output_dir / "static_pump.npy"),
     )
     assert (fast.storage_visitor.output_dir / "batch_000000.json").read_text() == (
         reference.storage_visitor.output_dir / "batch_000000.json"
