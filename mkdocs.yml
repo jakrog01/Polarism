@@ -22,6 +22,7 @@ nav:
       - Potentials and Pumps: user-guide/potentials-and-pumps.md
       - Time Evolution: user-guide/time-evolution.md
       - Output and Visualization: user-guide/output-and-visualization.md
+      - Checkpoint and Restart: user-guide/checkpoint-and-restart.md
       - Plugins:
           - Overview: plugins/index.md
           - Your first plugin: plugins/first-plugin.md

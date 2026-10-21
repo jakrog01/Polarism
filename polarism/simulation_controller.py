@@ -2,7 +2,17 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
+from dataclasses import asdict
+import json
+import os
+from pathlib import Path
+import signal
+import tempfile
+import threading
 import warnings
+
+import h5py
+import numpy as np
 
 from tqdm import tqdm
 
@@ -25,7 +35,7 @@ from polarism.results.observable_registry import available_observables
 from polarism.results.results_manager import ResultsManager
 from polarism.results.visitors.result_visitor import ResultVisitor
 from polarism.results.visitors.animation_visitor import AnimationFieldSpec, AnimationVisitor
-from polarism.results.visitors.storage_visitor import StorageVisitor
+from polarism.results.visitors.storage_visitor import StorageVisitor, create_run_directory
 from polarism.results.visitors.visualization_visitor import VisualizationVisitor
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
@@ -147,6 +157,11 @@ class SimulationController:
         self.results_manager = ResultsManager()
         self.storage_visitor = None
         self.animation_visitor = None
+        self._step = 0
+        self._state_shape_explicit = False
+        self._stop_requested = False
+        self._resumed = False
+        self.run_directory = None
 
         if cfg.result.real_time_view:
             self._init_visualizer()
@@ -154,8 +169,17 @@ class SimulationController:
         if cfg.result.save_results:
             self._init_storage()
 
+        if self.storage_visitor is not None:
+            self.run_directory = self.storage_visitor.output_dir
+        elif (cfg.checkpoint.every_steps or cfg.checkpoint.path is not None
+              or cfg.checkpoint.resume_from is not None):
+            self.run_directory = create_run_directory(cfg.result.output_directory)
+
         if cfg.result.animate:
             self._init_animation()
+
+        if cfg.checkpoint.resume_from is not None:
+            self.load_checkpoint(cfg.checkpoint.resume_from)
 
     def _compute_max_laser_power(self) -> float:
         """Return the largest configured laser power."""
@@ -345,22 +369,177 @@ class SimulationController:
             nodes.extend(produced if isinstance(produced, list) else [produced])
         return nodes
 
+    def _checkpoint_path(self) -> Path:
+        """Return the configured path, creating a run directory when needed."""
+        if self.cfg.checkpoint.path is not None:
+            return Path(self.cfg.checkpoint.path)
+        if self.run_directory is None:
+            self.run_directory = create_run_directory(self.cfg.result.output_directory)
+        return self.run_directory / "checkpoint.h5"
+
+    def set_initial_state(self, psi, reservoir_state=None, t: float = 0.0) -> None:
+        """Set a real-space initial field and optional reservoir densities."""
+        shape = tuple(psi.shape)
+        spatial = (self.grid.ny, self.grid.nx)
+        if shape[-2:] != spatial or len(shape) not in (2, 3):
+            raise ValueError(f"psi grid shape must end in {spatial}, got {shape}")
+        if len(shape) == 3 and shape[0] < 1:
+            raise ValueError("psi batch shape must have at least one member")
+        if not np.isfinite(t) or t < 0:
+            raise ValueError("t must be finite and nonnegative")
+        step = round(t / self.cfg.solver.dt)
+        if not np.isclose(t, step * self.cfg.solver.dt, rtol=0, atol=1e-12):
+            raise ValueError("t must lie on a solver step boundary")
+        dtype = complex_dtype(self.xp, self.cfg.solver.precision)
+        self.state.psi = self.xp.asarray(psi, dtype=dtype).copy()
+        self.state.t = step * self.cfg.solver.dt
+        self._step = step
+        self._state_shape_explicit = True
+        if reservoir_state is not None:
+            fields = tuple(reservoir_state)
+            expected = self.reservoir.get_state()
+            if len(fields) != len(expected):
+                raise ValueError("reservoir state field count mismatch")
+            if any(tuple(field.shape) != shape for field in fields):
+                raise ValueError("reservoir batch or grid shape mismatch")
+            self._restore_reservoir(fields)
+        else:
+            reset = getattr(self.reservoir, "reset", None)
+            if callable(reset):
+                if len(shape) == 3:
+                    reset(shape[0])
+                else:
+                    reset()
+            else:
+                zeros = tuple(self.xp.zeros(shape, dtype=field.dtype)
+                              for field in self.reservoir.get_state())
+                self.reservoir.set_state(zeros)
+
+    def _restore_reservoir(self, fields, *, cast: bool = True) -> None:
+        """Restore saved densities without changing valid bit patterns."""
+        from polarism.reservoir.double_reservoir import DoubleReservoir
+        from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
+        from polarism.reservoir.single_reservoir import SingleReservoir
+
+        dtype = real_dtype(self.xp, self.cfg.solver.precision) if cast else None
+        arrays = tuple(self.xp.asarray(field, dtype=dtype).copy() for field in fields)
+        if type(self.reservoir) is SingleReservoir:
+            self.reservoir.nR = arrays[0]
+        elif type(self.reservoir) is DoubleReservoir:
+            self.reservoir.nA, self.reservoir.nI = arrays
+        elif type(self.reservoir) is QuadraticDoubleReservoir:
+            self.reservoir.nR, self.reservoir.nI = arrays
+        else:
+            self.reservoir.set_state(arrays)
+
+    def save_checkpoint(self, path: str | os.PathLike) -> None:
+        """Atomically save the current step boundary to an HDF5 checkpoint."""
+        from polarism import __version__
+
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        step = round(self.state.t / self.cfg.solver.dt)
+        if self.state.t != step * self.cfg.solver.dt:
+            raise ValueError("checkpoint requires a solver step boundary")
+        self._step = step
+        psi = compute_engine.to_cpu(self.state.psi)
+        psi_k = self.state.psi_k
+        fields = tuple(compute_engine.to_cpu(value) for value in self.reservoir.get_state())
+        fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+        try:
+            with os.fdopen(fd, "wb"):
+                pass
+            with h5py.File(temporary, "w") as h5:
+                h5.attrs["checkpoint_version"] = 1
+                h5.attrs["polarism_version"] = __version__
+                h5.attrs["step"] = self._step
+                h5.attrs["t"] = self.state.t
+                h5.attrs["dt"] = self.cfg.solver.dt
+                h5.attrs["reservoir_type"] = self.cfg.reservoir.reservoir_type
+                h5.attrs["config_json"] = json.dumps(asdict(self.cfg))
+                h5.create_dataset("psi", data=psi)
+                if psi_k is not None:
+                    h5.create_dataset("psi_k", data=compute_engine.to_cpu(psi_k))
+                group = h5.create_group("reservoir")
+                for index, value in enumerate(fields):
+                    group.create_dataset(str(index), data=value)
+            os.replace(temporary, target)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    def load_checkpoint(self, path: str | os.PathLike) -> None:
+        """Validate and restore a checkpoint for the current configuration."""
+        with h5py.File(path, "r") as h5:
+            if h5.attrs.get("checkpoint_version") != 1:
+                raise ValueError("unsupported checkpoint version")
+            if h5.attrs["reservoir_type"] != self.cfg.reservoir.reservoir_type:
+                raise ValueError("reservoir type mismatch")
+            if h5.attrs["dt"] != self.cfg.solver.dt:
+                raise ValueError("checkpoint dt mismatch")
+            psi = h5["psi"][:]
+            shape = psi.shape
+            if shape[-2:] != (self.grid.ny, self.grid.nx) or len(shape) not in (2, 3):
+                raise ValueError("checkpoint grid shape mismatch")
+            if self._state_shape_explicit and shape != self.state.psi.shape:
+                raise ValueError("checkpoint batch shape mismatch")
+            fields = tuple(h5["reservoir"][str(i)][:] for i in range(len(h5["reservoir"])))
+            if len(fields) != len(self.reservoir.get_state()) or any(x.shape != shape for x in fields):
+                raise ValueError("checkpoint reservoir batch shape mismatch")
+            step = int(h5.attrs["step"])
+            t = float(h5.attrs["t"])
+            if step < 0 or t != step * self.cfg.solver.dt:
+                raise ValueError("checkpoint time and step mismatch")
+            source_precision = json.loads(h5.attrs["config_json"])["solver"]["precision"]
+            precision_changed = source_precision != self.cfg.solver.precision
+            psi_k = h5["psi_k"][:] if "psi_k" in h5 else None
+            if psi_k is not None and psi_k.shape != shape:
+                raise ValueError("checkpoint spectral batch shape mismatch")
+            if precision_changed:
+                warnings.warn("checkpoint precision differs; casting state", UserWarning, stacklevel=2)
+        dtype = complex_dtype(self.xp, self.cfg.solver.precision) if precision_changed else None
+        self.state.psi = self.xp.asarray(psi, dtype=dtype).copy()
+        self.state.t = t
+        self._step = step
+        self._state_shape_explicit = True
+        self._restore_reservoir(fields, cast=precision_changed)
+        self._resumed = True
+        if psi_k is not None:
+            self.state.psi_k = self.xp.asarray(psi_k, dtype=dtype).copy()
+        self.solver = create_solver(self.cfg, self.grid)
+
     def run(self) -> None:
         """Run the simulation loop."""
         self.pump_field.lasers = self.lasers
         dt = self.cfg.solver.dt
         n_steps = round(self.cfg.solver.total_time / dt)
+        if self._step > n_steps:
+            raise ValueError("checkpoint step exceeds configured total_time")
+        interval = self.cfg.checkpoint.every_steps
+        checkpoint_enabled = (interval > 0 or self.cfg.checkpoint.path is not None
+                              or self.cfg.checkpoint.resume_from is not None)
+        last_checkpoint_step = -1
+        previous_handlers = {}
+        self._stop_requested = False
+
+        def request_stop(signum, frame):
+            self._stop_requested = True
+
+        if self.cfg.checkpoint.on_signal and threading.current_thread() is threading.main_thread():
+            for signum in (signal.SIGTERM, signal.SIGUSR1):
+                previous_handlers[signum] = signal.getsignal(signum)
+                signal.signal(signum, request_stop)
 
         try:
-            if self.results_manager.visitors or self.storage_visitor is not None or self.animation_visitor is not None:
+            if self._step == 0 and not self._resumed and (self.results_manager.visitors or self.storage_visitor is not None or self.animation_visitor is not None):
                 self._record_results(self.state.t)
                 if self.visualizer is not None:
                     self.next_viz_time += self.cfg.result.real_time_refresh_interval
 
             save_interval = max(1, self.cfg.result.save_interval)
-            step = 0
-            with tqdm(total=n_steps, desc="Simulating") as progress:
-                while step < n_steps:
+            step = self._step
+            with tqdm(total=n_steps, initial=step, desc="Simulating") as progress:
+                while step < n_steps and not self._stop_requested:
                     recording = (
                         self.storage_visitor is not None
                         or self.animation_visitor is not None
@@ -375,12 +554,17 @@ class SimulationController:
                         end = min(n_steps, ((step // save_interval) + 1) * save_interval)
                     else:
                         end = n_steps
+                    if interval:
+                        end = min(end, ((step // interval) + 1) * interval)
+                    if previous_handlers:
+                        end = min(end, step + 64)
                     self.solver.advance(
                         self.potential, self.pump_field, self.reservoir,
                         self.boundary_condition, self.state, step, end - step,
                     )
                     progress.update(end - step)
                     step = end
+                    self._step = step
                     t_after = step * dt
                     should_save = recording and step % save_interval == 0
                     should_viz = (
@@ -403,21 +587,30 @@ class SimulationController:
                         self._record_results(t_after)
                         if should_viz:
                             self.next_viz_time += self.cfg.result.real_time_refresh_interval
+                    if interval and step % interval == 0:
+                        self.save_checkpoint(self._checkpoint_path())
+                        last_checkpoint_step = step
+            if (checkpoint_enabled or self._stop_requested) and last_checkpoint_step != self._step:
+                self.save_checkpoint(self._checkpoint_path())
         finally:
-            for visitor in self.results_manager.visitors:
-                finalize = getattr(visitor, "finalize", None)
-                if not callable(finalize):
-                    continue
-                if visitor is self.animation_visitor:
-                    try:
-                        finalize()
-                    except Exception as exc:
-                        import sys
-                        print(f"WARNING: animation finalize failed: {exc}", file=sys.stderr)
-                    continue
-                finalize()
-            if self.storage_visitor is not None and self.storage_visitor not in self.results_manager.visitors:
-                self.storage_visitor.finalize()
+            try:
+                for visitor in self.results_manager.visitors:
+                    finalize = getattr(visitor, "finalize", None)
+                    if not callable(finalize):
+                        continue
+                    if visitor is self.animation_visitor:
+                        try:
+                            finalize()
+                        except Exception as exc:
+                            import sys
+                            print(f"WARNING: animation finalize failed: {exc}", file=sys.stderr)
+                        continue
+                    finalize()
+                if self.storage_visitor is not None and self.storage_visitor not in self.results_manager.visitors:
+                    self.storage_visitor.finalize()
+            finally:
+                for signum, handler in previous_handlers.items():
+                    signal.signal(signum, handler)
 
     def _record_results(self, t: float) -> None:
         """Evaluate the pump and send the current state to result visitors."""

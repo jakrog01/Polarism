@@ -15,6 +15,21 @@ from polarism.results.storage import BaseStorage, available_storages
 from polarism.results.visitors.result_visitor import ResultVisitor
 
 
+def create_run_directory(root: str | Path) -> Path:
+    """Create a unique timestamped run directory."""
+    root = Path(root)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    suffix = 0
+    while True:
+        name = timestamp if suffix == 0 else f"{timestamp}-{suffix}"
+        output_dir = root / name
+        try:
+            output_dir.mkdir(parents=True, exist_ok=False)
+            return output_dir
+        except FileExistsError:
+            suffix += 1
+
+
 class StorageVisitor(ResultVisitor):
     """Snapshot frames and write them on one bounded background worker."""
     data_location = "device"
@@ -26,17 +41,7 @@ class StorageVisitor(ResultVisitor):
     def __init__(self, cfg: Config, x=None, y=None):
         """Set up the storage backends for the config."""
         self.cfg = cfg
-        root = Path(self.cfg.result.output_directory)
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        suffix = 0
-        while True:
-            name = timestamp if suffix == 0 else f"{timestamp}-{suffix}"
-            self.output_dir = root / name
-            try:
-                self.output_dir.mkdir(parents=True, exist_ok=False)
-                break
-            except FileExistsError:
-                suffix += 1
+        self.output_dir = create_run_directory(self.cfg.result.output_directory)
         self.batch_size = self.cfg.result.batch_size
         self.storages = []
         names = dict.fromkeys((

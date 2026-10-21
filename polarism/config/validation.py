@@ -33,6 +33,7 @@ def validate_config(cfg: Config) -> None:
     _validate_physics(cfg)
     _validate_solver(cfg)
     _validate_result(cfg)
+    _validate_checkpoint(cfg)
     _validate_boundary(cfg)
     _validate_laser(cfg)
     _warn_explicit_stability(cfg)
@@ -133,6 +134,18 @@ def _validate_result(cfg: Config) -> None:
         raise ConfigValidationError(f"result.save_interval must be >= 1, got {r.save_interval}")
     if r.batch_size < 1:
         raise ConfigValidationError(f"result.batch_size must be >= 1, got {r.batch_size}")
+
+
+def _validate_checkpoint(cfg: Config) -> None:
+    c = cfg.checkpoint
+    if type(c.every_steps) is not int or c.every_steps < 0:
+        raise ConfigValidationError("checkpoint.every_steps must be a nonnegative integer")
+    for name in ("path", "resume_from"):
+        value = getattr(c, name)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise ConfigValidationError(f"checkpoint.{name} must be a nonempty path or None")
+    if not isinstance(c.on_signal, bool):
+        raise ConfigValidationError("checkpoint.on_signal must be a boolean")
 
 
 def _validate_boundary(cfg: Config) -> None:

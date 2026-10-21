@@ -2,6 +2,13 @@
 
 The results subsystem is organized around two abstractions: providers expose quantities, and visitors decide what to do with them.
 
+Checkpoints are separate HDF5 state files. They are written by
+`SimulationController.save_checkpoint` and resumed with
+`SimulationController.load_checkpoint` or `cfg.checkpoint.resume_from`; see the
+[checkpoint guide](../user-guide/checkpoint-and-restart.md). Stored result frames
+for a resumed run begin at the next configured output step, since the checkpoint
+frame belongs to the earlier run.
+
 ## Result provider interface
 
 Objects that want to expose outputs implement the `ResultProvider` contract by returning a list of result nodes.

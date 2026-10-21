@@ -14,6 +14,7 @@
 | `reservoir` | reservoir model selection |
 | `solver` | time integrator and timestep settings |
 | `result` | storage, visualization, and output cadence |
+| `checkpoint` | periodic checkpoints, restart source, and signal handling |
 | `compute_engine` | CPU/GPU backend selection |
 
 ## Grid options
@@ -164,9 +165,22 @@ with reduced grid-direction anisotropy.
 | `animation_encoder` | preferred ffmpeg encoder | e.g. `h264_nvenc`, `libx264`, `ffv1`, `mpeg4` |
 | `animation_output` | output movie path | path string or `None` |
 
-`animate` uses the visitor-based results path.  The animation visitor receives
+`animate` uses the visitor-based results path. The animation visitor receives
 device arrays during GPU runs and is marked non-fatal: encoder failures disable
 only the movie stream, while storage visitors remain fatal by default.
+
+## Checkpoint options
+
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `every_steps` | write at these absolute step boundaries and at the run end; zero disables periodic writes | `0` |
+| `path` | checkpoint destination; defaults to `checkpoint.h5` in the run directory | `None` |
+| `resume_from` | load a checkpoint before running to the absolute `solver.total_time` | `None` |
+| `on_signal` | checkpoint and stop after the current chunk on SIGTERM or SIGUSR1 | `True` |
+
+`every_steps` must be a nonnegative integer, both paths must be nonempty strings
+or `None`, and `on_signal` must be a boolean. A run directory is created even
+when result storage is disabled if periodic checkpointing is enabled.
 
 ## Compute-engine options
 
