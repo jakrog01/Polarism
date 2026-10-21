@@ -6,6 +6,11 @@ Polarism is a Python package for 2-D driven-dissipative Gross-Pitaevskii simulat
 
 [![PyPI version](https://img.shields.io/pypi/v/polarism.svg)](https://pypi.org/project/polarism/) [![Python versions](https://img.shields.io/pypi/pyversions/polarism.svg)](https://pypi.org/project/polarism/) [![Tests](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml) [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://jakrog01.github.io/Polarism/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/jakrog01/Polarism/blob/master/LICENSE) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jakrog01/Polarism/blob/master/examples/colab_quickstart.ipynb)
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/jakrog01/Polarism/master/docs/assets/readme/ring_vortices.webp" alt="Condensate density and phase under a ring-shaped pump, with vortices forming and moving inside the ring" width="608">
+</p>
+<p align="center"><sub>A ring-shaped pump (the <a href="#adding-your-own-pump">example plugin below</a>) traps a rotating condensate with quantized vortices. Left: density |ψ|², right: phase. 256² grid; 180 frames spanning 300–1200 ps, rendered by <a href="https://github.com/jakrog01/Polarism/blob/master/examples/readme_media.py"><code>examples/readme_media.py</code></a>.</sub></p>
+
 ## Highlights
 
 - Finite-difference RK4, split-step FFT, ETD-RK2, and interaction-picture solver families.
