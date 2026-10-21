@@ -50,6 +50,7 @@ nav:
       - GPU Profiling: development/profiling.md
       - Testing and CI: development/testing-and-ci.md
       - Contributing: development/contributing.md
+      - Migrating to 0.4: development/migrating-to-0.4.md
       - Release notes: https://github.com/jakrog01/Polarism/releases
 
 theme:

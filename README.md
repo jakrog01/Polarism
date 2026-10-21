@@ -16,8 +16,10 @@ Polarism is a Python package for 2-D driven-dissipative Gross-Pitaevskii simulat
 - Finite-difference RK4, split-step FFT, ETD-RK2, and interaction-picture solver families.
 - NumPy execution and optional CuPy GPU execution, including CUDA graph chunks for eligible CUDA solver runs.
 - Single, double, and quadratic-double reservoirs; continuous and pulsed pumps.
-- HDF5, JSON, and NPY output, live visualization, and online animation.
-- Registries for custom solvers and model components, documented in the [plugin guide](https://jakrog01.github.io/Polarism/plugins/); a `tyro`-generated `polarism` CLI.
+- HDF5, NPY, and JSON output written on a background thread, so saving frames barely slows GPU runs; `ps.load_results` reads runs back lazily.
+- Checkpoint and restart, including a clean stop on SLURM time-limit signals.
+- Live visualization and online GPU-rendered animation.
+- Registries for custom solvers, model components, output formats, and observables, documented in the [plugin guide](https://jakrog01.github.io/Polarism/plugins/); a `tyro`-generated `polarism` CLI.
 - `polarism-bench` for measuring per-step and chunked GPU execution on your hardware.
 
 ## Installation
@@ -82,6 +84,8 @@ ps.SimulationController(cfg).run()
 Open a saved run with `ps.load_results(run_dir)`. Its `fields["density"]`,
 `scalars["norm"]`, and `static["pump"]` use stable ASCII names; `x` and `y`
 contain the grid coordinates. HDF5 datasets are read lazily, so `fields["density"][::10]` loads every tenth frame only. Use the returned object as a context manager for HDF5 output.
+
+For long cluster jobs, `cfg.checkpoint.every_steps` writes restartable checkpoints and `cfg.checkpoint.resume_from` continues from one; see [Checkpoint and restart](https://jakrog01.github.io/Polarism/user-guide/checkpoint-and-restart/).
 
 For GPU execution, set `cfg.compute_engine.use_gpu = True`, choose `cfg.solver.method = "rk4-cuda"`, `"split-step-fft-cuda"`, or `"ifrk-fft-cuda"`, and consider `cfg.solver.precision = "single"` on consumer GPUs. FFT solvers require a periodic grid. Inspect CLI options with `polarism --help`.
 
