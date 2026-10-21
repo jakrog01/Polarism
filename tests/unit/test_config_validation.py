@@ -4,6 +4,8 @@ import pytest
 import warnings
 
 from polarism.config.validation import ConfigValidationError, validate_config
+from polarism.results.observable_registry import available_observables
+from polarism.results.storage import available_storages
 from polarism.solver.solver_compatibility import SolverCompatibilityError, check_solver_compatibility
 from tests.unit.conftest import small_config
 
@@ -19,6 +21,19 @@ def test_filtered_mode_requires_cutoff() -> None:
     cfg = small_config(physics__init_mode="filtered_complex_gaussian", physics__init_k_cutoff_um=None)
     with pytest.raises(ConfigValidationError, match="init_k_cutoff_um"):
         validate_config(cfg)
+
+
+@pytest.mark.parametrize("field,registry", [
+    ("formats", available_storages),
+    ("observables", available_observables),
+])
+def test_unknown_result_plugin_lists_registered_names(field, registry) -> None:
+    cfg = small_config()
+    setattr(cfg.result, field, ("missing",))
+    with pytest.raises(ConfigValidationError) as exc:
+        validate_config(cfg)
+    assert field in str(exc.value)
+    assert str(list(registry.keys())) in str(exc.value)
 
 
 def test_solver_compatibility_errors_and_warnings() -> None:

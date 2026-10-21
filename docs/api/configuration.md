@@ -14,6 +14,7 @@
 | `reservoir` | reservoir model selection |
 | `solver` | time integrator and timestep settings |
 | `result` | storage, visualization, and output cadence |
+| `checkpoint` | periodic checkpoints, restart source, and signal handling |
 | `compute_engine` | CPU/GPU backend selection |
 
 ## Grid options
@@ -148,20 +149,38 @@ with reduced grid-direction anisotropy.
 | `real_time_refresh_interval` | UI refresh cadence | positive float |
 | `save_results` | enable result processing | boolean |
 | `save_hdf5`, `save_json`, `save_npy` | storage backends | booleans |
+| `formats` | additional registered storage formats, combined with enabled `save_*` options | tuple of names, default `()` |
+| `observables` | registered observable factories that add result nodes | tuple of names, default `()` |
 | `save_interval` | number of solver steps between writes after the initial state | positive integer |
 | `batch_size` | buffered result chunk size | positive integer |
+| `compression` | compression for every HDF5 dataset | `none` (default), `lzf`, `gzip` |
+| `compression_level` | gzip level, used only when `compression="gzip"` | integer from 0 to 9; default `4` |
+| `save_psi` | store the complex condensate field as `psi` | boolean, default `False` |
 | `output_directory` | parent directory for uniquely named run directories | directory string |
 | `animate` | stream an online animation during the run | boolean |
 | `animation_fps` | encoded movie frame rate | positive integer |
 | `animation_target_seconds` | nominal target duration used for logging | positive integer |
-| `animation_fields` | optional tuple of result-node names to include | tuple of strings |
+| `animation_fields` | optional tuple of result-node names such as `density`, `pump`, `nA` | tuple of strings |
 | `animation_backend` | video backend selector | `auto`, `ffmpeg`; `pynvvideocodec` currently fails explicitly |
 | `animation_encoder` | preferred ffmpeg encoder | e.g. `h264_nvenc`, `libx264`, `ffv1`, `mpeg4` |
 | `animation_output` | output movie path | path string or `None` |
 
-`animate` uses the visitor-based results path.  The animation visitor receives
+`animate` uses the visitor-based results path. The animation visitor receives
 device arrays during GPU runs and is marked non-fatal: encoder failures disable
 only the movie stream, while storage visitors remain fatal by default.
+
+## Checkpoint options
+
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `every_steps` | write at these absolute step boundaries and at the run end; zero disables periodic writes | `0` |
+| `path` | checkpoint destination; defaults to `checkpoint.h5` in the run directory | `None` |
+| `resume_from` | load a checkpoint before running to the absolute `solver.total_time` | `None` |
+| `on_signal` | checkpoint and stop after the current chunk on SIGTERM or SIGUSR1 | `True` |
+
+`every_steps` must be a nonnegative integer, both paths must be nonempty strings
+or `None`, and `on_signal` must be a boolean. A run directory is created even
+when result storage is disabled if periodic checkpointing is enabled.
 
 ## Compute-engine options
 

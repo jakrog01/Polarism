@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 @register_laser("continuous-exp")
 class ContinuousExponentialPump(AbstractLaser):
     """Represent a continuous exponential pump."""
+    time_independent = True
     w: float
     cutoff_sigma: float
 

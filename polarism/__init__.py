@@ -8,6 +8,8 @@ from polarism.reservoir import create_reservoir
 from polarism.results import (
     RealTimeVisualization,
     ResultNode,
+    Results,
+    load_results,
     ResultProvider,
     Results2D,
     ResultScalar,
@@ -26,7 +28,7 @@ from polarism.grid.simulation_grid_2d import SimulationGrid2D
 from polarism.simulation_state import SimulationState
 from polarism.solver import AbstractSolver, create_solver, RK4CudaSolver
 
-__version__ = "0.3.10"
+__version__ = "0.4.0"
 __all__ = [
     "BoundaryCondition",
     "Config",
@@ -39,6 +41,8 @@ __all__ = [
     "load_plugins",
     "RealTimeVisualization",
     "ResultNode",
+    "Results",
+    "load_results",
     "ResultProvider",
     "SimulationController",
     "SimulationGrid2D",

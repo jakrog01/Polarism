@@ -91,7 +91,7 @@ proof of physical filamentation.  It must be checked against:
 ### Kinetic energy relaxation term
 
 When high-k modes near the Nyquist edge dominate and produce an X/star artifact
-in real-space |ψ|², the cause is that the minimal model has no channel for
+in real-space density, the cause is that the minimal model has no channel for
 energy to flow from high-k polariton fluctuations toward the ground state.  The
 fix is a standard phenomenological kinetic energy relaxation term added at the
 equation level:

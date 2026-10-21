@@ -4,15 +4,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
+
 from polarism.results.storage.base_storage import BaseStorage
+from polarism.results.storage.storage_registry import register_storage
 
 
+@register_storage("json")
 class JSONStorage(BaseStorage):
     """Store result batches in JSON files."""
     output_dir: Path
     batch_number: int
 
-    def __init__(self, output_dir: Path, batch_size: int):
+    def __init__(self, output_dir: Path, batch_size: int, config=None, x=None, y=None):
         """Set up JSON batch storage."""
         super().__init__(output_dir, batch_size)
         self.batch_number = 0
@@ -28,9 +32,14 @@ class JSONStorage(BaseStorage):
             "scalars": {},
             "scalar_groups": {},
         }
+        if self.batch_number == 0 and self.static_fields:
+            batch_data["static"] = {
+                name: self._json_field(field)
+                for name, field in self.static_fields.items()
+            }
 
         for field_name, field_list in self.field_buffers.items():
-            batch_data["fields"][field_name] = [f.tolist() for f in field_list]
+            batch_data["fields"][field_name] = [self._json_field(f) for f in field_list]
 
         for scalar_name, scalar_list in self.scalar_buffers.items():
             batch_data["scalars"][scalar_name] = scalar_list[:]
@@ -47,6 +56,17 @@ class JSONStorage(BaseStorage):
         self.batch_number += 1
         self.total_saved += len(self.time_buffer)
         self._clear_buffers()
+
+    def write_static(self, name: str, field: np.ndarray) -> None:
+        """Keep a static field for the first JSON batch."""
+        pass
+
+    @staticmethod
+    def _json_field(field: np.ndarray):
+        """Encode real or complex arrays as JSON values."""
+        if np.iscomplexobj(field):
+            return {"real": field.real.tolist(), "imag": field.imag.tolist()}
+        return field.tolist()
 
     def finalize(self) -> None:
         """Flush remaining data and close JSON storage."""

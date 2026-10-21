@@ -25,10 +25,10 @@ def build_lut(xp: Any, cmap_name: str) -> Any:
         Matplotlib colormap name.
     """
     try:
-        import matplotlib.cm as _cm
+        from matplotlib import colormaps
     except ImportError:
         raise RuntimeError("matplotlib is required for colormap LUT generation")
-    cmap = _cm.get_cmap(cmap_name)
+    cmap = colormaps[cmap_name]
     lut_cpu = np.uint8(cmap(np.linspace(0.0, 1.0, 256))[:, :3] * 255)
     return xp.asarray(lut_cpu)
 
@@ -110,6 +110,7 @@ def render_panels(
     luts: list[Any],
     vmins: list[float],
     vmaxs: list[float],
+    title_strip: Any | None = None,
 ) -> Any:
     """Normalize, colormap, and tile panels into a single uint8 RGB frame.
 
@@ -132,4 +133,7 @@ def render_panels(
     for i, arr in enumerate(transformed):
         indices = normalize_to_uint8(xp, arr, vmins[i], vmaxs[i], norms[i], norm_gammas[i])
         panels.append(luts[i][indices])
-    return pad_even(xp, xp.concatenate(panels, axis=1))
+    frame = xp.concatenate(panels, axis=1)
+    if title_strip is not None:
+        frame = xp.concatenate((title_strip, frame), axis=0)
+    return pad_even(xp, frame)

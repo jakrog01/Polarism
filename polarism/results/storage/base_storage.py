@@ -31,6 +31,8 @@ class BaseStorage(ABC):
         self.field_buffers = {}
         self.scalar_buffers = {}
         self.scalar_group_buffers = {}
+        self.static_fields: dict[str, np.ndarray] = {}
+        self.node_metadata: dict[str, dict[str, str]] = {}
 
     def add_to_batch(self, t: float, nodes: list, **context) -> None:
         """Add one result step to the current batch."""
@@ -40,16 +42,25 @@ class BaseStorage(ABC):
         for node in nodes:
             if not node.save:
                 continue
+            self.node_metadata[node.name] = {
+                "label": node.label or node.name,
+                **({"units": node.units} if node.units is not None else {}),
+            }
 
             field, reduced = cached[node.name]
             if node.is_field:
+                if node.static:
+                    if node.name not in self.static_fields:
+                        self.static_fields[node.name] = field
+                        self.write_static(node.name, field)
+                    continue
                 if node.name not in self.field_buffers:
                     self.field_buffers[node.name] = []
                 self.field_buffers[node.name].append(field)
             else:
                 if node.name not in self.scalar_buffers:
                     self.scalar_buffers[node.name] = []
-                self.scalar_buffers[node.name].append(float(reduced))
+                self.scalar_buffers[node.name].append(float(field if reduced is None else reduced))
 
         scalar_groups = context.get("scalar_groups", {})
         for group_name, values in scalar_groups.items():
@@ -68,6 +79,11 @@ class BaseStorage(ABC):
     @abstractmethod
     def dump_batch(self) -> None:
         """Write the current batch to disk."""
+        pass
+
+    @abstractmethod
+    def write_static(self, name: str, field: np.ndarray) -> None:
+        """Write a field shared by every frame."""
         pass
 
     @abstractmethod

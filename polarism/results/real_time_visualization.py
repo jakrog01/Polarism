@@ -79,7 +79,7 @@ class RealTimeVisualization:
             im = ax.imshow(
                 np.zeros((10, 10)), extent=self.extent, origin="lower", cmap=field.cmap
             )
-            ax.set_title(field.name)
+            ax.set_title(field.label or field.name)
             cbar = self.fig.colorbar(im, ax=ax, shrink=0.8)
             self._colorbars[field.name] = cbar
             if field.clim is not None:
@@ -96,7 +96,7 @@ class RealTimeVisualization:
         for s in self.scalars:
             ax = self.axes[1, col]
             (line,) = ax.plot([], [], color=s.color)
-            ax.set_title(s.name)
+            ax.set_title(s.label or s.name)
             ax.grid(True)
             self._lines[s.name] = line
             self._scalar_axes[s.name] = ax

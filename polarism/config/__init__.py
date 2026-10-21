@@ -1,6 +1,7 @@
 """Public config exports."""
 from polarism.config.simulation_parameters import (
     BoundaryConditionParameters,
+    CheckpointParameters,
     Config,
     GridParameters,
     PhysicsConstants,
@@ -13,4 +14,5 @@ __all__ = [
     "PhysicsConstants",
     "PotentialParameters",
     "BoundaryConditionParameters",
+    "CheckpointParameters",
 ]

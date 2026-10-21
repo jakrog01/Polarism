@@ -17,6 +17,8 @@ from polarism.laser.laser_registy import available_lasers
 from polarism.plugins import load_plugins
 from polarism.potential.potential_registy import available_potentials
 from polarism.reservoir.reservoir_registry import available_reservoirs
+from polarism.results.observable_registry import available_observables
+from polarism.results.storage import available_storages
 from polarism.solver.solver_registry import available_solvers
 
 
@@ -33,10 +35,12 @@ def example_plugins(tmp_path, monkeypatch):
         available_potentials,
         available_reservoirs,
         available_solvers,
+        available_storages,
+        available_observables,
     )
     snapshots = [dict(registry) for registry in registries]
     loaded = load_plugins(tmp_path)
-    assert len(loaded) == 6
+    assert len(loaded) == 8
     yield
     for name in list(sys.modules):
         if name == "polarism_plugins" or name.startswith("polarism_plugins."):
@@ -138,3 +142,23 @@ def test_neutral_plugin_reservoir_matches_builtin(example_plugins, method):
         plugin.reservoir.get_reservoir_density(),
         builtin.reservoir.get_reservoir_density(), rtol=1e-10, atol=1e-12,
     )
+
+
+def test_example_storage_and_observable_run(example_plugins, tmp_path):
+    import csv
+
+    cfg = _comparison_config()
+    cfg.result.save_results = True
+    cfg.result.formats = ("example-scalar-csv",)
+    cfg.result.observables = ("example-center-x",)
+    cfg.result.output_directory = str(tmp_path)
+    cfg.result.batch_size = 2
+    controller = SimulationController(cfg)
+    controller.run()
+
+    path = controller.storage_visitor.output_dir / "scalars.csv"
+    with path.open(newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert len(rows) == 6
+    assert "center_x" in rows[0]
+    assert all(np.isfinite(float(row["center_x"])) for row in rows)

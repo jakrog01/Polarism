@@ -22,6 +22,7 @@ nav:
       - Potentials and Pumps: user-guide/potentials-and-pumps.md
       - Time Evolution: user-guide/time-evolution.md
       - Output and Visualization: user-guide/output-and-visualization.md
+      - Checkpoint and Restart: user-guide/checkpoint-and-restart.md
       - Plugins:
           - Overview: plugins/index.md
           - Your first plugin: plugins/first-plugin.md
@@ -31,6 +32,8 @@ nav:
           - Solvers: plugins/solvers.md
           - Grids: plugins/grids.md
           - Absorption strategies: plugins/absorption.md
+          - Storage formats: plugins/storage.md
+          - Observables: plugins/observables.md
   - Reference:
       - Overview: api/overview.md
       - Option Matrix: api/option-matrix.md
@@ -47,6 +50,7 @@ nav:
       - GPU Profiling: development/profiling.md
       - Testing and CI: development/testing-and-ci.md
       - Contributing: development/contributing.md
+      - Migrating to 0.4: development/migrating-to-0.4.md
       - Release notes: https://github.com/jakrog01/Polarism/releases
 
 theme:

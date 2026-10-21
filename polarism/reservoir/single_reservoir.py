@@ -125,7 +125,7 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
             nodes.append(
                 ResultNode(
                     "N_R_max",
-                    compute_fn=lambda **ctx: float(self.nR.max()),
+                    compute_fn=lambda **ctx: self.nR.max(),
                     reduce_dim_fn=lambda v: float(v),
                     cmap=None,
                     scaling=None,

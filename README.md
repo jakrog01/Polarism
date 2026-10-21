@@ -4,7 +4,7 @@
 
 Polarism is a Python package for 2-D driven-dissipative Gross-Pitaevskii simulations of exciton-polariton systems. It provides configurable pumps, reservoirs, solvers, and result output for CPU and optional CUDA runs.
 
-[![PyPI version](https://img.shields.io/pypi/v/polarism.svg)](https://pypi.org/project/polarism/) [![Python versions](https://img.shields.io/pypi/pyversions/polarism.svg)](https://pypi.org/project/polarism/) [![Tests](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml) [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://jakrog01.github.io/Polarism/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/jakrog01/Polarism/blob/master/LICENSE) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jakrog01/Polarism/blob/master/examples/colab_quickstart.ipynb)
+[![PyPI version](https://img.shields.io/pypi/v/polarism.svg)](https://pypi.org/project/polarism/) [![Python versions](https://img.shields.io/pypi/pyversions/polarism.svg)](https://pypi.org/project/polarism/) [![Tests](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml) [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://jakrog01.github.io/Polarism/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/jakrog01/Polarism/blob/master/LICENSE) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jakrog01/Polarism/blob/master/examples/colab_quickstart.ipynb) [![DOI](https://zenodo.org/badge/1412443657.svg)](https://doi.org/10.5281/zenodo.23531116)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/jakrog01/Polarism/master/docs/assets/readme/ring_vortices.webp" alt="Condensate density and phase under a ring-shaped pump, with vortices forming and moving inside the ring" width="608">
@@ -16,8 +16,10 @@ Polarism is a Python package for 2-D driven-dissipative Gross-Pitaevskii simulat
 - Finite-difference RK4, split-step FFT, ETD-RK2, and interaction-picture solver families.
 - NumPy execution and optional CuPy GPU execution, including CUDA graph chunks for eligible CUDA solver runs.
 - Single, double, and quadratic-double reservoirs; continuous and pulsed pumps.
-- HDF5, JSON, and NPY output, live visualization, and online animation.
-- Registries for custom solvers and model components, documented in the [plugin guide](https://jakrog01.github.io/Polarism/plugins/); a `tyro`-generated `polarism` CLI.
+- HDF5, NPY, and JSON output written on a background thread, so saving frames barely slows GPU runs; `ps.load_results` reads runs back lazily.
+- Checkpoint and restart, including a clean stop on SLURM time-limit signals.
+- Live visualization and online GPU-rendered animation.
+- Registries for custom solvers, model components, output formats, and observables, documented in the [plugin guide](https://jakrog01.github.io/Polarism/plugins/); a `tyro`-generated `polarism` CLI.
 - `polarism-bench` for measuring per-step and chunked GPU execution on your hardware.
 
 ## Installation
@@ -78,6 +80,12 @@ compute_engine.configure(cfg.compute_engine)
 
 ps.SimulationController(cfg).run()
 ```
+
+Open a saved run with `ps.load_results(run_dir)`. Its `fields["density"]`,
+`scalars["norm"]`, and `static["pump"]` use stable ASCII names; `x` and `y`
+contain the grid coordinates. HDF5 datasets are read lazily, so `fields["density"][::10]` loads every tenth frame only. Use the returned object as a context manager for HDF5 output.
+
+For long cluster jobs, `cfg.checkpoint.every_steps` writes restartable checkpoints and `cfg.checkpoint.resume_from` continues from one; see [Checkpoint and restart](https://jakrog01.github.io/Polarism/user-guide/checkpoint-and-restart/).
 
 For GPU execution, set `cfg.compute_engine.use_gpu = True`, choose `cfg.solver.method = "rk4-cuda"`, `"split-step-fft-cuda"`, or `"ifrk-fft-cuda"`, and consider `cfg.solver.precision = "single"` on consumer GPUs. FFT solvers require a periodic grid. Inspect CLI options with `polarism --help`.
 
@@ -152,7 +160,7 @@ See the [contributing guide](https://jakrog01.github.io/Polarism/development/con
 
 ## Citation
 
-Use [CITATION.cff](https://github.com/jakrog01/Polarism/blob/master/CITATION.cff) or GitHub's “Cite this repository” menu.
+Cite Polarism with its Zenodo DOI, [10.5281/zenodo.23531116](https://doi.org/10.5281/zenodo.23531116), which always resolves to the latest release; each release also has its own version DOI on Zenodo. The same metadata is in [CITATION.cff](https://github.com/jakrog01/Polarism/blob/master/CITATION.cff) and GitHub's “Cite this repository” menu.
 
 ## License
 

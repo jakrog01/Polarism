@@ -9,6 +9,8 @@ from polarism.boundary_conditions.absorption.absorption_registry import (
     available_boundary_conditions,
 )
 from polarism.grid.create_grid import grid_boundary
+from polarism.results.observable_registry import available_observables
+from polarism.results.storage import available_storages
 
 if TYPE_CHECKING:
     from polarism.config.simulation_parameters import Config
@@ -31,6 +33,7 @@ def validate_config(cfg: Config) -> None:
     _validate_physics(cfg)
     _validate_solver(cfg)
     _validate_result(cfg)
+    _validate_checkpoint(cfg)
     _validate_boundary(cfg)
     _validate_laser(cfg)
     _warn_explicit_stability(cfg)
@@ -111,10 +114,38 @@ def _validate_solver(cfg: Config) -> None:
 
 def _validate_result(cfg: Config) -> None:
     r = cfg.result
+    for field, names, registry in (("formats", r.formats, available_storages),
+                                   ("observables", r.observables, available_observables)):
+        if not isinstance(names, (tuple, list)) or any(not isinstance(name, str) for name in names):
+            raise ConfigValidationError(f"result.{field} must be a tuple of names")
+        for name in names:
+            if name not in registry:
+                raise ConfigValidationError(
+                    f"result.{field} name '{name}' is not recognised. "
+                    f"Available: {list(registry.keys())}."
+                )
+    if not isinstance(r.compression, str) or r.compression not in {"none", "lzf", "gzip"}:
+        raise ConfigValidationError("result.compression must be one of none, lzf, gzip")
+    if type(r.compression_level) is not int or not 0 <= r.compression_level <= 9:
+        raise ConfigValidationError("result.compression_level must be an integer in [0, 9]")
+    if not isinstance(r.save_psi, bool):
+        raise ConfigValidationError("result.save_psi must be a boolean")
     if r.save_interval < 1:
         raise ConfigValidationError(f"result.save_interval must be >= 1, got {r.save_interval}")
     if r.batch_size < 1:
         raise ConfigValidationError(f"result.batch_size must be >= 1, got {r.batch_size}")
+
+
+def _validate_checkpoint(cfg: Config) -> None:
+    c = cfg.checkpoint
+    if type(c.every_steps) is not int or c.every_steps < 0:
+        raise ConfigValidationError("checkpoint.every_steps must be a nonnegative integer")
+    for name in ("path", "resume_from"):
+        value = getattr(c, name)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise ConfigValidationError(f"checkpoint.{name} must be a nonempty path or None")
+    if not isinstance(c.on_signal, bool):
+        raise ConfigValidationError("checkpoint.on_signal must be a boolean")
 
 
 def _validate_boundary(cfg: Config) -> None:

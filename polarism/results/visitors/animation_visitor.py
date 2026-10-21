@@ -75,6 +75,7 @@ class AnimationFieldSpec:
     norm: str | None = None
     norm_gamma: float = 0.3
     clim: tuple[float, float] | None = None
+    label: str | None = None
 
 
 class AnimationVisitor(ResultVisitor):
@@ -137,6 +138,7 @@ class AnimationVisitor(ResultVisitor):
 
         self._xp = compute_engine.xp
         self._luts: list[Any] = [build_lut(self._xp, spec.cmap) for spec in panel_specs]
+        self._title_strip = None
 
         self._sample_buf: list[list[Any]] = []
         self._vmins: list[float] | None = None
@@ -235,6 +237,7 @@ class AnimationVisitor(ResultVisitor):
             [s.norm for s in self._panel_specs],
             [s.norm_gamma for s in self._panel_specs],
             self._luts, self._vmins, self._vmaxs,
+            self._title_strip,
         )
         self._t_render_total += time.monotonic() - t_r0
 
@@ -275,11 +278,27 @@ class AnimationVisitor(ResultVisitor):
         return vmins, vmaxs
 
     def _open_encoder(self, probe_transformed: list[Any]) -> None:
+        if any(spec.label is not None for spec in self._panel_specs):
+            from matplotlib.backends.backend_agg import FigureCanvasAgg
+            from matplotlib.figure import Figure
+            import numpy as np
+
+            panel_width = probe_transformed[0].shape[1]
+            width = panel_width * len(self._panel_specs)
+            figure = Figure(figsize=(width / 100, 0.32), dpi=100, facecolor="black")
+            canvas = FigureCanvasAgg(figure)
+            for index, spec in enumerate(self._panel_specs):
+                figure.text((index + 0.5) / len(self._panel_specs), 0.5,
+                            spec.label or spec.source, color="white", ha="center",
+                            va="center", fontsize=12)
+            canvas.draw()
+            self._title_strip = self._xp.asarray(np.asarray(canvas.buffer_rgba())[:, :, :3].copy())
         probe_frame = render_panels(
             self._xp, probe_transformed,
             [s.norm for s in self._panel_specs],
             [s.norm_gamma for s in self._panel_specs],
             self._luts, self._vmins, self._vmaxs,
+            self._title_strip,
         )
         probe_cpu = probe_frame.get() if hasattr(probe_frame, "get") else probe_frame
         import numpy as np
@@ -318,6 +337,7 @@ class AnimationVisitor(ResultVisitor):
             [s.norm for s in self._panel_specs],
             [s.norm_gamma for s in self._panel_specs],
             self._luts, self._vmins, self._vmaxs,
+            self._title_strip,
         )
         self._t_render_total += time.monotonic() - t_r0
         t_w0 = time.monotonic()

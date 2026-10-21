@@ -1,7 +1,7 @@
 # Plugins
 
 A plugin is a Python module that registers a laser, potential, reservoir,
-solver, grid, or absorption strategy under a configuration name. Start with
+solver, grid, absorption strategy, storage format, or observable under a configuration name. Start with
 [Your first plugin](first-plugin.md) for a complete run before using the
 component-specific contracts below.
 
@@ -32,6 +32,8 @@ component-specific contracts below.
 | [Solver](solvers.md) | `polarism.solver.register_solver` | `cfg.solver.method` | `SolverClass(config, grid)` |
 | [Grid](grids.md) | `polarism.grid.register_grid` | `cfg.grid.grid_type` | `GridClass(grid_config)` |
 | [Absorption](absorption.md) | `polarism.boundary_conditions.absorption.register_absorption` | `cfg.boundary_condition.absorption` | `StrategyClass(grid, boundary_config, physics)` |
+| [Storage format](storage.md) | `polarism.results.storage.register_storage` | `cfg.result.formats` | `StorageClass(output_dir, batch_size, config, x, y)` |
+| [Observable](observables.md) | `polarism.results.register_observable` | `cfg.result.observables` | `factory(controller)` |
 
 In `multiple` laser mode, the factory calls the same laser constructor once per YAML entry. The other factories each create one selected object.
 
@@ -42,7 +44,7 @@ In `multiple` laser mode, the factory calls the same laser constructor once per 
 2. It creates the grid, boundary absorption strategy, potential, lasers,
    `PumpField`, reservoir, `SimulationState`, and solver, in that order.
 3. It adds the strategy's `get_potential_distribution()` to the external
-   potential. If outputs are enabled, it builds result nodes; the reservoir's
+   potential. If outputs are enabled or a visitor is added, it builds result nodes; the reservoir's
    `make_result_nodes()` contributes optional nodes.
 4. During a run, the controller calls `solver.advance(...)` for chunks between
    output samples. The inherited `advance()` calls `step(...)` repeatedly and

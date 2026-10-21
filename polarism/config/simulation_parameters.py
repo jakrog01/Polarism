@@ -116,6 +116,11 @@ class ResultParameters:
     save_hdf5: bool = False
     save_json: bool = False
     save_npy: bool = False
+    formats: tuple[str, ...] = ()
+    observables: tuple[str, ...] = ()
+    compression: str = "none"
+    compression_level: int = 4
+    save_psi: bool = False
     save_interval: int = 1
     batch_size: int = 1000
     output_directory: str = "simulation_results"
@@ -136,6 +141,15 @@ class ComputeEngineParameters:
 
 
 @dataclass
+class CheckpointParameters:
+    """Control periodic and signal-triggered checkpoints."""
+    every_steps: int = 0
+    path: str | None = None
+    resume_from: str | None = None
+    on_signal: bool = True
+
+
+@dataclass
 class Config:
     """Store the full simulation configuration."""
     grid: GridParameters = field(default_factory=GridParameters)
@@ -151,3 +165,4 @@ class Config:
     compute_engine: ComputeEngineParameters = field(
         default_factory=ComputeEngineParameters
     )
+    checkpoint: CheckpointParameters = field(default_factory=CheckpointParameters)

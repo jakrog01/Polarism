@@ -1,45 +1,116 @@
 # Output and Visualization
 
-Result handling is configured through `cfg.result`. The core library supports live visualization plus batched storage in several formats, plus append-only HDF5 helpers for large batch runs.
+Result handling is configured through `cfg.result`. A run can write result
+files, stream a movie, show a live plot, or feed custom visitors; all of them
+receive the same result frames.
 
-## Live visualization
+## What gets recorded
 
-Enable local plotting with:
+The controller builds one result node per quantity. Saved names are ASCII;
+plots and movie titles use the display label.
 
-```python
-cfg.result.real_time_view = True
-cfg.result.real_time_refresh_interval = 0.1
-```
+| Name | Label | Kind | Present when |
+| --- | --- | --- | --- |
+| `density` | `|ψ|²` | field | always |
+| `norm` | `N(t)` | scalar | always |
+| `psi` | `psi` | complex field | `cfg.result.save_psi = True` |
+| `pump` | `Pump` | field | `cfg.laser.expose_results = True` (default) |
+| `N_R`, `N_R_max` | | field, scalar | `single` reservoir |
+| `nA`, `nI`, `nA_max`, `nI_max` | | fields, scalars | `double` reservoir |
+| `nR`, `nI`, `nR_max`, `nI_max` | | fields, scalars | `quadratic-double` reservoir |
 
-This is useful for interactive debugging, not for large unattended cluster runs.
+Per-laser peak powers are stored as the scalar group `P_lasers` (`L0`, `L1`, …).
+Additional quantities come from [observable plugins](../plugins/observables.md)
+selected with `cfg.result.observables`.
 
-## Persistent storage
+The initial state is recorded at its starting time. After that, every output
+receives a frame every `save_interval` solver steps, at times
+`save_interval * dt`, `2 * save_interval * dt`, and so on.
 
-The main storage switches are:
+## Saving results
 
 ```python
 cfg.result.save_results = True
-cfg.result.save_hdf5 = True
-cfg.result.save_json = False
-cfg.result.save_npy = False
+cfg.result.formats = ("hdf5",)
 cfg.result.save_interval = 10
-cfg.result.batch_size = 1000
+cfg.result.save_psi = False
+cfg.result.compression = "none"
 cfg.result.output_directory = "simulation_results"
 ```
 
-The initial state is recorded at its starting time. After that, storage and
-animation receive a frame every `save_interval` solver steps, at times
-`save_interval * dt`, `2 * save_interval * dt`, and so on. Stored results go
-into a run directory named `<output_directory>/<YYYYmmdd-HHMMSS>`. If that
-name already exists, a numeric suffix (`-1`, `-2`, ...) gives the new run its
-own directory.
+Each run writes into its own directory `<output_directory>/<YYYYmmdd-HHMMSS>`;
+a numeric suffix (`-1`, `-2`, …) is added if that name already exists.
 
-Format guidance:
+Built-in formats:
 
-- `save_hdf5`: best default for long runs and large field data.
-- `save_npy`: useful when you want lightweight NumPy reloads for downstream analysis.
-- `save_json`: useful for debugging small outputs, but not efficient for large fields.
-- `batch_size`: controls how many result frames the library visitors buffer before flushing to disk.
+| Format | Files | Use |
+| --- | --- | --- |
+| `hdf5` | `results.h5` | default choice for long runs and large fields |
+| `npy` | `batch_*.npz`, `static_*.npy`, `grid_*.npy`, `metadata.json` | NumPy-only downstream tools |
+| `json` | `batch_*.json` | debugging small runs |
+
+The older switches `save_hdf5`, `save_npy` and `save_json` still work and are
+merged with `formats`. Further formats can be added as
+[storage plugins](../plugins/storage.md).
+
+`save_psi = True` stores the complex condensate field, which keeps the phase
+needed to locate vortices or to compute momentum-space quantities later. JSON
+stores complex arrays as `{"real": ..., "imag": ...}`.
+
+### Performance
+
+Storage copies each frame on the device and returns immediately; a background
+thread moves the data to host memory and writes it, so the solver keeps
+running while files are written. The queue of pending frames is bounded by
+frame count and by device memory, and the simulation waits if the disk cannot
+keep up. Pending frames are written when the run ends or is interrupted, and a
+storage error stops the run.
+
+HDF5 datasets are uncompressed by default. Simulation fields compress poorly
+(typically to 60–90 % of their size) while compression multiplies the write
+time roughly tenfold, so set `compression = "lzf"` or `"gzip"` (with
+`compression_level` from 0 to 9) only when disk space matters more than run
+time. Compressed HDF5 datasets use the shuffle filter; NPY batches use
+`numpy.savez_compressed` when any compression is selected.
+
+A pump that does not change in time (continuous lasers without a positive
+`delay`) is written once as a static field: `static/pump` in HDF5,
+`static_pump.npy` in NPY, or under `"static"` in the first JSON batch.
+
+## Reading results
+
+`polarism.load_results` reads HDF5 and NPY runs with the same API:
+
+```python
+import polarism as ps
+
+with ps.load_results("simulation_results/20260101-120000") as result:
+    density = result.fields["density"][::10]
+    norm = result.scalars["norm"][:]
+    pump = result.static["pump"][:]
+    x, y, t = result.x, result.y, result.time
+    dt = result.config["solver"]["dt"]
+```
+
+For HDF5 runs, `fields`, `scalars` and `static` return `h5py` datasets, so
+slicing reads only the selected frames from disk; use `[:]` for the whole
+array. NPY runs return NumPy arrays. `attrs` holds the file metadata
+(`format_version`, `polarism_version`). Files written by Polarism 0.3 load with
+their old names mapped to the new ones.
+
+The HDF5 layout (`format_version = 2`) is:
+
+| Path | Content |
+| --- | --- |
+| `time` | frame times in ps |
+| `fields/<name>` | field frames, shape `(frames, ny, nx)` |
+| `scalars/<name>` | scalar series |
+| `scalar_groups/<group>/<label>` | grouped scalar series |
+| `static/<name>` | time-independent fields |
+| `grid/x`, `grid/y` | 1-D grid coordinates in µm |
+| `config` | attribute `json` with the full configuration |
+
+Datasets carry `label` and, where known, `units` attributes.
 
 ## Online animation
 
@@ -49,44 +120,48 @@ The core library can stream a movie while the simulation is running:
 cfg.result.animate = True
 cfg.result.animation_fps = 8
 cfg.result.animation_target_seconds = 60
-cfg.result.animation_fields = ("|ψ|²", "nA", "nI", "Pump")
+cfg.result.animation_fields = ("density", "nA", "nI", "pump")
 cfg.result.animation_backend = "auto"
 cfg.result.animation_encoder = "h264_nvenc"
 cfg.result.animation_output = "simulation_results/animation.mp4"
 ```
 
-The animation visitor receives backend-native arrays from `ResultsManager`, so a
-CuPy run can render false-colour panels without first converting every field to
-CPU arrays for the visitor.  The final encoded frame still passes through
-ffmpeg as raw RGB video.
+Panels are titled with the display labels. The 0.3 names (`|ψ|²`, `N(t)`,
+`Pump`) are still accepted in `animation_fields` with a deprecation warning.
 
-Animation failures are treated differently from storage failures.  A broken
-encoder is aborted and the animation visitor is disabled, while HDF5/JSON/NPY
-storage failures remain fatal.  This keeps simulation data trustworthy while
-preventing a movie encoder crash from destroying a long run.
+The animation visitor receives backend-native arrays, so a CuPy run renders
+false-colour panels on the GPU; only the final RGB frame goes to ffmpeg.
+A broken encoder is aborted and the animation is disabled, while storage
+failures stay fatal, so a movie problem never costs the simulation data.
 
-Colour limits are inferred from the first sample frames unless fixed limits are
-provided by the caller.  For pulsed or delayed-growth runs, fixed limits are
-recommended so that early low-density frames do not make later frames saturate.
+Colour limits are inferred from the first sample frames. For pulsed or
+delayed-growth runs, fixed limits avoid early low-density frames making later
+frames saturate.
 
-## What gets recorded
+## Live visualization
 
-The controller builds result nodes for quantities such as:
+```python
+cfg.result.real_time_view = True
+cfg.result.real_time_refresh_interval = 0.1
+```
 
-- condensate density `|psi|^2`
-- total norm `N(t)`
-- reservoir-derived outputs, when the reservoir exposes them
-- pump field snapshots, when pump result exposure is enabled
+This is useful for interactive debugging, not for unattended cluster runs.
 
-## Appendable HDF5 output
+## Custom visitors
 
-Batch pipelines that stream explicit field snapshots do not use `cfg.result.save_hdf5`. Instead, they write scenario outputs through the appendable HDF5 utilities exported from `polarism.results.storage`.
+`SimulationController.add_visitor(visitor)` adds any
+[`ResultVisitor`](../plugins/observables.md); it receives every
+recorded frame, and its `finalize()` is called when the run ends.
 
-That path now behaves as follows:
+## Appendable HDF5 writers
 
-- `create_hdf5_writer(...)` selects a CPU-buffered writer on CPU runs and a GPU-async writer on CuPy runs.
-- the GPU writer uses double buffering and attempts pinned host-memory registration so device-to-host copies can overlap with simulation work
-- `compute_batch_size(...)` derives the batch depth from the active field set, spatial shape, and currently free GPU memory, while reserving headroom for the solver
-- on CPU runs the heuristic falls back to a fixed batch depth of `500`
+Batch pipelines that stream their own field snapshots, outside
+`SimulationController`, can use the append-only writers exported from
+`polarism.results.storage`:
 
-This separation keeps the reusable storage implementation in `polarism.results.storage` while the pipeline remains responsible only for scenario orchestration and field/scalar selection.
+- `create_hdf5_writer(...)` selects a CPU-buffered writer on CPU runs and a
+  GPU-async writer on CuPy runs.
+- The GPU writer uses double buffering and pinned host memory so device-to-host
+  copies overlap with simulation work.
+- `compute_batch_size(...)` derives the batch depth from the field set, spatial
+  shape and free GPU memory; on CPU it uses a fixed depth of `500`.

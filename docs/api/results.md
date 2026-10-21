@@ -2,6 +2,13 @@
 
 The results subsystem is organized around two abstractions: providers expose quantities, and visitors decide what to do with them.
 
+Checkpoints are separate HDF5 state files. They are written by
+`SimulationController.save_checkpoint` and resumed with
+`SimulationController.load_checkpoint` or `cfg.checkpoint.resume_from`; see the
+[checkpoint guide](../user-guide/checkpoint-and-restart.md). Stored result frames
+for a resumed run begin at the next configured output step, since the checkpoint
+frame belongs to the earlier run.
+
 ## Result provider interface
 
 Objects that want to expose outputs implement the `ResultProvider` contract by returning a list of result nodes.
@@ -74,6 +81,19 @@ GPU-capable NVENC when available and falling back to CPU encoders when needed.
 
 ## Output backends
 
+`polarism.load_results(path)` accepts a run directory or `results.h5` and returns
+a `Results` object. Its `time`, `fields`, `scalars`, `scalar_groups`, `static`,
+`config`, `x`, `y`, and `attrs` properties provide the saved values. HDF5 fields
+are read when accessed. Use it as a context manager or call `close()` when done.
+Built-in names are ASCII: `density`, `norm`, and `pump`; their display labels
+remain `|ψ|²`, `N(t)`, and `Pump`. Older HDF5 files are read with these names
+mapped automatically.
+
+HDF5 format version 2 records `format_version` and `polarism_version` at the
+root, 1-D coordinates in `grid/x` and `grid/y`, and dataset labels. Time uses
+ps and coordinates use µm. NPY output writes the coordinates as `grid_x.npy`
+and `grid_y.npy` with `metadata.json` holding the same metadata.
+
 The user-facing result configuration exposes these main storage choices:
 
 | Flag | Meaning |
@@ -81,6 +101,8 @@ The user-facing result configuration exposes these main storage choices:
 | `save_hdf5` | structured binary storage for large runs |
 | `save_json` | lightweight metadata-oriented serialization |
 | `save_npy` | NumPy array dumps |
+| `formats` | additional registered formats; combined with enabled `save_*` flags |
+| `observables` | registered factories that add result nodes |
 | `real_time_view` | interactive visualization during a run |
 | `animate` | stream an online animation during the run |
 
@@ -95,6 +117,22 @@ The reusable storage module also exports append-only HDF5 helpers used by batch 
 | `create_hdf5_writer` | backend-selection factory for CPU vs GPU runs |
 
 These helpers are separate from the visitor-based `cfg.result` path.
+
+See [storage plugins](../plugins/storage.md) and [observable plugins](../plugins/observables.md)
+for the result extension contracts, including custom visitors.
+
+The storage visitor snapshots backend arrays when a frame is visited and sends
+them to one background writer. A bounded queue limits pending device snapshots
+to at most about 1 GiB or one quarter of free device memory. The writer waits
+for the CUDA event before transfer, preserves frame order, and reports write
+errors to the simulation thread. Finalization drains pending frames.
+
+HDF5 datasets are uncompressed by default. `cfg.result.compression` also accepts
+`"lzf"` and `"gzip"` (with the shuffle filter); `compression_level` controls gzip only. The pump is
+stored once under `static/pump` when every laser is time independent and has
+no positive delay. NPY writes `static_pump.npy`, and JSON puts the field under
+`"static"` in the first batch. `save_psi=True` adds a complex `psi` field;
+JSON represents each complex array with `"real"` and `"imag"` arrays.
 
 ## Why this abstraction matters
 
