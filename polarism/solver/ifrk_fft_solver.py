@@ -7,6 +7,7 @@ import numpy as np
 
 from polarism.config.dtype_utils import complex_dtype, real_dtype
 from polarism.config.batch_physics import BatchPhysics
+from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -121,7 +122,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
             res_i = tuple(res_i)
             rho = psi_i.real * psi_i.real + psi_i.imag * psi_i.imag
             if ci not in pump_at:
-                pump_at[ci] = pump(state.t + ci * h)
+                pump_at[ci] = evaluate_pump(pump, state.t + ci * h)
             rhs = self._rhs_psi(psi_i, res_i, potential, reservoir, rho, psi_i_k)
             f.append(xp.fft.fft2(rhs, axes=(-2, -1)).astype(self._complex_dtype, copy=False))
             derivatives.append(reservoir.get_derivatives(psi_i, pump_at[ci], res_i, rho))

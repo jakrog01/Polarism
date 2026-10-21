@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.compute_engine import has_full_rate_fp64
 from polarism.config.batch_physics import BatchPhysics
+from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -524,6 +525,8 @@ def build_kernel_source_1d(
     preamble: str = PREAMBLE_1D,
     combine_preamble: str = "",
     launch_bounds: str = "",
+    batched: bool = False,
+    physics_fields=(),
 ) -> tuple[str, str, str]:
     """Build the RHS, intermediate stage, and final stage CUDA sources."""
     neighbor_code = (
@@ -619,7 +622,64 @@ def build_kernel_source_1d(
     # envelope is bitwise equal to the pump array computed by the laser.
     mul = "__fmul_rn" if real_type == "float" else "__dmul_rn"
     sources = (rhs_tmpl.format(**fmt), fused_tmpl.format(**stage_fmt), fused_tmpl.format(**final_fmt))
-    return tuple(s.replace("pump_scale * pump[tid]", f"{mul}(pump_scale, pump[tid])") for s in sources)
+    sources = tuple(s.replace("pump_scale * pump[tid]", f"{mul}(pump_scale, pump[tid])") for s in sources)
+    if batched:
+        return tuple(_batch_staged_source(s, real_type, bc_type, laplacian_type,
+                                          physics_fields) for s in sources)
+    return sources
+
+
+def _batch_parameter_names(physics_fields):
+    names = {"g_C": "g_C", "g_R": "g_R", "g_I": "g_I", "R": "R_cond",
+             "gamma_C": "gamma_C", "gamma_R": "gamma_R", "gamma_I": "gamma_I",
+             "gamma_A": "gamma_A", "R_IA": "R_IA", "R_AI": "R_AI",
+             "kappa": "kappa", "kinetic_relaxation_eta": "kinetic_relaxation_eta",
+             "reservoir_diffusion_R": "diff_R", "reservoir_diffusion_A": "diff_A",
+             "reservoir_diffusion_I": "diff_I"}
+    result = ["neg_hbar2_over_2m" for name in physics_fields
+              if name in ("hbar", "m_eff")]
+    if "hbar" in physics_fields:
+        result.append("inv_hbar")
+    result.extend(names[name] for name in physics_fields if name in names)
+    return tuple(dict.fromkeys(result))
+
+
+def _batch_staged_source(source, real_type, bc_type, laplacian_type,
+                         physics_fields):
+    import re
+
+    head, body = source.split(") {", 1)
+    head += (f", const int members, const int potential_n, const int pump_n, "
+             f"const {real_type}* batch_constants")
+    preamble = """
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    const int N = nx * ny;
+    if (tid >= N * members) return;
+    const int member = tid / N;
+    const int spatial = tid % N;
+    const int i = spatial / nx;
+    const int j = spatial % nx;
+"""
+    body = body.replace(PREAMBLE_1D, preamble)
+    if bc_type == "periodic":
+        body = body.replace(_PERIODIC_NEIGHBORS,
+                            re.sub(r"(const int (?:up|dn|lt|rt) = )",
+                                   r"\1member*N + ", _PERIODIC_NEIGHBORS))
+    if laplacian_type == "isotropic-9pt":
+        diag = _build_laplacian_code(laplacian_type, bc_type, real_type)[0]
+        body = body.replace(diag, re.sub(r"(const int (?:ul|ur|dl|dr) = )",
+                                         r"\1member*N + ", diag))
+    body = body.replace("V_re[tid]", "V_re[tid % potential_n]")
+    body = body.replace("V_im[tid]", "V_im[tid % potential_n]")
+    body = body.replace("pump[tid]", "pump[tid % pump_n]")
+    names = _batch_parameter_names(physics_fields)
+    for name in names:
+        body = re.sub(rf"\b{name}\b", f"{name}_member", body)
+    loads = "".join(f"\n    const {real_type} {name}_member = "
+                    f"batch_constants[{i}*members+member];"
+                    for i, name in enumerate(names))
+    body = body.replace(preamble, preamble + loads, 1)
+    return head + ") {" + body
 
 
 def _tile_index(index: int, size: int, bc_type: str) -> int:
@@ -670,7 +730,8 @@ def _prefer_tiled(precision: str, major: int, minor: int) -> bool:
 
 def build_tiled_kernel_source(bc_type: str, real_type: str, reservoir_type: str,
                               laplacian_type: str, tile_x: int, tile_y: int,
-                              complex_potential: bool, graph: bool = False) -> str:
+                              complex_potential: bool, graph: bool = False,
+                              batched: bool = False, physics_fields=()) -> str:
     """Build a whole-step kernel from the staged RHS expressions."""
     import re
 
@@ -842,11 +903,55 @@ def build_tiled_kernel_source(bc_type: str, real_type: str, reservoir_type: str,
                   f"                {name}_out[gid] = ({name}_new < 0) ? 0 : {name}_new;"]
     lines += ["            }", "        }", "    }", "    __syncthreads();", "}"]
     kernel = "\n    ".join(lines)
-    return (coord_source + "\n"
+    source = (coord_source + "\n"
             + rhs_header + ") {\n    const int i = gid / nx;\n    const int j = gid % nx;\n"
             + body + "\n}\n"
             + f'extern "C" __global__ void tiled_step{suffix}(' + ",\n    ".join(declarations)
             + ") {\n    " + kernel + "\n}\n")
+    if batched:
+        return _batch_tiled_source(source, real_type, physics_fields,
+                                   parameter_names)
+    return source
+
+
+def _batch_tiled_source(source, real_type, physics_fields, parameter_names):
+    device, kernel = source.split('extern "C" __global__ void tiled_step', 1)
+    device = device.replace("const int nx, const int ny, const int tid, const int gid,",
+                            "const int nx, const int ny, const int tid, const int gid, "
+                            "const int potential_n, const int pump_n,")
+    device = device.replace("const int i = gid / nx;", "const int i = (gid % (nx*ny)) / nx;")
+    device = device.replace("const int j = gid % nx;", "const int j = gid % nx;")
+    device = device.replace("V_re[gid]", "V_re[gid % potential_n]")
+    device = device.replace("V_im[gid]", "V_im[gid % potential_n]")
+    device = device.replace("pump[gid]", "pump[gid % pump_n]")
+    marker = ") {\n    "
+    header, body = kernel.split(marker, 1)
+    header += (f",\n    const int members, const int potential_n, "
+               f"const int pump_n0, const int pump_n1, const int pump_n2, "
+               f"const {real_type}* batch_constants")
+    body = body.replace("const int lane = threadIdx.x;",
+                        "const int lane = threadIdx.x;\n    const int member = blockIdx.z;\n"
+                        "    const int member_offset = member * nx * ny;", 1)
+    body = body.replace("const int gid = tiled_coord(vy, ny)*nx + tiled_coord(vx, nx);",
+                        "const int gid = member_offset + tiled_coord(vy, ny)*nx + tiled_coord(vx, nx);")
+    names = _batch_parameter_names(physics_fields)
+    loads = "".join(f"\n    const {real_type} {name}_member = "
+                    f"batch_constants[{i}*members+member];"
+                    for i, name in enumerate(names))
+    body = body.replace("const int member_offset = member * nx * ny;",
+                        "const int member_offset = member * nx * ny;" + loads, 1)
+    call = ", ".join(parameter_names) + ");"
+    member_call = ", ".join(f"{name}_member" if name in names else name
+                            for name in parameter_names) + ");"
+    body = body.replace(call, member_call)
+    body = body.replace("nx, ny, p, gid, vx, vy, pitch, stage_scale,",
+                        "nx, ny, p, gid, potential_n, stage_pump_n, "
+                        "vx, vy, pitch, stage_scale,")
+    body = body.replace("const int out = (y-4)*",
+                        "const int stage_pump_n = stage == 0 ? pump_n0 : "
+                        "(stage == 3 ? pump_n2 : pump_n1);\n"
+                        "        const int out = (y-4)*", 1)
+    return device + 'extern "C" __global__ void tiled_step' + header + marker + body
 
 
 def _auto_tune_block_size(kern_rhs, _N: int) -> int:
@@ -942,9 +1047,18 @@ class RK4CudaSolver(AbstractSolver):
                 )
         self._laplacian_type = laplacian
 
-        self._use_gpu = hasattr(self.xp, "cuda") and self.batch_physics.size is None
+        self._use_gpu = hasattr(self.xp, "cuda")
+        self._batched = False
+        self._members = 1
+        self._physics_fields = tuple(name for name in self.batch_physics.host
+                                     if name in ("hbar", "m_eff", "g_C", "g_R", "g_I", "R",
+                                                 "gamma_C", "gamma_R", "gamma_I", "gamma_A",
+                                                 "R_IA", "R_AI", "kappa", "kinetic_relaxation_eta",
+                                                 "reservoir_diffusion_I", "reservoir_diffusion_A",
+                                                 "reservoir_diffusion_R"))
 
         if self._use_gpu:
+            self._physics_device = self.xp.zeros(1, dtype=self._np_real)
             _cast = self._np_real
 
             self._k_nx = _np.int32(self.nx)
@@ -953,31 +1067,32 @@ class RK4CudaSolver(AbstractSolver):
             self._k_int = _np.int32
             self._k_inv_dx2 = _cast(self._inv_dx2)
             self._k_inv_dy2 = _cast(self._inv_dy2)
-            self._k_neg_hbar2_over_2m = _cast(self._neg_hbar2_over_2m)
-            self._k_inv_hbar = _cast(self._inv_hbar)
-            self._k_g_C = _cast(self._g_C)
-            self._k_g_R = _cast(self._g_R)
-            self._k_g_I = _cast(self._g_I)
-            self._k_R = _cast(self._R)
-            self._k_gamma_C = _cast(self._gamma_C)
-            self._k_gamma_R = _cast(self._gamma_R)
+            base = config.physics
+            self._k_neg_hbar2_over_2m = _cast(-(base.hbar ** 2) / (2.0 * base.m_eff))
+            self._k_inv_hbar = _cast(1.0 / base.hbar)
+            self._k_g_C = _cast(base.g_C)
+            self._k_g_R = _cast(base.g_R)
+            self._k_g_I = _cast(base.g_I)
+            self._k_R = _cast(base.R)
+            self._k_gamma_C = _cast(base.gamma_C)
+            self._k_gamma_R = _cast(base.gamma_R)
 
             self._k_half_dt = _cast(0.5 * self._dt)
             self._k_dt = _cast(self._dt)
             self._k_dt6 = _cast(self._dt / 6.0)
-            self._k_kinetic_relaxation_eta = _cast(self._kinetic_relaxation_eta)
-            self._k_diff_I = _cast(self._reservoir_diffusion_I)
-            self._k_diff_A = _cast(self._reservoir_diffusion_A)
-            self._k_diff_R = _cast(self._reservoir_diffusion_R)
+            self._k_kinetic_relaxation_eta = _cast(base.kinetic_relaxation_eta)
+            self._k_diff_I = _cast(base.reservoir_diffusion_I)
+            self._k_diff_A = _cast(base.reservoir_diffusion_A)
+            self._k_diff_R = _cast(base.reservoir_diffusion_R)
 
             if self._reservoir_type == "double":
-                self._k_gamma_I = _cast(self._gamma_I)
-                self._k_gamma_A = _cast(self._gamma_A)
-                self._k_R_IA = _cast(self._R_IA)
-                self._k_R_AI = _cast(self._R_AI)
+                self._k_gamma_I = _cast(base.gamma_I)
+                self._k_gamma_A = _cast(base.gamma_A)
+                self._k_R_IA = _cast(base.R_IA)
+                self._k_R_AI = _cast(base.R_AI)
             elif self._reservoir_type == "quadratic-double":
-                self._k_gamma_I = _cast(self._gamma_I)
-                self._k_kappa = _cast(self._kappa)
+                self._k_gamma_I = _cast(base.gamma_I)
+                self._k_kappa = _cast(base.kappa)
 
             self._compile_kernels()
             self._init_gpu_buffers()
@@ -1018,6 +1133,53 @@ class RK4CudaSolver(AbstractSolver):
             self._graph_signature = None
             self._graphs_failed = False
 
+    def _activate_batch(self, shape):
+        batched = len(shape) == 3
+        members = shape[0] if batched else 1
+        if batched == self._batched and members == self._members:
+            return
+        import numpy as np
+
+        self._batched = batched
+        self._members = members
+        if batched:
+            physics = self.config.physics
+            values = lambda name: self.batch_physics.host.get(
+                name, np.full(members, getattr(physics, name)))
+            columns = {
+                "neg_hbar2_over_2m": -(values("hbar") ** 2) / (2.0 * values("m_eff")),
+                "inv_hbar": 1.0 / values("hbar"),
+            }
+            for field, name in (("g_C", "g_C"), ("g_R", "g_R"),
+                                ("g_I", "g_I"), ("R", "R_cond"),
+                                ("gamma_C", "gamma_C"), ("gamma_R", "gamma_R"),
+                                ("gamma_I", "gamma_I"), ("gamma_A", "gamma_A"),
+                                ("R_IA", "R_IA"), ("R_AI", "R_AI"),
+                                ("kappa", "kappa"),
+                                ("kinetic_relaxation_eta", "kinetic_relaxation_eta"),
+                                ("reservoir_diffusion_R", "diff_R"),
+                                ("reservoir_diffusion_A", "diff_A"),
+                                ("reservoir_diffusion_I", "diff_I")):
+                columns[name] = values(field)
+            names = _batch_parameter_names(self._physics_fields)
+            if names:
+                self._physics_device = self.xp.asarray(
+                    np.stack([columns[name] for name in names]),
+                    dtype=self._np_real).ravel()
+        self._compile_kernels()
+        self._init_gpu_buffers()
+        self._tiled_kernels.clear()
+        self._graph_cache.clear()
+        self._graph_signature = None
+        if hasattr(self, "_graph_kernels"):
+            del self._graph_kernels
+        if hasattr(self, "_advance_buffers"):
+            del self._advance_buffers
+        if hasattr(self, "_pump_combiner"):
+            del self._pump_combiner
+        if hasattr(self, "_zero_pump"):
+            del self._zero_pump
+
     def _build_kernel_source(
         self, bc_type: str, real_type: str, reservoir_type: str
     ) -> tuple[str, str, str]:
@@ -1025,15 +1187,16 @@ class RK4CudaSolver(AbstractSolver):
         return build_kernel_source_1d(
             bc_type, real_type, reservoir_type,
             laplacian_type=self._laplacian_type,
+            batched=self._batched, physics_fields=self._physics_fields,
         )
 
     def _select_block_size(self) -> int:
         """Pick the CUDA block size."""
-        return _auto_tune_block_size(self._kern_rhs, self.N)
+        return _auto_tune_block_size(self._kern_rhs, self.N * self._members)
 
     def _make_launch_dims(self, block_size: int) -> None:
         """Set the CUDA launch dimensions."""
-        grid = (self.N + block_size - 1) // block_size
+        grid = (self.N * self._members + block_size - 1) // block_size
         self._k_grid = (grid,)
         self._k_block = (block_size,)
 
@@ -1080,6 +1243,7 @@ class RK4CudaSolver(AbstractSolver):
             source = build_tiled_kernel_source(
                 self.grid_type, self._real_type, self._reservoir_type,
                 self._laplacian_type, tile_x, tile_y, complex_potential, graph,
+                self._batched, self._physics_fields,
             )
             suffix = {"single": "", "double": "_double",
                       "quadratic-double": "_qdouble"}[self._reservoir_type]
@@ -1096,7 +1260,7 @@ class RK4CudaSolver(AbstractSolver):
     def _init_gpu_buffers(self) -> None:
         """Allocate three RK4 derivative stages and constant potential buffer."""
         xp = self.xp
-        N = self.N
+        N = self.N * self._members
 
         self._complex_dtype = xp.complex64 if self._precision == "single" else xp.complex128
         self._real_dtype = xp.float32 if self._precision == "single" else xp.float64
@@ -1152,6 +1316,15 @@ class RK4CudaSolver(AbstractSolver):
                   v_im_scale, psi_out, reservoir_out, scale_buffer=None,
                   scale_offset=0):
         """Launch the same RK4 kernels for each supported reservoir model."""
+        if self._batched:
+            sizes = (self.N, self.N * self._members)
+            if V_re.size not in sizes or V_im.size not in sizes or any(
+                    pump.size not in sizes for pump in pumps):
+                raise ValueError("batched rk4-cuda expects shared 2-D or member 3-D pump and potential")
+        def batch_args(stage):
+            return ((self._k_int(self._members), self._k_int(V_re.size),
+                     self._k_int(pumps[stage].size), self._physics_device)
+                    if self._batched else ())
         if self._use_tiled and self._tile_shape is not None:
             kernel, shared_bytes = self._tiled_kernel(bool(v_im_scale),
                                                        scale_buffer is not None)
@@ -1160,11 +1333,14 @@ class RK4CudaSolver(AbstractSolver):
                           if scale_buffer is not None else pump_scales)
             kernel(
                 ((self.nx + tile_x - 1) // tile_x,
-                 (self.ny + tile_y - 1) // tile_y), (256,),
+                 (self.ny + tile_y - 1) // tile_y, self._members), (256,),
                 (psi0, *reservoir0, V_re, V_im, *pumps,
                  psi_out, *reservoir_out, self._k_nx, self._k_ny,
                  *scale_args, v_im_scale, self._k_half_dt, self._k_dt,
-                 self._k_dt6, *self._k_rhs_parameters),
+                 self._k_dt6, *self._k_rhs_parameters,
+                 *((self._k_int(self._members), self._k_int(V_re.size),
+                    *(self._k_int(pump.size) for pump in pumps), self._physics_device)
+                   if self._batched else ())),
                 shared_mem=shared_bytes,
             )
             return
@@ -1187,7 +1363,7 @@ class RK4CudaSolver(AbstractSolver):
             grid, block,
             (psi0, *reservoir0, V_re, V_im, pumps[0],
              k_psi[0], *k_reservoir[0], *dimensions,
-             *scale_args(0), v_im_scale, *parameters),
+             *scale_args(0), v_im_scale, *parameters, *batch_args(0)),
         )
         for stage in (1, 2):
             staged_reservoir = tuple(
@@ -1199,7 +1375,7 @@ class RK4CudaSolver(AbstractSolver):
                 (psi0, k_psi[stage - 1], *staged_reservoir,
                  V_re, V_im, pumps[1], k_psi[stage], *k_reservoir[stage],
                  *dimensions, *scale_args(1), v_im_scale,
-                 self._k_half_dt, *parameters),
+                 self._k_half_dt, *parameters, *batch_args(1)),
             )
 
         staged_reservoir = tuple(
@@ -1216,7 +1392,7 @@ class RK4CudaSolver(AbstractSolver):
              V_re, V_im, pumps[2], psi_out, *reservoir_out,
              k_psi[0], k_psi[1], *earlier_reservoir,
              *dimensions, *scale_args(2), v_im_scale,
-             self._k_dt, self._k_dt6, *parameters),
+             self._k_dt, self._k_dt6, *parameters, *batch_args(2)),
         )
 
     def _compile_graph_kernels(self):
@@ -1248,8 +1424,9 @@ class RK4CudaSolver(AbstractSolver):
             return
         xp = self.xp
         fields = 1 if self._reservoir_type == "single" else 2
-        psi = tuple(xp.empty(self.N, self._complex_dtype) for _ in range(2))
-        res = tuple(tuple(xp.empty(self.N, self._real_dtype) for _ in range(fields))
+        total = self.N * self._members
+        psi = tuple(xp.empty(total, self._complex_dtype) for _ in range(2))
+        res = tuple(tuple(xp.empty(total, self._real_dtype) for _ in range(fields))
                     for _ in range(2))
         self._advance_buffers = (psi, res)
         self._graph_scales = xp.empty(64 * 3, self._real_dtype)
@@ -1307,18 +1484,14 @@ class RK4CudaSolver(AbstractSolver):
 
     def advance(self, potential, pump, reservoir, boundary_condition, state,
                 start_step: int, n_steps: int) -> None:
-        """Run reusable CUDA chunks, or CuPy stages for batched physics.
-
-        The tiled and graph kernels accept one scalar physics set. A physics
-        batch uses the shape-aware CuPy RK4 stages until those kernels have a
-        member-indexed parameter ABI.
-        """
+        """Run CUDA chunks; custom reservoirs or boundary actions need individual steps."""
         if n_steps <= 0:
             return
         self.batch_physics.check(state.psi)
-        if not self._use_gpu or state.psi.ndim == 3:
+        if not self._use_gpu:
             return super().advance(potential, pump, reservoir, boundary_condition,
                                    state, start_step, n_steps)
+        self._activate_batch(state.psi.shape)
         from polarism.reservoir.single_reservoir import SingleReservoir
         from polarism.reservoir.double_reservoir import DoubleReservoir
         from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
@@ -1335,7 +1508,11 @@ class RK4CudaSolver(AbstractSolver):
         terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
         term = (terms[0] if terms is not None and len(terms) == 1 else
                 pump.separable_term() if terms is None and hasattr(pump, "separable_term") else None)
-        multi = terms is not None and len(terms) > 1
+        if terms is None and term is not None:
+            terms = (term,)
+        multi = terms is not None and (len(terms) > 1 or
+                    (len(shape) == 3 and len(terms) == 1 and
+                     self.xp.ndim(terms[0][1](state.t)) != 0))
         no_lasers = not getattr(pump, "lasers", [True])
         if term is not None:
             envelope, coefficient = term
@@ -1365,9 +1542,10 @@ class RK4CudaSolver(AbstractSolver):
         if multi:
             from polarism.solver.cuda_pump import CudaPumpCombiner
             if not hasattr(self, "_pump_combiner"):
-                self._pump_combiner = CudaPumpCombiner(xp, self._real_dtype, self.N)
+                self._pump_combiner = CudaPumpCombiner(xp, self._real_dtype,
+                                                       self.N * self._members)
             combiner = self._pump_combiner
-            combiner.prepare(terms, 3, 2 * 64 + 1)
+            combiner.prepare(terms, 3, 2 * 64 + 1, shape=shape)
             xp.cuda.get_current_stream().synchronize()
         else:
             combiner = None
@@ -1559,9 +1737,9 @@ class RK4CudaSolver(AbstractSolver):
         """Advance psi and the reservoir with one classic RK4 CPU step."""
         dt = self._dt
         t = state.t
-        p0 = pump(t)
-        p_half = pump(t + 0.5 * dt)
-        p1 = pump(t + dt)
+        p0 = evaluate_pump(pump, t)
+        p_half = evaluate_pump(pump, t + 0.5 * dt)
+        p1 = evaluate_pump(pump, t + dt)
         psi0 = state.psi.copy()
         res0 = tuple(field.copy() for field in reservoir.get_state())
 
@@ -1603,19 +1781,49 @@ class RK4CudaSolver(AbstractSolver):
         boundary_condition: BoundaryCondition,
         state: SimulationState,
     ) -> None:
-        """Advance the solver by one time step."""
+        """Advance with CUDA kernels or CuPy stages for a custom reservoir model."""
         self.batch_physics.check(state.psi)
-        if not self._use_gpu or state.psi.ndim == 3:
+        if not self._use_gpu:
             self._step_cpu(potential, pump, reservoir, boundary_condition, state)
             return
+        from polarism.reservoir.single_reservoir import SingleReservoir
+        from polarism.reservoir.double_reservoir import DoubleReservoir
+        from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
+
+        supported = {"single": SingleReservoir, "double": DoubleReservoir,
+                     "quadratic-double": QuadraticDoubleReservoir}
+        if type(reservoir) is not supported[self._reservoir_type]:
+            self._step_cpu(potential, pump, reservoir, boundary_condition, state)
+            return
+        self._activate_batch(state.psi.shape)
 
         shape = state.psi.shape
         V_re_flat, V_im_flat = self._prepare_potential_buffers(potential)
         t = state.t
         dt = self._dt
         stage_times = (t, t + 0.5 * dt, t + dt)
-        separable = pump.separable_term() if hasattr(pump, "separable_term") else None
-        if separable is None:
+        terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
+        separable = (terms[0] if terms is not None and len(terms) == 1 else
+                     pump.separable_term() if terms is None and hasattr(pump, "separable_term")
+                     else None)
+        if terms is None and separable is not None:
+            terms = (separable,)
+        combined = terms is not None and (len(terms) > 1 or
+                   (len(terms) == 1 and len(shape) == 3 and
+                    self.xp.ndim(terms[0][1](t)) != 0))
+        if combined:
+            from polarism.solver.cuda_pump import CudaPumpCombiner
+            if not hasattr(self, "_pump_combiner"):
+                self._pump_combiner = CudaPumpCombiner(self.xp, self._real_dtype,
+                                                       self.N * self._members)
+            combiner = self._pump_combiner
+            combiner.prepare(terms, 3, 3, shape=shape)
+            stream = self.xp.cuda.get_current_stream()
+            combiner.coefficients(terms, stage_times, stream)
+            stream.synchronize()
+            pumps = tuple(combiner.combine(i, i) for i in range(3))
+            pump_scales = (self._np_real(1),) * 3
+        elif separable is None:
             pumps = tuple(
                 self._flat_gpu_input(pump(stage_time), self._real_dtype)
                 for stage_time in stage_times
@@ -1635,9 +1843,9 @@ class RK4CudaSolver(AbstractSolver):
             self._flat_gpu_input(field, self._real_dtype)
             for field in reservoir_state
         )
-        psi_out = self.xp.empty(self.N, dtype=self._complex_dtype)
+        psi_out = self.xp.empty(self.N * self._members, dtype=self._complex_dtype)
         reservoir_out = tuple(
-            self.xp.empty(self.N, dtype=self._real_dtype)
+            self.xp.empty(self.N * self._members, dtype=self._real_dtype)
             for _ in reservoir0
         )
 

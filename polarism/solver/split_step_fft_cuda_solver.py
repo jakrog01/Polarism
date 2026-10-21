@@ -9,6 +9,7 @@ import re
 from polarism.compute_engine import compute_engine
 from polarism.config.dtype_utils import complex_dtype, real_dtype
 from polarism.config.batch_physics import BatchPhysics
+from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -246,11 +247,24 @@ class SplitStepFFTCudaSolver(AbstractSolver):
 
     def _pump_pair(self, pump, t):
         times = (t + self.config.solver.dt / 4, t + 3 * self.config.solver.dt / 4)
+        terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
         term = pump.separable_term() if hasattr(pump, "separable_term") else None
-        if len(self._shape) == 3 and term is not None and np.ndim(term[1](t)) != 0:
-            term = None
+        active_terms = terms if terms is not None else (term,) if term is not None else ()
+        if len(self._shape) == 3 and any(np.ndim(coefficient(t)) != 0
+                                         for _, coefficient in active_terms):
+            from polarism.solver.cuda_pump import CudaPumpCombiner
+            if getattr(self, "_pump_combiner", None) is None:
+                self._pump_combiner = CudaPumpCombiner(self.xp, self._real_dtype, self._n)
+            combiner = self._pump_combiner
+            combiner.prepare(active_terms, 2, 2, shape=self._shape)
+            stream = self.xp.cuda.get_current_stream()
+            combiner.coefficients(active_terms, times, stream)
+            stream.synchronize()
+            return ((combiner.combine(0, 0), combiner.combine(1, 1)),
+                    (self._scalar(1), self._scalar(1)))
         if term is None:
-            return (tuple(self._flat_gpu_input(pump(time), self._real_dtype) for time in times),
+            return (tuple(self._flat_gpu_input(evaluate_pump(pump, time), self._real_dtype)
+                          for time in times),
                     (self._scalar(1), self._scalar(1)))
         envelope, coefficient = term
         field = self._flat_gpu_input(envelope, self._real_dtype)
@@ -435,12 +449,12 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
         term = (terms[0] if terms is not None and len(terms) == 1 else
                 pump.separable_term() if terms is None and hasattr(pump, "separable_term") else None)
-        multi = (terms is not None and len(terms) > 1
-                 and (len(self._shape) == 2 or
-                      all(np.ndim(coefficient(state.t)) == 0 for _, coefficient in terms)))
+        if terms is None and term is not None:
+            terms = (term,)
+        multi = terms is not None and (len(terms) > 1 or
+                (len(self._shape) == 3 and len(terms) == 1 and
+                 np.ndim(terms[0][1](state.t)) != 0))
         no_lasers = not getattr(pump, "lasers", [True])
-        if len(self._shape) == 3 and term is not None and np.ndim(term[1](state.t)) != 0:
-            term = None
         if term is not None:
             envelope, coefficient = term
             pump_flat = self._flat_gpu_input(envelope, self._real_dtype)
@@ -535,7 +549,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                         pumps = (combiner.combine(0, 0), combiner.combine(1, 1))
                         factors = (self._scalar(1), self._scalar(1))
                     elif coefficient is None:
-                        pumps = tuple(self._flat_gpu_input(pump(time), self._real_dtype)
+                        pumps = tuple(self._flat_gpu_input(evaluate_pump(pump, time), self._real_dtype)
                                       for time in times)
                         factors = (self._scalar(1), self._scalar(1))
                     else:
@@ -586,7 +600,8 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             # Built-in diffusion uses periodic real_laplacian in reservoir.step;
             # plugin reservoirs keep their own RK2 or other step semantics.
             dt = self.config.solver.dt
-            p1, p2 = (pump(state.t + dt / 4), pump(state.t + 3 * dt / 4))
+            p1, p2 = (evaluate_pump(pump, state.t + dt / 4),
+                      evaluate_pump(pump, state.t + 3 * dt / 4))
             reservoir.step(dt / 2, psi, p1)
             dummy = self._flat_gpu_input(p1, self._real_dtype)
             current = reservoir.get_state()

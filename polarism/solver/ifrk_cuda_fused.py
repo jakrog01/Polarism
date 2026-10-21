@@ -4,6 +4,8 @@ from __future__ import annotations
 import numpy as np
 import re
 
+from polarism.laser.pump_field import evaluate_pump
+
 
 _SOURCE = r"""
 typedef {real} real;
@@ -274,9 +276,23 @@ class FusedIFRK:
 
     def _pump(self, pump, t):
         term = pump.separable_term() if hasattr(pump, "separable_term") else None
+        terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
+        active_terms = terms if terms is not None else (term,) if term is not None else ()
         no_lasers = not getattr(pump, "lasers", [True])
-        if len(self.shape) == 3 and term is not None and np.ndim(term[1](t)) != 0:
-            term = None
+        if len(self.shape) == 3 and any(np.ndim(coefficient(t)) != 0
+                                        for _, coefficient in active_terms):
+            from polarism.solver.cuda_pump import CudaPumpCombiner
+            if getattr(self, "_pump_combiner", None) is None:
+                self._pump_combiner = CudaPumpCombiner(self.xp, self.real, self.n)
+            combiner = self._pump_combiner
+            combiner.prepare(active_terms, len(self.unique_c), len(self.unique_c),
+                             shape=self.shape)
+            times = [t + c * self.host_dt for c in self.unique_c]
+            stream = self.xp.cuda.get_current_stream()
+            combiner.coefficients(active_terms, times, stream)
+            stream.synchronize()
+            samples = [combiner.combine(i, i) for i in range(len(times))]
+            return ([samples[i] for i in self.c_index], [1] * len(times), None, None)
         if term is not None:
             envelope, coefficient = term
             field = self._array(envelope, self.real).ravel()
@@ -285,7 +301,7 @@ class FusedIFRK:
         if no_lasers:
             return ([self._zero_pump.ravel()] * self.s,
                     [1] * len(self.unique_c), self._zero_pump.ravel(), lambda time: 1)
-        samples = [self._array(pump(t + c * self.host_dt), self.real).ravel()
+        samples = [self._array(evaluate_pump(pump, t + c * self.host_dt), self.real).ravel()
                    for c in self.unique_c]
         return [samples[i] for i in self.c_index], [1] * len(samples), None, None
 
@@ -424,9 +440,13 @@ class FusedIFRK:
         with stream:
             self._copy_in(state, reservoir)
             terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
-            multi = (terms is not None and len(terms) > 1
-                     and (len(self.shape) == 2 or
-                          all(np.ndim(coefficient(state.t)) == 0 for _, coefficient in terms)))
+            if terms is None and hasattr(pump, "separable_term"):
+                term = pump.separable_term()
+                if term is not None:
+                    terms = (term,)
+            multi = terms is not None and (len(terms) > 1 or
+                    (len(self.shape) == 3 and len(terms) == 1 and
+                     np.ndim(terms[0][1](state.t)) != 0))
             if multi:
                 from polarism.solver.cuda_pump import CudaPumpCombiner
                 if getattr(self, "_pump_combiner", None) is None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.config.batch_physics import BatchPhysics
+from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -223,9 +224,9 @@ class RK4FDMFusedSolver(AbstractSolver):
         self.batch_physics.check(state.psi)
         dt = self._dt
         t = state.t
-        p0 = pump(t)
-        p_half = pump(t + 0.5 * dt)
-        p1 = pump(t + dt)
+        p0 = evaluate_pump(pump, t)
+        p_half = evaluate_pump(pump, t + 0.5 * dt)
+        p1 = evaluate_pump(pump, t + dt)
         psi0 = state.psi
         self._ensure_buffers(psi0)
 

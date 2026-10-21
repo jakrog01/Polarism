@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import numpy as np
 from typing import TYPE_CHECKING, Union
 
 from polarism.config.simulation_parameters import LaserParameters
@@ -28,6 +29,30 @@ class PulseGaussian(AbstractLaser):
     power_definition: str
     spatial_integral: float | None
     temporal_integral: float | None
+
+    @classmethod
+    def batch_power_coefficient(cls, lasers, times):
+        times = np.asarray(times, dtype=float)[:, None]
+        def parameter(name):
+            return np.asarray([getattr(laser, name) for laser in lasers])[None, :]
+        effective = times - parameter("delay")
+        separation = parameter("pulse_separation")
+        phase = parameter("phase")
+        index = np.maximum(0, np.rint((effective - phase) / separation)).astype(int)
+        pulses = parameter("n_pulses")
+        active = (times >= parameter("delay")) & ((pulses <= 0) | (index < pulses))
+        sigma = parameter("sigma_time")
+        offset = effective - index * separation - phase
+        active &= np.abs(offset) <= parameter("cutoff_sigma") * sigma
+        amplitude = np.minimum(parameter("P0") + index *
+                               (parameter("Pmax") - parameter("P0")), parameter("Pmax"))
+        temporal = np.exp(-0.5 * (offset / sigma) ** 2)
+        definitions = np.asarray([laser.power_definition == "pulse_energy"
+                                  for laser in lasers])[None, :]
+        integral = np.asarray([laser.temporal_integral or 1.0
+                               for laser in lasers])[None, :]
+        return np.where(active, amplitude * temporal /
+                        np.where(definitions, integral, 1.0), 0.0)
 
     def __init__(self, laser_config: LaserParameters, X: Union[np.ndarray, cp.ndarray], Y: Union[np.ndarray, cp.ndarray], precision: str = "double"):
         """Set up the pulse gaussian."""

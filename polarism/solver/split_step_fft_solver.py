@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.config.batch_physics import BatchPhysics
+from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -62,7 +63,7 @@ class SplitStepFFTSolver(AbstractSolver):
         R = self.batch_physics.get("R")
         gamma_C = self.batch_physics.get("gamma_C")
 
-        reservoir.step(dt / 2, state.psi, pump(state.t + dt / 4))
+        reservoir.step(dt / 2, state.psi, evaluate_pump(pump, state.t + dt / 4))
         res_state = reservoir.get_state()
         nR = reservoir.get_active_density(res_state)
         nI = reservoir.get_inactive_density(res_state)
@@ -86,5 +87,5 @@ class SplitStepFFTSolver(AbstractSolver):
 
         state.psi = self._kinetic_half_step_fft(state.psi)
 
-        reservoir.step(dt / 2, state.psi, pump(state.t + 3 * dt / 4))
+        reservoir.step(dt / 2, state.psi, evaluate_pump(pump, state.t + 3 * dt / 4))
         state.psi = boundary_condition.after_step_action(state.psi)

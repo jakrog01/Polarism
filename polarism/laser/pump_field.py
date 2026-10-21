@@ -1,9 +1,31 @@
 """Callable total pump field with optional separable laser terms."""
 from __future__ import annotations
 
+import numpy as np
+
 from polarism.compute_engine import compute_engine
 from polarism.config.dtype_utils import real_dtype
 from polarism.laser.abstract_laser import AbstractLaser
+
+
+def evaluate_pump(pump, t):
+    """Evaluate a vector coefficient with its member axis when present."""
+    terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
+    if terms is None and hasattr(pump, "separable_term"):
+        term = pump.separable_term()
+        terms = (term,) if term is not None else None
+    if terms:
+        coefficients = [coefficient(t) for _, coefficient in terms]
+        if any(np.ndim(value) != 0 for value in coefficients):
+            result = 0
+            for (envelope, _), value in zip(terms, coefficients):
+                xp = compute_engine.xp
+                vector = xp.asarray(value)
+                if vector.ndim:
+                    vector = vector[:, None, None]
+                result = result + envelope * vector
+            return result
+    return pump(t)
 
 
 class PumpField:
@@ -18,6 +40,17 @@ class PumpField:
     def __call__(self, t: float):
         lasers = self.lasers
         X, Y = self.grid.X, self.grid.Y
+        terms = self.separable_terms()
+        if terms:
+            coefficients = [coefficient(t) for _, coefficient in terms]
+            if any(np.ndim(value) != 0 for value in coefficients):
+                total = 0
+                for (envelope, _), value in zip(terms, coefficients):
+                    vector = self.xp.asarray(value)
+                    if vector.ndim:
+                        vector = vector[:, None, None]
+                    total = total + envelope * vector
+                return total
         if not lasers:
             return self.xp.zeros(X.shape, dtype=real_dtype(self.xp, self.precision))
         first = lasers[0].get_power(X, Y, t)

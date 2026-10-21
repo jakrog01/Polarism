@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.config.dtype_utils import complex_dtype
 from polarism.config.batch_physics import BatchPhysics
+from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -122,7 +123,7 @@ class ETDRK2Solver(AbstractSolver):
         a = self.xp.fft.ifft2(a_k)
 
         psi_mid = (state.psi + a) / 2
-        reservoir.step(dt, psi_mid, pump(state.t + 0.5 * dt))
+        reservoir.step(dt, psi_mid, evaluate_pump(pump, state.t + 0.5 * dt))
         res_new = reservoir.get_state()
         nR_new = reservoir.get_active_density(res_new)
         nI_new = reservoir.get_inactive_density(res_new)
