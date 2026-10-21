@@ -21,20 +21,27 @@ class JSONStorage(BaseStorage):
         """Set up JSON batch storage."""
         super().__init__(output_dir, batch_size)
         self.batch_number = 0
+        self._resume = getattr(config, "_storage_resume", False)
         self.members = getattr(config, "_storage_members", None)
-        if getattr(config, "_storage_resume", False):
+        if self._resume:
             self.batch_number = len(list(self.output_dir.glob("batch_*.json")))
         if self.members is not None:
-            (self.output_dir / "member_index.json").write_text(json.dumps(config._storage_indices))
+            member_path = self.output_dir / "member_index.json"
+            if not self._resume or not member_path.exists():
+                member_path.write_text(json.dumps(config._storage_indices))
         if self.members is not None:
             from polarism import __version__
             self.metadata = {"format_version": 2, "polarism_version": __version__,
                              "config": asdict(config) if is_dataclass(config) else config or {},
                              "members": self.members}
             if x is not None:
-                (self.output_dir / "grid_x.json").write_text(json.dumps(np.asarray(x).tolist()))
+                grid_path = self.output_dir / "grid_x.json"
+                if not self._resume or not grid_path.exists():
+                    grid_path.write_text(json.dumps(np.asarray(x).tolist()))
             if y is not None:
-                (self.output_dir / "grid_y.json").write_text(json.dumps(np.asarray(y).tolist()))
+                grid_path = self.output_dir / "grid_y.json"
+                if not self._resume or not grid_path.exists():
+                    grid_path.write_text(json.dumps(np.asarray(y).tolist()))
 
     def dump_batch(self) -> None:
         """Write the current batch to JSON."""

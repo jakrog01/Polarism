@@ -144,3 +144,8 @@ class HDF5Storage(BaseStorage):
 
         if self.h5_file is not None:
             self.h5_file.close()
+
+    def flush(self) -> None:
+        """Persist pending frames and flush the open HDF5 handle."""
+        super().flush()
+        self.h5_file.flush()

@@ -12,6 +12,7 @@ from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import Config
 from polarism.results.result_node import ResultNode
 from polarism.results.storage import BaseStorage, available_storages
+from polarism.results.storage.resume import trim_saved_frames
 from polarism.results.visitors.result_visitor import ResultVisitor
 
 
@@ -53,6 +54,9 @@ class StorageVisitor(ResultVisitor):
                 (self.cfg.result.save_json, "json"),
             ) if enabled),
         ))
+        if getattr(cfg, "_storage_resume", False):
+            trim_saved_frames(self.output_dir, cfg._storage_resume_time, names,
+                              compressed=cfg.result.compression != "none")
         for name in names:
             self.storages.append(available_storages[name](self.output_dir, self.batch_size, self.cfg, x, y))
         self._queue: queue.Queue | None = None
@@ -212,3 +216,14 @@ class StorageVisitor(ResultVisitor):
                 storage.finalize()
         finally:
             self._raise_error()
+
+    def flush(self) -> None:
+        """Drain queued snapshots and persist each backend before checkpointing."""
+        if self._closed:
+            self._raise_error()
+            return
+        if self._queue is not None:
+            self._queue.join()
+        self._raise_error()
+        for storage in self.storages:
+            storage.flush()

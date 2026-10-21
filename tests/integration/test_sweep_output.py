@@ -122,6 +122,125 @@ def test_interrupted_sweep_resumes_bitwise(tmp_path, monkeypatch):
         assert resumed.manifest["batch_sizes"] == [2, 1]
 
 
+@pytest.mark.parametrize("backend", ["hdf5", "npy", "json"])
+def test_resume_trims_frames_newer_than_checkpoint(tmp_path, monkeypatch, backend):
+    full_cfg = sweep_config(tmp_path / "full", backend)
+    full_cfg.solver.total_time = 0.08
+    full_cfg.result.batch_size = 2
+    full_cfg.checkpoint.every_steps = 2
+    parameters = {"laser.P0": [0.2, 0.3]}
+    with Sweep(full_cfg, parameters).run() as full:
+        expected_time = full.member(0).time.copy()
+        expected_fields = {name: full.fields[name][:].copy() for name in full.fields}
+        expected_scalars = {name: full.scalars[name][:].copy() for name in full.scalars}
+        expected_groups = {group: {label: full.member(0).scalar_groups[group][label][:].copy()
+                                   for label in full.member(0).scalar_groups[group]}
+                           for group in full.member(0).scalar_groups}
+        expected_static = {name: full.member(0).static[name][:].copy()
+                           for name in full.member(0).static}
+
+    cfg = sweep_config(tmp_path / "resumed", backend)
+    cfg.solver.total_time = 0.08
+    cfg.result.batch_size = 2
+    cfg.checkpoint.every_steps = 2
+    sweep = Sweep(cfg, parameters)
+    record = SimulationController._record_results
+    save = SimulationController.save_checkpoint
+
+    def stop_after_extra_frames(self, t):
+        record(self, t)
+        if t >= 0.04:
+            self._stop_requested = True
+
+    def retain_first_checkpoint(self, path):
+        if self.state.t <= 0.02:
+            save(self, path)
+            with load_results(self.run_directory) as saved:
+                assert saved.time[-1] == self.state.t
+            assert all(storage.batch_count == 0 for storage in self.storage_visitor.storages)
+
+    monkeypatch.setattr(SimulationController, "_record_results", stop_after_extra_frames)
+    monkeypatch.setattr(SimulationController, "save_checkpoint", retain_first_checkpoint)
+    assert sweep.run() is None
+    monkeypatch.setattr(SimulationController, "_record_results", record)
+    monkeypatch.setattr(SimulationController, "save_checkpoint", save)
+    run_dir = sweep.run_directory
+    batch_dir = run_dir / "batch_000"
+    with load_results(batch_dir) as saved:
+        assert saved.time[-1] > 0.02
+        saved_x = saved.x.copy()
+        saved_y = saved.y.copy()
+        saved_static = {name: saved.static[name][:].copy() for name in saved.static}
+    independent_files = {path.name: path.read_bytes() for path in batch_dir.iterdir()
+                         if path.name.startswith(("static_", "grid_"))}
+    with h5py.File(batch_dir / "checkpoint.h5") as checkpoint:
+        assert checkpoint.attrs["t"] == 0.02
+    with sweep.run(resume=run_dir) as resumed:
+        assert np.array_equal(resumed.member(0).time, expected_time)
+        for name, expected in expected_fields.items():
+            assert np.array_equal(resumed.fields[name][:], expected)
+        for name, expected in expected_scalars.items():
+            assert np.array_equal(resumed.scalars[name][:], expected)
+        for group, values in expected_groups.items():
+            for label, expected in values.items():
+                assert np.array_equal(resumed.member(0).scalar_groups[group][label][:], expected)
+        for name, expected in expected_static.items():
+            assert np.array_equal(resumed.member(0).static[name][:], expected)
+        assert np.array_equal(resumed.member(0).x, saved_x)
+        assert np.array_equal(resumed.member(0).y, saved_y)
+    with load_results(batch_dir) as stored:
+        for name, value in saved_static.items():
+            assert np.array_equal(stored.static[name][:], value)
+    assert independent_files == {path.name: path.read_bytes() for path in batch_dir.iterdir()
+                                 if path.name.startswith(("static_", "grid_"))}
+
+
+@pytest.mark.parametrize("backend", ["hdf5", "npy", "json"])
+def test_single_run_resume_in_same_directory_trims_extra_frames(tmp_path, monkeypatch, backend):
+    full_cfg = sweep_config(tmp_path / "full", backend)
+    full_cfg.solver.total_time = 0.08
+    full_cfg.result.batch_size = 2
+    full_cfg.checkpoint.every_steps = 2
+    full = SimulationController(full_cfg)
+    full.run()
+    with load_results(full.run_directory) as saved:
+        expected_time = saved.time.copy()
+        expected = {name: saved.fields[name][:].copy() for name in saved.fields}
+
+    cfg = sweep_config(tmp_path / "resumed", backend)
+    cfg.solver.total_time = 0.08
+    cfg.result.batch_size = 2
+    cfg.checkpoint.every_steps = 2
+    record = SimulationController._record_results
+    save = SimulationController.save_checkpoint
+
+    def stop_after_extra_frames(self, t):
+        record(self, t)
+        if t >= 0.04:
+            self._stop_requested = True
+
+    def retain_first_checkpoint(self, path):
+        if self.state.t <= 0.02:
+            save(self, path)
+
+    monkeypatch.setattr(SimulationController, "_record_results", stop_after_extra_frames)
+    monkeypatch.setattr(SimulationController, "save_checkpoint", retain_first_checkpoint)
+    interrupted = SimulationController(cfg)
+    interrupted.run()
+    monkeypatch.setattr(SimulationController, "_record_results", record)
+    monkeypatch.setattr(SimulationController, "save_checkpoint", save)
+    run_dir = interrupted.run_directory
+    with load_results(run_dir) as saved:
+        assert saved.time[-1] > 0.02
+    cfg.checkpoint.resume_from = str(run_dir / "checkpoint.h5")
+    resumed = SimulationController(cfg, output_dir=run_dir)
+    resumed.run()
+    with load_results(run_dir) as saved:
+        assert np.array_equal(saved.time, expected_time)
+        for name, value in expected.items():
+            assert np.array_equal(saved.fields[name][:], value)
+
+
 def test_json_sweep_member_reader(tmp_path):
     cfg = sweep_config(tmp_path, "json")
     with Sweep(cfg, {"laser.P0": [0.2, 0.3]}).run() as result:

@@ -106,6 +106,11 @@ class BaseStorage(ABC):
         """Flush remaining data and close resources."""
         pass
 
+    def flush(self) -> None:
+        """Persist all buffered frames without closing the storage."""
+        if self.batch_count > 0:
+            self.dump_batch()
+
     def _clear_buffers(self) -> None:
         """Clear all in-memory buffers."""
         self.time_buffer.clear()

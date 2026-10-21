@@ -22,8 +22,9 @@ class NPYStorage(BaseStorage):
         """Set up NumPy batch storage."""
         super().__init__(output_dir, batch_size)
         self.batch_number = 0
+        self._resume = getattr(config, "_storage_resume", False)
         self.members = getattr(config, "_storage_members", None)
-        if getattr(config, "_storage_resume", False):
+        if self._resume:
             self.batch_number = len(list(self.output_dir.glob("batch_*.npz")))
         if isinstance(config, bool):
             compress = config if compress is None else compress
@@ -38,12 +39,18 @@ class NPYStorage(BaseStorage):
         }
         if self.members is not None:
             self.metadata["members"] = self.members
-            np.save(self.output_dir / "member_index.npy", np.asarray(config._storage_indices))
+            member_path = self.output_dir / "member_index.npy"
+            if not self._resume or not member_path.exists():
+                np.save(member_path, np.asarray(config._storage_indices))
         if x is not None:
-            np.save(self.output_dir / "grid_x.npy", np.asarray(x))
+            grid_path = self.output_dir / "grid_x.npy"
+            if not self._resume or not grid_path.exists():
+                np.save(grid_path, np.asarray(x))
             self.metadata["datasets"]["grid/x"] = {"units": "µm"}
         if y is not None:
-            np.save(self.output_dir / "grid_y.npy", np.asarray(y))
+            grid_path = self.output_dir / "grid_y.npy"
+            if not self._resume or not grid_path.exists():
+                np.save(grid_path, np.asarray(y))
             self.metadata["datasets"]["grid/y"] = {"units": "µm"}
 
     def dump_batch(self) -> None:
@@ -81,7 +88,9 @@ class NPYStorage(BaseStorage):
 
     def write_static(self, name: str, field: np.ndarray) -> None:
         """Store a field once as a NumPy file."""
-        np.save(self.output_dir / f"static_{name}.npy", field)
+        path = self.output_dir / f"static_{name}.npy"
+        if not self._resume or not path.exists():
+            np.save(path, field)
         self.metadata["datasets"][f"static/{name}"] = self.node_metadata.get(name, {"label": name})
 
     def finalize(self) -> None:

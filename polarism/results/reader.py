@@ -255,13 +255,14 @@ def _load_json(path: Path) -> Results:
         return np.asarray(value)
 
     def combine(section):
-        return {name: np.concatenate([decode(batch[section][name]) for batch in data])
+        return {name: np.concatenate([decode(batch[section][name]) for batch in data
+                                      if batch["time"]])
                 for name in data[0][section]}
 
     fields = combine("fields")
     scalars = combine("scalars")
     groups = {name: {label: np.concatenate([decode(batch["scalar_groups"][name][label])
-                                        for batch in data]) for label in labels}
+                                        for batch in data if batch["time"]]) for label in labels}
               for name, labels in data[0]["scalar_groups"].items()}
     static = {name: decode(value) for name, value in data[0].get("static", {}).items()}
     x_path, y_path = path / "grid_x.json", path / "grid_y.json"

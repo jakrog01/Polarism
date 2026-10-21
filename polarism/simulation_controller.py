@@ -217,6 +217,9 @@ class SimulationController:
         self._resumed = False
         self.run_directory = None
 
+        if cfg.checkpoint.resume_from is not None:
+            self.load_checkpoint(cfg.checkpoint.resume_from)
+
         if cfg.result.real_time_view:
             self._init_visualizer()
 
@@ -231,9 +234,6 @@ class SimulationController:
 
         if cfg.result.animate:
             self._init_animation()
-
-        if cfg.checkpoint.resume_from is not None:
-            self.load_checkpoint(cfg.checkpoint.resume_from)
 
     def _compute_max_laser_power(self) -> float:
         """Return the largest configured laser power."""
@@ -300,9 +300,10 @@ class SimulationController:
         if not self.results_manager.nodes:
             self.results_manager.nodes = self._build_result_nodes()
 
-        self.cfg._storage_members = len(self._member_configs) if self._output_dir is not None else (len(self._member_configs) if self._batched else None)
+        self.cfg._storage_members = len(self._member_configs) if self._member_configs is not None and (self._output_dir is not None or self._batched) else None
         self.cfg._storage_indices = self._member_indices
         self.cfg._storage_resume = self.cfg.checkpoint.resume_from is not None
+        self.cfg._storage_resume_time = self.state.t if self._resumed else None
         self.storage_visitor = StorageVisitor(
             self.cfg, x=compute_engine.to_cpu(self.grid.X[0, :]), y=compute_engine.to_cpu(self.grid.Y[:, 0]),
             output_dir=self._output_dir,
@@ -511,6 +512,8 @@ class SimulationController:
         if self.state.t != step * self.cfg.solver.dt:
             raise ValueError("checkpoint requires a solver step boundary")
         self._step = step
+        if self.storage_visitor is not None:
+            self.storage_visitor.flush()
         psi = compute_engine.to_cpu(self.state.psi)
         psi_k = self.state.psi_k
         fields = tuple(compute_engine.to_cpu(value) for value in self.reservoir.get_state())
