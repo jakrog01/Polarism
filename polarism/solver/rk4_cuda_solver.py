@@ -650,13 +650,16 @@ def _batch_staged_source(source, real_type, bc_type, laplacian_type,
 
     head, body = source.split(") {", 1)
     head += (f", const int members, const int potential_n, const int pump_n, "
-             f"const {real_type}* batch_constants")
+             f"const {real_type}* __restrict__ batch_constants")
     preamble = """
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    const int spatial = blockIdx.x * blockDim.x + threadIdx.x;
     const int N = nx * ny;
-    if (tid >= N * members) return;
-    const int member = tid / N;
-    const int spatial = tid % N;
+    if (spatial >= N) return;
+    const int member = blockIdx.y;
+    const int member_offset = member * N;
+    const int tid = member_offset + spatial;
+    const int potential_offset = potential_n == N ? 0 : member_offset;
+    const int pump_offset = pump_n == N ? 0 : member_offset;
     const int i = spatial / nx;
     const int j = spatial % nx;
 """
@@ -669,14 +672,14 @@ def _batch_staged_source(source, real_type, bc_type, laplacian_type,
         diag = _build_laplacian_code(laplacian_type, bc_type, real_type)[0]
         body = body.replace(diag, re.sub(r"(const int (?:ul|ur|dl|dr) = )",
                                          r"\1member*N + ", diag))
-    body = body.replace("V_re[tid]", "V_re[tid % potential_n]")
-    body = body.replace("V_im[tid]", "V_im[tid % potential_n]")
-    body = body.replace("pump[tid]", "pump[tid % pump_n]")
+    body = body.replace("V_re[tid]", "V_re[potential_offset + spatial]")
+    body = body.replace("V_im[tid]", "V_im[potential_offset + spatial]")
+    body = body.replace("pump[tid]", "pump[pump_offset + spatial]")
     names = _batch_parameter_names(physics_fields)
     for name in names:
         body = re.sub(rf"\b{name}\b", f"{name}_member", body)
     loads = "".join(f"\n    const {real_type} {name}_member = "
-                    f"batch_constants[{i}*members+member];"
+                    f"__ldg(batch_constants + {i}*members+member);"
                     for i, name in enumerate(names))
     body = body.replace(preamble, preamble + loads, 1)
     return head + ") {" + body
@@ -915,41 +918,58 @@ def build_tiled_kernel_source(bc_type: str, real_type: str, reservoir_type: str,
 
 
 def _batch_tiled_source(source, real_type, physics_fields, parameter_names):
+    import re
+
     device, kernel = source.split('extern "C" __global__ void tiled_step', 1)
     device = device.replace("const int nx, const int ny, const int tid, const int gid,",
-                            "const int nx, const int ny, const int tid, const int gid, "
-                            "const int potential_n, const int pump_n,")
-    device = device.replace("const int i = gid / nx;", "const int i = (gid % (nx*ny)) / nx;")
-    device = device.replace("const int j = gid % nx;", "const int j = gid % nx;")
-    device = device.replace("V_re[gid]", "V_re[gid % potential_n]")
-    device = device.replace("V_im[gid]", "V_im[gid % potential_n]")
-    device = device.replace("pump[gid]", "pump[gid % pump_n]")
+                            "const int nx, const int ny, const int tid, const int spatial, "
+                            "const int potential_offset, const int pump_offset,")
+    device = device.replace("const int i = gid / nx;", "const int i = spatial / nx;")
+    device = device.replace("const int j = gid % nx;", "const int j = spatial % nx;")
+    device = device.replace("V_re[gid]", "V_re[potential_offset + spatial]")
+    device = device.replace("V_im[gid]", "V_im[potential_offset + spatial]")
+    device = device.replace("pump[gid]", "pump[pump_offset + spatial]")
     marker = ") {\n    "
     header, body = kernel.split(marker, 1)
+    state_names = tuple(dict.fromkeys(re.findall(r"\b\w+_(?:initial|out)\b", header)))
+    for name in state_names:
+        header = re.sub(rf"\b{name}\b", f"{name}_batch", header)
     header += (f",\n    const int members, const int potential_n, "
                f"const int pump_n0, const int pump_n1, const int pump_n2, "
-               f"const {real_type}* batch_constants")
+               f"const {real_type}* __restrict__ batch_constants")
     body = body.replace("const int lane = threadIdx.x;",
                         "const int lane = threadIdx.x;\n    const int member = blockIdx.z;\n"
-                        "    const int member_offset = member * nx * ny;", 1)
+                        "    const int spatial_n = nx * ny;\n"
+                        "    const int member_offset = member * spatial_n;\n"
+                        "    const int potential_offset = potential_n == spatial_n ? 0 : member_offset;\n"
+                        "    const int pump_offset0 = pump_n0 == spatial_n ? 0 : member_offset;\n"
+                        "    const int pump_offset1 = pump_n1 == spatial_n ? 0 : member_offset;\n"
+                        "    const int pump_offset2 = pump_n2 == spatial_n ? 0 : member_offset;", 1)
     body = body.replace("const int gid = tiled_coord(vy, ny)*nx + tiled_coord(vx, nx);",
-                        "const int gid = member_offset + tiled_coord(vy, ny)*nx + tiled_coord(vx, nx);")
+                        "const int spatial = tiled_coord(vy, ny)*nx + tiled_coord(vx, nx);\n"
+                        "        const int gid = spatial;")
     names = _batch_parameter_names(physics_fields)
+    pointers = "".join(
+        f"\n    {'const ' if name.endswith('_initial') else ''}{real_type}* "
+        f"__restrict__ {name} = {name}_batch + "
+        f"{'2*' if name.startswith('psi_') else ''}member_offset;"
+        for name in state_names
+    )
     loads = "".join(f"\n    const {real_type} {name}_member = "
-                    f"batch_constants[{i}*members+member];"
+                    f"__ldg(batch_constants + {i}*members+member);"
                     for i, name in enumerate(names))
-    body = body.replace("const int member_offset = member * nx * ny;",
-                        "const int member_offset = member * nx * ny;" + loads, 1)
+    body = body.replace("const int member_offset = member * spatial_n;",
+                        "const int member_offset = member * spatial_n;" + pointers + loads, 1)
     call = ", ".join(parameter_names) + ");"
     member_call = ", ".join(f"{name}_member" if name in names else name
                             for name in parameter_names) + ");"
     body = body.replace(call, member_call)
     body = body.replace("nx, ny, p, gid, vx, vy, pitch, stage_scale,",
-                        "nx, ny, p, gid, potential_n, stage_pump_n, "
+                        "nx, ny, p, spatial, potential_offset, stage_pump_offset, "
                         "vx, vy, pitch, stage_scale,")
     body = body.replace("const int out = (y-4)*",
-                        "const int stage_pump_n = stage == 0 ? pump_n0 : "
-                        "(stage == 3 ? pump_n2 : pump_n1);\n"
+                        "const int stage_pump_offset = stage == 0 ? pump_offset0 : "
+                        "(stage == 3 ? pump_offset2 : pump_offset1);\n"
                         "        const int out = (y-4)*", 1)
     return device + 'extern "C" __global__ void tiled_step' + header + marker + body
 
@@ -1196,8 +1216,8 @@ class RK4CudaSolver(AbstractSolver):
 
     def _make_launch_dims(self, block_size: int) -> None:
         """Set the CUDA launch dimensions."""
-        grid = (self.N * self._members + block_size - 1) // block_size
-        self._k_grid = (grid,)
+        grid = (self.N + block_size - 1) // block_size
+        self._k_grid = (grid, self._members) if self._batched else (grid,)
         self._k_block = (block_size,)
 
     def _compile_kernels(self) -> None:

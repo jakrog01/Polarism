@@ -563,6 +563,19 @@ def test_unbatched_cuda_kernel_sources_match_release():
     )
 
 
+def test_batched_tiled_psi_pointer_uses_complex_member_stride():
+    from polarism.solver.rk4_cuda_solver import build_tiled_kernel_source
+
+    source = build_tiled_kernel_source(
+        "periodic", "float", "double", "five-point", 32, 8, False,
+        batched=True,
+    )
+    for name in ("psi_initial", "psi_out"):
+        assert f"{name} = {name}_batch + 2*member_offset;" in source
+    for name in ("nA_initial", "nI_initial", "nA_out", "nI_out"):
+        assert f"{name} = {name}_batch + member_offset;" in source
+
+
 @pytest.mark.parametrize("physics_fields", [(), ("phase_rate", "gC")])
 def test_batched_ifrk_stage_and_reservoir_source(physics_fields):
     from polarism.solver.ifrk_cuda_fused import fused_source
