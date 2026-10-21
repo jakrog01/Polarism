@@ -4,14 +4,17 @@ title: Polarism
 authors:
   - family-names: Rogala
     given-names: Jakub
+    orcid: "https://orcid.org/0009-0007-4127-0719"
   - family-names: Tyszka
     given-names: Krzysztof
+    orcid: "https://orcid.org/0000-0002-2058-5320"
     affiliation: "University of Warsaw, Faculty of Physics, Division of Solid State Physics"
   - family-names: Opala
     given-names: Andrzej
+    orcid: "https://orcid.org/0000-0003-0358-7604"
     affiliation: "University of Warsaw, Faculty of Physics, Division of Solid State Physics"
 version: 0.3.9
-date-released: 2026-10-11
+date-released: 2026-10-20
 license: MIT
 repository-code: https://github.com/jakrog01/Polarism
 url: https://jakrog01.github.io/Polarism/
