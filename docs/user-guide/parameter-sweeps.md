@@ -62,10 +62,14 @@ then measure throughput at candidate sizes. The choice is cached under
 cost, which can be a few seconds. CPU sweeps use all members of a group unless
 `batch_size` or `max_batch` limits them.
 
-The largest batch is not always fastest. At a 256² grid, a single run may fit
-in the GPU's L2 cache while a larger batch spills out, reducing throughput.
-Autotuning measures completed member steps per second rather than choosing the
-largest batch that fits in memory.
+The largest batch is not always fastest. A single run whose fields fit in the
+GPU's L2 cache (48 MB on an RTX 4070 SUPER, so up to roughly 1024² in single
+precision) reads most data from the cache, while a larger batch spills to device
+memory and can be several times slower per member. Batching pays off where
+single runs are limited by kernel launch latency, that is on small grids; on
+large grids the autotuner usually picks a small batch or runs members one at a
+time. Autotuning measures completed member steps per second rather than
+choosing the largest batch that fits in memory.
 
 Measured on an **NVIDIA RTX 4070 SUPER**, single precision, double reservoir,
 1000 steps. Speedup is relative to sequential single runs; batch size is 64
