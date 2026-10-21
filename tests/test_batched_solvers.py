@@ -563,6 +563,48 @@ def test_unbatched_cuda_kernel_sources_match_release():
     )
 
 
+@pytest.mark.parametrize("physics_fields", [(), ("phase_rate", "gC")])
+def test_batched_ifrk_stage_and_reservoir_source(physics_fields):
+    from polarism.solver.ifrk_cuda_fused import fused_source
+
+    source = fused_source("float", 1, 0, 4, 2, "k % spatial_n", "k % pump_n",
+                          "sincosf", physics_fields=physics_fields,
+                          stage0_direct=True, finish_in_stage=True)
+    assert "if (stage == 0) {" in source
+    assert "pre *= (real)1 / (real)spatial_n;" in source
+    assert "res_out[point] = val < (real)0 ? (real)0 : val;" in source
+    assert source.count("const real* b, real* res_out") == 1
+    assert "if (stage == STAGES-1) {" in source
+    assert "out_dr[(stage*FIELDS)*n+k] = deriv_active;" in source
+    if physics_fields:
+        assert "phase_rate_member" in source
+        assert "gC_member" in source
+
+
+@pytest.mark.gpu
+def test_gpu_ifrk_batched_stage_and_finish_match_separate(monkeypatch):
+    if not has_cuda_device():
+        pytest.skip("CUDA device unavailable")
+    compute_engine.configure(ComputeEngineParameters(use_gpu=True))
+    import cupy as cp
+    from polarism.solver.ifrk_cuda_fused import FusedIFRK
+
+    original = FusedIFRK._run_into
+    used = []
+
+    def checked(self, *args):
+        if len(self.shape) == 3:
+            assert self._stage0_direct
+            assert self._finish_in_stage
+            used.append(True)
+        return original(self, *args)
+
+    monkeypatch.setattr(FusedIFRK, "_run_into", checked)
+    _compare("ifrk-fft-cuda", "double", "cap", cp, advance=True,
+             graphs=True, precision="single")
+    assert used
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("method", GPU_SOLVERS)
 @pytest.mark.parametrize("model", ["single", "double", "quadratic-double"])

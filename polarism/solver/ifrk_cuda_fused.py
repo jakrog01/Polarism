@@ -108,14 +108,66 @@ extern "C" __global__ void finish_res(
 """
 
 
+def _stage_finish_source(source, physics_fields):
+    signature = ("real ria, real rai, real kappa, real eta, int vr_n, int vi_n,"
+                 " const real* batch_constants) {" if physics_fields else
+                 "real ria, real rai, real kappa, real eta) {")
+    source = source.replace(
+        signature,
+        signature.replace(") {", ", const real* b, real* res_out) {")
+    )
+    source = source.replace("    real active = res0[k];",
+                            "    real active0 = res0[k];\n    real active = active0;")
+    source = source.replace("    real inactive = MODEL == 0 ? (real)0 : res0[n+k];",
+                            "    real inactive0 = MODEL == 0 ? (real)0 : res0[n+k];\n"
+                            "    real inactive = inactive0;")
+    source = source.replace("out_dr[(stage*FIELDS)*n+k] =", "real deriv_active =")
+    source = source.replace("out_dr[(stage*FIELDS+1)*n+k] =", "real deriv_inactive =")
+    before, after = source.split('extern "C" __global__ void finish_res(', 1)
+    end = before.rfind("\n}")
+    finish = """
+    if (stage == STAGES-1) {
+        for (int field = 0; field < FIELDS; ++field) {
+            int point = field*n+k;
+            real val = field == 0 ? active0 : inactive0;
+            for (int j = 0; j < STAGES-1; ++j) {
+                if (b[j] != (real)0)
+                    val += dt*b[j]*dr[(j*FIELDS+field)*n+k];
+            }
+            real derivative = deriv_active;
+#if MODEL != 0
+            if (field == 1) derivative = deriv_inactive;
+#endif
+            if (b[STAGES-1] != (real)0) val += dt*b[STAGES-1]*derivative;
+            res_out[point] = val < (real)0 ? (real)0 : val;
+        }
+    } else {
+        out_dr[(stage*FIELDS)*n+k] = deriv_active;
+#if MODEL != 0
+        out_dr[(stage*FIELDS+1)*n+k] = deriv_inactive;
+#endif
+    }"""
+    return before[:end] + finish + before[end:] + 'extern "C" __global__ void finish_res(' + after
+
+
 def fused_source(real, model, eta, stages, fields, spatial_index, pump_index,
-                 sincos, physics_fields=()):
+                 sincos, physics_fields=(), stage0_direct=False,
+                 finish_in_stage=False):
     """Render the unchanged scalar source or a member-indexed physics variant."""
     source = _SOURCE.format(real=real, model=model, eta=eta, stages=stages,
                             fields=fields, spatial_index=spatial_index,
                             pump_index=pump_index, sincos=sincos)
+    if stage0_direct:
+        source = source.replace(
+            "    real pre = psi[2*k], pim = psi[2*k+1];",
+            "    real pre = psi[2*k], pim = psi[2*k+1];\n"
+            "    if (stage == 0) {\n"
+            "        pre *= (real)1 / (real)spatial_n;\n"
+            "        pim *= (real)1 / (real)spatial_n;\n"
+            "    }",
+        )
     if not physics_fields:
-        return source
+        return _stage_finish_source(source, False) if finish_in_stage else source
     loads = {name: index for index, name in enumerate(physics_fields)}
     source = source.replace(
         "real dt, real phase_rate) {",
@@ -145,7 +197,8 @@ def fused_source(real, model, eta, stages, fields, spatial_index, pump_index,
         f"\n    real {name}_member = batch_constants[{loads[name]}*(n/spatial_n)+k/spatial_n];"
         for name in names
     ) + stage
-    return prefix + stage + 'extern "C" __global__ void finish_res(' + finish
+    source = prefix + stage + 'extern "C" __global__ void finish_res(' + finish
+    return _stage_finish_source(source, True) if finish_in_stage else source
 
 
 class FusedIFRK:
@@ -243,6 +296,10 @@ class FusedIFRK:
             return
         self._model_id = model_id
         self._buffer_shape = self.shape
+        self._stage0_direct = (len(self.shape) == 3 and not self.eta
+                               and self.solver._c[0] == 0
+                               and all(value == 0 for value in self.solver._a[0]))
+        self._finish_in_stage = len(self.shape) == 3
         spec = tuple(xp.empty(self.shape, self.complex) for _ in range(2))
         res = tuple(xp.empty((fields, *self.shape), self.real) for _ in range(2))
         f = xp.empty((self.s, *self.shape), self.complex)
@@ -259,7 +316,9 @@ class FusedIFRK:
                               spatial_index="k" if len(self.shape) == 2 else "k % spatial_n",
                               pump_index="k" if len(self.shape) == 2 else "k % pump_n",
                               sincos="sincosf" if self.real == xp.float32 else "sincos",
-                              physics_fields=self._physics_fields)
+                              physics_fields=self._physics_fields,
+                              stage0_direct=self._stage0_direct,
+                              finish_in_stage=self._finish_in_stage)
         module = xp.RawModule(code=source, options=("--std=c++11",))
         self._kernels = {name: module.get_function(name)
                          for name in ("combine_k", "stage_rhs", "finish_res")}
@@ -315,13 +374,17 @@ class FusedIFRK:
         block = (256,)
         scalar = self.scalar
         p = self.p
+        finish_args = ((self.b, res_out.ravel()) if self._finish_in_stage else ())
         for i in range(self.s):
-            self._kernels["combine_k"](launch, block, (
-                spectrum_in.view(self.real).ravel(), f.view(self.real).ravel(), self.k2,
-                self.a, self.b, self.c, stage_k.view(self.real).ravel(),
-                lap_k.view(self.real).ravel(), np.int32(self.n), np.int32(self.spatial_n), np.int32(i),
-                self.dt, self.rate) + self._physics_arg)
-            self._plan.fft(stage_k, stage_psi, cufft.CUFFT_INVERSE)
+            if i == 0 and self._stage0_direct:
+                self._plan.fft(spectrum_in, stage_psi, cufft.CUFFT_INVERSE)
+            else:
+                self._kernels["combine_k"](launch, block, (
+                    spectrum_in.view(self.real).ravel(), f.view(self.real).ravel(), self.k2,
+                    self.a, self.b, self.c, stage_k.view(self.real).ravel(),
+                    lap_k.view(self.real).ravel(), np.int32(self.n), np.int32(self.spatial_n), np.int32(i),
+                    self.dt, self.rate) + self._physics_arg)
+                self._plan.fft(stage_k, stage_psi, cufft.CUFFT_INVERSE)
             if self.eta:
                 self._plan.fft(lap_k, lap_psi, cufft.CUFFT_INVERSE)
             self._kernels["stage_rhs"](launch, block, (
@@ -336,16 +399,17 @@ class FusedIFRK:
                 scalar(p.gamma_A), scalar(p.R_IA), scalar(p.R_AI),
                 scalar(p.kappa), scalar(p.kinetic_relaxation_eta))
                 + ((np.int32(self.vr.size), np.int32(self.vi.size)) + self._physics_arg
-                   if self._physics_fields else ()))
+                   if self._physics_fields else ()) + finish_args)
             self._plan.fft(rhs, f[i], cufft.CUFFT_FORWARD)
         self._kernels["combine_k"](launch, block, (
             spectrum_in.view(self.real).ravel(), f.view(self.real).ravel(), self.k2,
             self.a, self.b, self.c, spectrum_out.view(self.real).ravel(),
             lap_k.view(self.real).ravel(), np.int32(self.n), np.int32(self.spatial_n), np.int32(self.s),
             self.dt, self.rate) + self._physics_arg)
-        self._kernels["finish_res"](((self.n*res_in.shape[0]+255)//256,), block, (
-            res_in.ravel(), dr.ravel(), self.b, res_out.ravel(),
-            np.int32(self.n), self.dt))
+        if not self._finish_in_stage:
+            self._kernels["finish_res"](((self.n*res_in.shape[0]+255)//256,), block, (
+                res_in.ravel(), dr.ravel(), self.b, res_out.ravel(),
+                np.int32(self.n), self.dt))
 
     def _copy_in(self, state, reservoir):
         xp = self.xp
@@ -464,6 +528,7 @@ class FusedIFRK:
             pending_hosts = []
             if graph_ok:
                 nodes_per_step = ((4 + int(self.eta))*self.s + 2
+                                  - int(self._stage0_direct) - int(self._finish_in_stage)
                                   + (len(self.unique_c) if multi else 0))
                 max_length = max(2, min(64, (1800 // nodes_per_step) // 2 * 2))
                 signature = (self.shape, model, id(potential),
