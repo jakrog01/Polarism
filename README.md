@@ -4,7 +4,7 @@
 
 Polarism is a Python package for 2-D driven-dissipative Gross-Pitaevskii simulations of exciton-polariton systems. It provides configurable pumps, reservoirs, solvers, and result output for CPU and optional CUDA runs.
 
-[![PyPI version](https://img.shields.io/pypi/v/polarism.svg)](https://pypi.org/project/polarism/) [![Python versions](https://img.shields.io/pypi/pyversions/polarism.svg)](https://pypi.org/project/polarism/) [![Tests](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml) [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://jakrog01.github.io/Polarism/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/jakrog01/Polarism/blob/master/LICENSE) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jakrog01/Polarism/blob/master/examples/colab_quickstart.ipynb)
+[![PyPI version](https://img.shields.io/pypi/v/polarism.svg)](https://pypi.org/project/polarism/) [![Python versions](https://img.shields.io/pypi/pyversions/polarism.svg)](https://pypi.org/project/polarism/) [![Tests](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml) [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://jakrog01.github.io/Polarism/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/jakrog01/Polarism/blob/master/LICENSE) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jakrog01/Polarism/blob/master/examples/colab_quickstart.ipynb) [![DOI](https://zenodo.org/badge/1412443657.svg)](https://doi.org/10.5281/zenodo.23531116)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/jakrog01/Polarism/master/docs/assets/readme/ring_vortices.webp" alt="Condensate density and phase under a ring-shaped pump, with vortices forming and moving inside the ring" width="608">
@@ -152,7 +152,7 @@ See the [contributing guide](https://jakrog01.github.io/Polarism/development/con
 
 ## Citation
 
-Use [CITATION.cff](https://github.com/jakrog01/Polarism/blob/master/CITATION.cff) or GitHub's “Cite this repository” menu.
+Cite Polarism with its Zenodo DOI, [10.5281/zenodo.23531116](https://doi.org/10.5281/zenodo.23531116), which always resolves to the latest release; each release also has its own version DOI on Zenodo. The same metadata is in [CITATION.cff](https://github.com/jakrog01/Polarism/blob/master/CITATION.cff) and GitHub's “Cite this repository” menu.
 
 ## License
 

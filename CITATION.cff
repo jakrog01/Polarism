@@ -15,6 +15,7 @@ authors:
     affiliation: "University of Warsaw, Faculty of Physics, Division of Solid State Physics"
 version: 0.3.10
 date-released: 2026-10-21
+doi: 10.5281/zenodo.23531116
 license: MIT
 repository-code: https://github.com/jakrog01/Polarism
 url: https://jakrog01.github.io/Polarism/
