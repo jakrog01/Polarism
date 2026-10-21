@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
 
+from polarism.config.batch_physics import BatchPhysics
 from polarism.compute_engine import compute_engine
 from polarism.config.dtype_utils import real_dtype
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
@@ -41,17 +42,19 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         physics: PhysicsConstants,
         grid: SimulationGrid2D,
         precision: str = "double",
+        batch_physics=None,
     ):
         """Set up the double reservoir."""
         self.xp = compute_engine.xp
         self.config = reservoir_config
-        self.R = physics.R
-        self.gamma_I = physics.gamma_I
-        self.gamma_A = physics.gamma_A
-        self.R_IA = physics.R_IA
-        self.R_AI = physics.R_AI
-        self.reservoir_diffusion_I = getattr(physics, "reservoir_diffusion_I", 0.0)
-        self.reservoir_diffusion_A = getattr(physics, "reservoir_diffusion_A", 0.0)
+        self.batch_physics = BatchPhysics(physics, batch_physics, self.xp, precision)
+        self.R = self.batch_physics.get("R")
+        self.gamma_I = self.batch_physics.get("gamma_I")
+        self.gamma_A = self.batch_physics.get("gamma_A")
+        self.R_IA = self.batch_physics.get("R_IA")
+        self.R_AI = self.batch_physics.get("R_AI")
+        self.reservoir_diffusion_I = self.batch_physics.get("reservoir_diffusion_I")
+        self.reservoir_diffusion_A = self.batch_physics.get("reservoir_diffusion_A")
         self.dx = grid.dx
         self.dy = grid.dy
         self.grid_type = grid.boundary
@@ -103,16 +106,17 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         rho: Union[np.ndarray, cp.ndarray] | None = None,
     ) -> tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]]:
         """Return the reservoir time derivatives."""
+        self.batch_physics.check(psi)
         nA, nI = state
         abs_psi2 = rho if rho is not None else psi.real * psi.real + psi.imag * psi.imag
 
         dnI = Pxy - (self.gamma_I + self.R_IA) * nI + self.R_AI * nA
         dnA = self.R_IA * nI - (self.gamma_A + self.R_AI + self.R * abs_psi2) * nA
-        if self.reservoir_diffusion_I != 0.0:
+        if self.batch_physics.any_nonzero("reservoir_diffusion_I"):
             dnI = dnI + self.reservoir_diffusion_I * real_laplacian(
                 nI, self.xp, self.dx, self.dy, self.grid_type
             )
-        if self.reservoir_diffusion_A != 0.0:
+        if self.batch_physics.any_nonzero("reservoir_diffusion_A"):
             dnA = dnA + self.reservoir_diffusion_A * real_laplacian(
                 nA, self.xp, self.dx, self.dy, self.grid_type
             )

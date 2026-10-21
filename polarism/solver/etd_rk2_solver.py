@@ -5,6 +5,7 @@ import math
 from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.config.dtype_utils import complex_dtype
+from polarism.config.batch_physics import BatchPhysics
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -27,12 +28,13 @@ _PHI_TAYLOR_TERMS = 10
 @register_solver("etd-rk2")
 class ETDRK2Solver(AbstractSolver):
     """Solve the model with ETD-RK2."""
-    def __init__(self, config: Config, grid: SimulationGrid2D):
+    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None):
         """Set up the etdrk 2 solver."""
         super().__init__(config)
+        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
         dt = self.config.solver.dt
-        hbar = self.config.physics.hbar
-        m_eff = self.config.physics.m_eff
+        hbar = self.batch_physics.get("hbar")
+        m_eff = self.batch_physics.get("m_eff")
 
         grid_type = grid.boundary
         if grid_type != "periodic":
@@ -82,12 +84,12 @@ class ETDRK2Solver(AbstractSolver):
         potential: Union[np.ndarray, cp.ndarray],
     ) -> Union[np.ndarray, cp.ndarray]:
         """Compute the nonlinear right-hand side."""
-        hbar = self.config.physics.hbar
-        g_C = self.config.physics.g_C
-        g_R = self.config.physics.g_R
-        g_I = getattr(self.config.physics, "g_I", 0.0)
-        R = self.config.physics.R
-        gamma_C = self.config.physics.gamma_C
+        hbar = self.batch_physics.get("hbar")
+        g_C = self.batch_physics.get("g_C")
+        g_R = self.batch_physics.get("g_R")
+        g_I = self.batch_physics.get("g_I")
+        R = self.batch_physics.get("R")
+        gamma_C = self.batch_physics.get("gamma_C")
 
         rho = self.xp.abs(psi) ** 2
         eff_energy = potential + g_C * rho + g_R * nR + g_I * nI
@@ -104,6 +106,7 @@ class ETDRK2Solver(AbstractSolver):
         state: SimulationState,
     ) -> None:
         """Advance the solver by one time step."""
+        self.batch_physics.check(state.psi)
         dt = self.config.solver.dt
 
         res_state = reservoir.get_state()

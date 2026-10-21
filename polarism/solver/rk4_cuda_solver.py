@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.compute_engine import has_full_rate_fp64
+from polarism.config.batch_physics import BatchPhysics
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -868,9 +869,10 @@ def _auto_tune_block_size(kern_rhs, _N: int) -> int:
 class RK4CudaSolver(AbstractSolver):
     """Generic fused RK4 CUDA solver with overridable kernel and launch hooks."""
 
-    def __init__(self, config: Config, grid: SimulationGrid2D):
+    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None):
         """Set up the rk 4 cuda solver."""
         super().__init__(config)
+        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
         self.nx = grid.nx
         self.ny = grid.ny
         self.N = grid.nx * grid.ny
@@ -897,28 +899,28 @@ class RK4CudaSolver(AbstractSolver):
             self._np_real = _np.float64
             self._np_complex = _np.complex128
 
-        self._hbar = config.physics.hbar
-        self._m_eff = config.physics.m_eff
-        self._g_C = config.physics.g_C
-        self._g_R = config.physics.g_R
-        self._g_I = getattr(config.physics, "g_I", 0.0)
-        self._R = config.physics.R
-        self._gamma_C = config.physics.gamma_C
-        self._gamma_R = config.physics.gamma_R
+        self._hbar = self.batch_physics.get("hbar")
+        self._m_eff = self.batch_physics.get("m_eff")
+        self._g_C = self.batch_physics.get("g_C")
+        self._g_R = self.batch_physics.get("g_R")
+        self._g_I = self.batch_physics.get("g_I")
+        self._R = self.batch_physics.get("R")
+        self._gamma_C = self.batch_physics.get("gamma_C")
+        self._gamma_R = self.batch_physics.get("gamma_R")
         self._dt = config.solver.dt
-        self._kinetic_relaxation_eta = getattr(config.physics, "kinetic_relaxation_eta", 0.0)
-        self._reservoir_diffusion_I = getattr(config.physics, "reservoir_diffusion_I", 0.0)
-        self._reservoir_diffusion_A = getattr(config.physics, "reservoir_diffusion_A", 0.0)
-        self._reservoir_diffusion_R = getattr(config.physics, "reservoir_diffusion_R", 0.0)
+        self._kinetic_relaxation_eta = self.batch_physics.get("kinetic_relaxation_eta")
+        self._reservoir_diffusion_I = self.batch_physics.get("reservoir_diffusion_I")
+        self._reservoir_diffusion_A = self.batch_physics.get("reservoir_diffusion_A")
+        self._reservoir_diffusion_R = self.batch_physics.get("reservoir_diffusion_R")
 
         if self._reservoir_type == "double":
-            self._gamma_I = config.physics.gamma_I
-            self._gamma_A = config.physics.gamma_A
-            self._R_IA = config.physics.R_IA
-            self._R_AI = config.physics.R_AI
+            self._gamma_I = self.batch_physics.get("gamma_I")
+            self._gamma_A = self.batch_physics.get("gamma_A")
+            self._R_IA = self.batch_physics.get("R_IA")
+            self._R_AI = self.batch_physics.get("R_AI")
         elif self._reservoir_type == "quadratic-double":
-            self._gamma_I = config.physics.gamma_I
-            self._kappa = config.physics.kappa
+            self._gamma_I = self.batch_physics.get("gamma_I")
+            self._kappa = self.batch_physics.get("kappa")
 
         self._inv_dx2 = 1.0 / (grid.dx ** 2)
         self._inv_dy2 = 1.0 / (grid.dy ** 2)
@@ -940,7 +942,7 @@ class RK4CudaSolver(AbstractSolver):
                 )
         self._laplacian_type = laplacian
 
-        self._use_gpu = hasattr(self.xp, "cuda")
+        self._use_gpu = hasattr(self.xp, "cuda") and self.batch_physics.size is None
 
         if self._use_gpu:
             _cast = self._np_real
@@ -1305,9 +1307,15 @@ class RK4CudaSolver(AbstractSolver):
 
     def advance(self, potential, pump, reservoir, boundary_condition, state,
                 start_step: int, n_steps: int) -> None:
-        """Run a chunk with reusable buffers and, when eligible, a CUDA graph."""
+        """Run reusable CUDA chunks, or CuPy stages for batched physics.
+
+        The tiled and graph kernels accept one scalar physics set. A physics
+        batch uses the shape-aware CuPy RK4 stages until those kernels have a
+        member-indexed parameter ABI.
+        """
         if n_steps <= 0:
             return
+        self.batch_physics.check(state.psi)
         if not self._use_gpu or state.psi.ndim == 3:
             return super().advance(potential, pump, reservoir, boundary_condition,
                                    state, start_step, n_steps)
@@ -1596,6 +1604,7 @@ class RK4CudaSolver(AbstractSolver):
         state: SimulationState,
     ) -> None:
         """Advance the solver by one time step."""
+        self.batch_physics.check(state.psi)
         if not self._use_gpu or state.psi.ndim == 3:
             self._step_cpu(potential, pump, reservoir, boundary_condition, state)
             return

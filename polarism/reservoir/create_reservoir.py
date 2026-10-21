@@ -1,6 +1,11 @@
 """Reservoir factory helpers."""
 from __future__ import annotations
 
+import inspect
+
+from polarism.config.batch_physics import BatchPhysics
+from polarism.compute_engine import compute_engine
+
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
 from polarism.reservoir.double_reservoir import DoubleReservoir
@@ -17,6 +22,7 @@ def create_reservoir(
     precision: str = "double",
     *,
     batch_size: int | None = None,
+    batch_physics=None,
 ) -> AbstractReservoir:
     """Create a reservoir with zero fields, optionally shaped ``(B, ny, nx)``."""
     reservoir_type = reservoir_config.reservoir_type
@@ -25,7 +31,22 @@ def create_reservoir(
             f"Unknown reservoir type: '{reservoir_type}'. "
             f"Available: {list(available_reservoirs.keys())}"
         )
-    reservoir = available_reservoirs[reservoir_type](reservoir_config, physics, grid, precision)
+    batched = BatchPhysics(physics, batch_physics, compute_engine.xp, precision)
+    component = available_reservoirs[reservoir_type]
+    if batched.size is None:
+        reservoir = component(reservoir_config, physics, grid, precision)
+    else:
+        parameters = inspect.signature(component).parameters
+        if "batch_physics" not in parameters and not any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+        ):
+            raise ValueError(f"Reservoir {reservoir_type!r} does not accept batch_physics")
+        reservoir = component(reservoir_config, physics, grid, precision,
+                              batch_physics=batch_physics)
+        if batch_size is None:
+            batch_size = batched.size
+        elif batch_size != batched.size:
+            raise ValueError(f"batch_physics length {batched.size} does not match batch_size {batch_size}")
     if batch_size is not None:
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
             raise ValueError("batch_size must be a positive integer")

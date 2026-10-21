@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
+import re
 
 
 _SOURCE = r"""
@@ -105,6 +106,46 @@ extern "C" __global__ void finish_res(
 """
 
 
+def fused_source(real, model, eta, stages, fields, spatial_index, pump_index,
+                 sincos, physics_fields=()):
+    """Render the unchanged scalar source or a member-indexed physics variant."""
+    source = _SOURCE.format(real=real, model=model, eta=eta, stages=stages,
+                            fields=fields, spatial_index=spatial_index,
+                            pump_index=pump_index, sincos=sincos)
+    if not physics_fields:
+        return source
+    loads = {name: index for index, name in enumerate(physics_fields)}
+    source = source.replace(
+        "real dt, real phase_rate) {",
+        "real dt, real phase_rate, const real* batch_constants) {",
+    ).replace(
+        "real ria, real rai, real kappa, real eta) {",
+        "real ria, real rai, real kappa, real eta, int vr_n, int vi_n,"
+        " const real* batch_constants) {",
+    )
+    source = source.replace("vr[k % spatial_n]", "vr[k % vr_n]")
+    source = source.replace("vi[k % spatial_n]", "vi[k % vi_n]")
+    start, rest = source.split("    if (k >= n) return;", 1)
+    combine, rest = rest.split('extern "C" __global__ void stage_rhs(', 1)
+    if "phase_rate" in loads:
+        combine = re.sub(r"\bphase_rate\b", "phase_rate_member", combine)
+        combine = (f"\n    real phase_rate_member = batch_constants[{loads['phase_rate']}*(n/spatial_n)+k/spatial_n];"
+                   + combine)
+    source = start + "    if (k >= n) return;" + combine + 'extern "C" __global__ void stage_rhs(' + rest
+    before_stage = source.split("    if (k >= n) return;", 2)
+    prefix = "    if (k >= n) return;".join(before_stage[:2]) + "    if (k >= n) return;"
+    rest = before_stage[2]
+    stage, finish = rest.split('extern "C" __global__ void finish_res(', 1)
+    names = tuple(name for name in physics_fields if name != "phase_rate")
+    for name in names:
+        stage = re.sub(rf"\b{name}\b", f"{name}_member", stage)
+    stage = "".join(
+        f"\n    real {name}_member = batch_constants[{loads[name]}*(n/spatial_n)+k/spatial_n];"
+        for name in names
+    ) + stage
+    return prefix + stage + 'extern "C" __global__ void finish_res(' + finish
+
+
 class FusedIFRK:
     """Own fixed tableau coefficients, stage storage, and cuFFT plans."""
 
@@ -130,9 +171,29 @@ class FusedIFRK:
         self.dt = self.scalar(solver.config.solver.dt)
         # Host-side times use the configured dt, not its kernel-precision copy.
         self.host_dt = float(solver.config.solver.dt)
-        self.rate = self.scalar(solver._phase_rate)
-        self.eta = solver._eta != 0.0
+        physics = solver.batch_physics
         self.p = solver.config.physics
+        self.rate = self.scalar(-self.p.hbar / (2.0 * self.p.m_eff))
+        self.eta = physics.any_nonzero("kinetic_relaxation_eta")
+        values = {}
+        if "hbar" in physics.host or "m_eff" in physics.host:
+            hbar = physics.host.get("hbar", np.full(physics.size, self.p.hbar))
+            mass = physics.host.get("m_eff", np.full(physics.size, self.p.m_eff))
+            values["phase_rate"] = -hbar / (2.0 * mass)
+            values["hbar_over_2m"] = hbar / (2.0 * mass)
+        if "hbar" in physics.host:
+            values["inv_hbar"] = 1.0 / physics.host["hbar"]
+        direct = {"g_C": "gC", "g_R": "gR", "g_I": "gI", "R": "R",
+                  "gamma_C": "gammaC", "gamma_R": "gammaR", "gamma_I": "gammaI",
+                  "gamma_A": "gammaA", "R_IA": "ria", "R_AI": "rai",
+                  "kappa": "kappa", "kinetic_relaxation_eta": "eta"}
+        for name, kernel_name in direct.items():
+            if name in physics.host:
+                values[kernel_name] = physics.host[name]
+        self._physics_fields = tuple(values)
+        self._physics_device = (self.xp.asarray(np.stack(tuple(values.values())), dtype=self.real).ravel()
+                                if values else None)
+        self._physics_arg = (self._physics_device,) if values else ()
         self._kernels = {}
         self._plan = None
         self._buffers = None
@@ -152,7 +213,7 @@ class FusedIFRK:
                   QuadraticDoubleReservoir: (2, 2)}
         if type(reservoir) not in models:
             return None
-        if any(getattr(reservoir, name, 0.0) != 0.0 for name in
+        if any(reservoir.batch_physics.any_nonzero(name) for name in
                ("reservoir_diffusion_R", "reservoir_diffusion_A", "reservoir_diffusion_I")):
             return None
         return models[type(reservoir)]
@@ -190,12 +251,13 @@ class FusedIFRK:
         lap_psi = xp.empty_like(stage_k)
         rhs = xp.empty_like(stage_k)
         self._buffers = (spec, res, f, dr, stage_k, stage_psi, lap_k, lap_psi, rhs)
-        source = _SOURCE.format(real="float" if self.real == xp.float32 else "double",
-                                model=model_id, eta=int(self.eta), stages=self.s,
-                                fields=fields,
-                                spatial_index="k" if len(self.shape) == 2 else "k % spatial_n",
-                                pump_index="k" if len(self.shape) == 2 else "k % pump_n",
-                                sincos="sincosf" if self.real == xp.float32 else "sincos")
+        source = fused_source(real="float" if self.real == xp.float32 else "double",
+                              model=model_id, eta=int(self.eta), stages=self.s,
+                              fields=fields,
+                              spatial_index="k" if len(self.shape) == 2 else "k % spatial_n",
+                              pump_index="k" if len(self.shape) == 2 else "k % pump_n",
+                              sincos="sincosf" if self.real == xp.float32 else "sincos",
+                              physics_fields=self._physics_fields)
         module = xp.RawModule(code=source, options=("--std=c++11",))
         self._kernels = {name: module.get_function(name)
                          for name in ("combine_k", "stage_rhs", "finish_res")}
@@ -242,7 +304,7 @@ class FusedIFRK:
                 spectrum_in.view(self.real).ravel(), f.view(self.real).ravel(), self.k2,
                 self.a, self.b, self.c, stage_k.view(self.real).ravel(),
                 lap_k.view(self.real).ravel(), np.int32(self.n), np.int32(self.spatial_n), np.int32(i),
-                self.dt, self.rate))
+                self.dt, self.rate) + self._physics_arg)
             self._plan.fft(stage_k, stage_psi, cufft.CUFFT_INVERSE)
             if self.eta:
                 self._plan.fft(lap_k, lap_psi, cufft.CUFFT_INVERSE)
@@ -256,13 +318,15 @@ class FusedIFRK:
                 scalar(p.g_C), scalar(p.g_R), scalar(p.g_I), scalar(p.R),
                 scalar(p.gamma_C), scalar(p.gamma_R), scalar(p.gamma_I),
                 scalar(p.gamma_A), scalar(p.R_IA), scalar(p.R_AI),
-                scalar(p.kappa), scalar(p.kinetic_relaxation_eta)))
+                scalar(p.kappa), scalar(p.kinetic_relaxation_eta))
+                + ((np.int32(self.vr.size), np.int32(self.vi.size)) + self._physics_arg
+                   if self._physics_fields else ()))
             self._plan.fft(rhs, f[i], cufft.CUFFT_FORWARD)
         self._kernels["combine_k"](launch, block, (
             spectrum_in.view(self.real).ravel(), f.view(self.real).ravel(), self.k2,
             self.a, self.b, self.c, spectrum_out.view(self.real).ravel(),
             lap_k.view(self.real).ravel(), np.int32(self.n), np.int32(self.spatial_n), np.int32(self.s),
-            self.dt, self.rate))
+            self.dt, self.rate) + self._physics_arg)
         self._kernels["finish_res"](((self.n*res_in.shape[0]+255)//256,), block, (
             res_in.ravel(), dr.ravel(), self.b, res_out.ravel(),
             np.int32(self.n), self.dt))

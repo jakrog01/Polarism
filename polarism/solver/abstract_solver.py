@@ -51,6 +51,8 @@ class AbstractSolver(ABC):
         n_steps: int,
     ) -> None:
         """Advance several steps, preserving controller stage times."""
+        if hasattr(self, "batch_physics"):
+            self.batch_physics.check(state.psi)
         for k in range(n_steps):
             self.step(potential, pump, reservoir, boundary_condition, state)
             state.t = (start_step + k + 1) * self.config.solver.dt

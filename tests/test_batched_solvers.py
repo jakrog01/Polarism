@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from dataclasses import fields
+import hashlib
 
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine, has_cuda_device
 from polarism.config.simulation_parameters import ComputeEngineParameters, Config
+from polarism.config.simulation_parameters import PhysicsConstants
 from polarism.grid.create_grid import create_grid
 from polarism.reservoir.create_reservoir import create_reservoir
 from polarism.simulation_state import SimulationState
@@ -284,3 +287,156 @@ def test_gpu_repeated_solver_instances_agree(method):
     results = [cp.asnumpy(_run(cfg, (1.1,), False, cp)[0]) for _ in range(8)]
     for result in results[1:]:
         np.testing.assert_array_equal(result, results[0])
+
+
+_PHYSICS_FIELDS = tuple(field.name for field in fields(PhysicsConstants)
+                        if field.type is float)
+
+
+def _physics_values(cfg, *, diffusion=True):
+    values = {}
+    for name in _PHYSICS_FIELDS:
+        base = getattr(cfg.physics, name)
+        if name == "kinetic_relaxation_eta":
+            values[name] = np.array([0.0, 0.008])
+        elif name.startswith("reservoir_diffusion"):
+            values[name] = np.array([0.0, 0.004 if diffusion else 0.0])
+        elif name == "init_eps":
+            values[name] = np.array([base, base * 1.2])
+        else:
+            values[name] = np.array([base * 0.9 + 0.0001, base * 1.1 + 0.0002])
+    return values
+
+
+def _run_physics(cfg, values, xp, batched, *, advance=False):
+    grid = create_grid(cfg.grid)
+    size = len(next(iter(values.values()))) if batched else None
+    state = SimulationState(grid, eps=0.05, seed=13, batch_size=size,
+                            precision=cfg.solver.precision)
+    reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid,
+                                 precision=cfg.solver.precision, batch_size=size,
+                                 batch_physics=values if batched else None)
+    solver = create_solver(cfg, grid, batch_physics=values if batched else None)
+    bc = BoundaryCondition(grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt,
+                           batch_physics=values if batched else None)
+    potential = 0.03 * xp.cos(grid.X * 0.4) + bc.before_step_action()
+    profile = 1 + 0.1 * xp.sin(grid.Y * 0.6)
+    class Pump:
+        def __call__(self, t):
+            return profile * (0.4 + 0.1 * t)
+
+        def separable_term(self):
+            return profile, lambda t: 0.4 + 0.1 * t
+
+    pump = Pump()
+    if advance:
+        solver.advance(potential, pump, reservoir, bc, state, 0, 2)
+    else:
+        for k in range(2):
+            solver.step(potential, pump, reservoir, bc, state)
+            state.t = (k + 1) * cfg.solver.dt
+    return state.psi, reservoir.get_state()
+
+
+@pytest.mark.parametrize("method", CPU_SOLVERS)
+@pytest.mark.parametrize("model", ["single", "double", "quadratic-double"])
+def test_cpu_per_member_physics_matches_separate(method, model):
+    cfg = _config(method, model, "cap")
+    values = _physics_values(cfg)
+    actual = _run_physics(cfg, values, np, True)
+    expected = []
+    for member in range(2):
+        member_cfg = _config(method, model, "cap")
+        for name, sequence in values.items():
+            setattr(member_cfg.physics, name, float(sequence[member]))
+        expected.append(_run_physics(member_cfg, {}, np, False))
+    np.testing.assert_array_equal(actual[0], np.stack([item[0] for item in expected]))
+    for index, field in enumerate(actual[1]):
+        np.testing.assert_array_equal(field, np.stack([item[1][index] for item in expected]))
+
+
+def test_batch_physics_validation():
+    cfg = _config("rk4-fdm", "single", "cap")
+    grid = create_grid(cfg.grid)
+    with pytest.raises(ValueError, match="non-float"):
+        create_solver(cfg, grid, {"init_mode": [1, 2]})
+    with pytest.raises(ValueError, match="length"):
+        create_solver(cfg, grid, {"hbar": [0.6, 0.7], "m_eff": [0.2]})
+    solver = create_solver(cfg, grid, {"hbar": [0.6, 0.7]})
+    state = SimulationState(grid)
+    reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid)
+    bc = BoundaryCondition(grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt)
+    with pytest.raises(ValueError, match="state batch size"):
+        solver.step(bc.before_step_action(), lambda t: grid.X * 0, reservoir, bc, state)
+
+
+def test_plugin_without_batch_physics_rejected():
+    from polarism.solver.solver_registry import available_solvers
+    from polarism.reservoir.reservoir_registry import available_reservoirs
+    cfg = _config("rk4-fdm", "single", "cap")
+    grid = create_grid(cfg.grid)
+    available_solvers["legacy-test"] = lambda config, grid: None
+    available_reservoirs["legacy-test"] = lambda config, physics, grid, precision: None
+    try:
+        cfg.solver.method = "legacy-test"
+        with pytest.raises(ValueError, match="Solver 'legacy-test'"):
+            create_solver(cfg, grid, {"hbar": [0.6, 0.7]})
+        cfg.reservoir.reservoir_type = "legacy-test"
+        with pytest.raises(ValueError, match="Reservoir 'legacy-test'"):
+            create_reservoir(cfg.reservoir, cfg.physics, grid,
+                             batch_physics={"hbar": [0.6, 0.7]})
+    finally:
+        del available_solvers["legacy-test"]
+        del available_reservoirs["legacy-test"]
+
+
+def test_unbatched_cuda_kernel_sources_match_release():
+    from polarism.solver.rk4_cuda_solver import build_kernel_source_1d
+    from polarism.solver.split_step_fft_cuda_solver import kernel_source
+    from polarism.solver.ifrk_cuda_fused import fused_source
+    hashes = [hashlib.sha256(source.encode()).hexdigest() for source in
+              build_kernel_source_1d("periodic", "double", "single")]
+    assert hashes == [
+        "aec7bb2786cf538bee940716e68dde05ff49eeba75a633d67d9dc21a6105eb14",
+        "a1af56182692411167496467438de2d585ae5ccb57113db12572856bd5c07476",
+        "0ccb24f0c4ce9d7cbcbbf667055a06d4ac9eb291dfc44e427b3dcf118232995a",
+    ]
+    assert hashlib.sha256(kernel_source("double", "single", physics_fields=None).encode()).hexdigest() == (
+        "1f182a977c129097d13119453291930d551dd08b77abec66e52be9a80f733da8"
+    )
+    assert hashlib.sha256(fused_source("double", 0, 0, 4, 1, "k", "k", "sincos",
+                                      physics_fields=None).encode()).hexdigest() == (
+        "50016fa7eeb73ee973f60f4698625f75a1f10563c213470ca741e8c73ded8075"
+    )
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("method", GPU_SOLVERS)
+@pytest.mark.parametrize("model", ["single", "double", "quadratic-double"])
+def test_gpu_per_member_physics_matches_separate(method, model):
+    """Lawson ETA branching and the CuPy RK4 fallback permit 2e-11 rounding."""
+    if not has_cuda_device():
+        pytest.skip("CUDA device unavailable")
+    compute_engine.configure(ComputeEngineParameters(use_gpu=True))
+    import cupy as cp
+    cfg = _config(method, model, "cap")
+    cfg.solver.cuda_graphs = True
+    values = _physics_values(cfg, diffusion=False)
+    if method == "split-step-fft-cuda":
+        values["kinetic_relaxation_eta"][:] = 0.0
+    actual = _run_physics(cfg, values, cp, True, advance=True)
+    expected = []
+    for member in range(2):
+        member_cfg = _config(method, model, "cap")
+        member_cfg.solver.cuda_graphs = True
+        for name, sequence in values.items():
+            setattr(member_cfg.physics, name, float(sequence[member]))
+        expected.append(_run_physics(member_cfg, {}, cp, False, advance=True))
+    compare = (np.testing.assert_array_equal if method == "split-step-fft-cuda"
+               else lambda left, right: np.testing.assert_allclose(
+                   left, right, rtol=2e-11, atol=2e-11))
+    compare(cp.asnumpy(actual[0]),
+            np.stack([cp.asnumpy(item[0]) for item in expected]))
+    for index, field in enumerate(actual[1]):
+        compare(cp.asnumpy(field),
+                np.stack([cp.asnumpy(item[1][index]) for item in expected]))

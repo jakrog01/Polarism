@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from polarism.config.dtype_utils import complex_dtype, real_dtype
+from polarism.config.batch_physics import BatchPhysics
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver
 from polarism.solver.solver_registry import register_solver
@@ -22,8 +23,9 @@ if TYPE_CHECKING:
 class IFRKFFTCudaSolver(AbstractSolver):
     """Stage-coupled spectral Lawson RK with a CPU and plugin-compatible path."""
 
-    def __init__(self, config: Config, grid: SimulationGrid2D) -> None:
+    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None) -> None:
         super().__init__(config)
+        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
         if grid.boundary != "periodic":
             raise ValueError(
                 f"{config.solver.method} requires grid_type='periodic', got '{grid.boundary}'. "
@@ -36,16 +38,17 @@ class IFRKFFTCudaSolver(AbstractSolver):
         self._scalar = np.float32 if self._precision == "single" else np.float64
         self._k_squared = self.xp.asarray(grid.k_squared, dtype=self._real_dtype)
         self._minus_k_squared = -self._k_squared
-        p = config.physics
-        self._phase_rate = self._scalar(-p.hbar / (2.0 * p.m_eff))
-        self._hbar = p.hbar
-        self._hbar_over_2m = p.hbar / (2.0 * p.m_eff)
-        self._g_C = p.g_C
-        self._g_R = p.g_R
-        self._g_I = p.g_I
-        self._R = p.R
-        self._gamma_C = p.gamma_C
-        self._eta = p.kinetic_relaxation_eta
+        phase_rate = -self.batch_physics.get("hbar") / (2.0 * self.batch_physics.get("m_eff"))
+        self._phase_rate = (self._scalar(phase_rate) if self.batch_physics.size is None
+                            else self.xp.asarray(phase_rate, dtype=self._real_dtype))
+        self._hbar = self.batch_physics.get("hbar")
+        self._hbar_over_2m = self.batch_physics.get("hbar") / (2.0 * self.batch_physics.get("m_eff"))
+        self._g_C = self.batch_physics.get("g_C")
+        self._g_R = self.batch_physics.get("g_R")
+        self._g_I = self.batch_physics.get("g_I")
+        self._R = self.batch_physics.get("R")
+        self._gamma_C = self.batch_physics.get("gamma_C")
+        self._eta = self.batch_physics.get("kinetic_relaxation_eta")
         self._a = tuple(tuple(float(v) for v in row) for row in self.tableau.A)
         self._b = tuple(float(v) for v in self.tableau.b)
         self._c = tuple(float(v) for v in self.tableau.c)
@@ -72,7 +75,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
         eff_energy = potential + self._g_C * density + self._g_R * n_active + self._g_I * n_inactive
         gain_loss = 0.5 * (self._R * n_active - self._gamma_C)
         rhs = (-1j / self._hbar) * eff_energy * psi + gain_loss * psi
-        if self._eta != 0.0:
+        if self.batch_physics.any_nonzero("kinetic_relaxation_eta"):
             if psi_k is None:
                 psi_k = xp.fft.fft2(psi, axes=(-2, -1))
             lap_psi = xp.fft.ifft2(self._minus_k_squared * psi_k, axes=(-2, -1))
@@ -146,6 +149,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
 
     def step(self, potential, pump, reservoir: AbstractReservoir,
              boundary_condition: BoundaryCondition, state: SimulationState) -> None:
+        self.batch_physics.check(state.psi_k if state._psi is None else state.psi)
         fused = self._cuda(reservoir)
         if fused is None:
             self._generic_step(potential, pump, reservoir, boundary_condition, state)
@@ -154,6 +158,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
 
     def advance(self, potential, pump, reservoir, boundary_condition, state,
                 start_step: int, n_steps: int) -> None:
+        self.batch_physics.check(state.psi_k if state._psi is None else state.psi)
         if n_steps <= 0:
             return
         fused = self._cuda(reservoir)

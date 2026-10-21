@@ -13,6 +13,14 @@ densities to the condensate equation and evolves one or more real fields.
 `AbstractReservoir`. Its abstract constructor declaration omits `precision`,
 but a concrete plugin must accept it because the factory passes it.
 
+For per-member physics, the factory calls
+`ReservoirClass(reservoir_config, physics, grid, precision,
+batch_physics=values)`. `values` maps a `PhysicsConstants` float field to a
+one-dimensional array of length `B`. A plugin that accepts it must apply each
+member's constants to its leading batch axis. Ordinary runs keep the existing
+four-argument call; the factory raises a named error when a physics batch
+selects a plugin without `batch_physics`.
+
 | Name and signature | Caller and timing | Return or state | Status |
 | --- | --- | --- | --- |
 | `__init__(reservoir_config, physics, grid, precision)` | Factory, once | Initialize real `(ny, nx)` fields and coefficients | Required |
