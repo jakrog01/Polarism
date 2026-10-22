@@ -256,7 +256,7 @@ class FusedIFRK:
         self._graph_cache = {}
         self._graph_signature = None
         self._graphs_failed = False
-        self._potential_id = None
+        self._potential_cached = None
         self._zero_pump = self.xp.zeros(self.shape, dtype=self.real)
 
     def _model(self, reservoir):
@@ -280,12 +280,15 @@ class FusedIFRK:
         return self.xp.ascontiguousarray(self.xp.asarray(value, dtype=dtype))
 
     def _potential(self, potential):
-        if id(potential) != self._potential_id:
-            self.vr = self._array(self.xp.real(potential), self.real).ravel()
-            self.vi = (self._array(self.xp.imag(potential), self.real).ravel()
-                       if self.xp.iscomplexobj(potential) else self._zero_pump.ravel())
-            self._potential_id = id(potential)
+        if potential is not self._potential_cached:
             self._graph_cache.clear()
+            self._potential_cached = None
+            self.vr = self.vi = None
+            vr = self._array(self.xp.real(potential), self.real).ravel()
+            vi = (self._array(self.xp.imag(potential), self.real).ravel()
+                  if self.xp.iscomplexobj(potential) else self._zero_pump.ravel())
+            self.vr, self.vi = vr, vi
+            self._potential_cached = potential
 
     def _ensure(self, model):
         xp = self.xp
@@ -294,12 +297,18 @@ class FusedIFRK:
         if (self._buffers is not None and self._model_id == model_id
                 and self._buffer_shape == self.shape):
             return
-        self._model_id = model_id
-        self._buffer_shape = self.shape
-        self._stage0_direct = (len(self.shape) == 3 and not self.eta
-                               and self.solver._c[0] == 0
-                               and all(value == 0 for value in self.solver._a[0]))
-        self._finish_in_stage = len(self.shape) == 3
+        self._graph_cache.clear()
+        self._graph_signature = None
+        self._pump_combiner = None
+        self._plan = None
+        self._graph_scales = None
+        self._buffers = None
+        self._model_id = None
+        self._buffer_shape = None
+        stage0_direct = (len(self.shape) == 3 and not self.eta
+                         and self.solver._c[0] == 0
+                         and all(value == 0 for value in self.solver._a[0]))
+        finish_in_stage = len(self.shape) == 3
         spec = tuple(xp.empty(self.shape, self.complex) for _ in range(2))
         res = tuple(xp.empty((fields, *self.shape), self.real) for _ in range(2))
         f = xp.empty((self.s, *self.shape), self.complex)
@@ -309,7 +318,6 @@ class FusedIFRK:
         lap_k = xp.empty_like(stage_k)
         lap_psi = xp.empty_like(stage_k)
         rhs = xp.empty_like(stage_k)
-        self._buffers = (spec, res, f, dr, stage_k, stage_psi, lap_k, lap_psi, rhs)
         source = fused_source(real="float" if self.real == xp.float32 else "double",
                               model=model_id, eta=int(self.eta), stages=self.s,
                               fields=fields,
@@ -317,21 +325,28 @@ class FusedIFRK:
                               pump_index="k" if len(self.shape) == 2 else "k % pump_n",
                               sincos="sincosf" if self.real == xp.float32 else "sincos",
                               physics_fields=self._physics_fields,
-                              stage0_direct=self._stage0_direct,
-                              finish_in_stage=self._finish_in_stage)
+                              stage0_direct=stage0_direct,
+                              finish_in_stage=finish_in_stage)
         module = xp.RawModule(code=source, options=("--std=c++11",))
-        self._kernels = {name: module.get_function(name)
-                         for name in ("combine_k", "stage_rhs", "finish_res")}
-        self._plan = self.fft.get_fft_plan(stage_k, axes=(-2, -1))
-        self._graph_cache.clear()
-        self._graph_scales = xp.empty((64, len(self.unique_c)), self.real)
+        kernels = {name: module.get_function(name)
+                   for name in ("combine_k", "stage_rhs", "finish_res")}
+        plan = self.fft.get_fft_plan(stage_k, axes=(-2, -1))
+        graph_scales = xp.empty((64, len(self.unique_c)), self.real)
         # Warm cuFFT before graph capture. Run on the current stream: warming the
         # plan on the private non-blocking stream left later FFTs racing the
         # default-stream kernels, giving wrong results in some solver instances.
         stage_k.fill(0)
-        self._plan.fft(stage_k, stage_psi, cufft.CUFFT_INVERSE)
-        self._plan.fft(stage_psi, f[0], cufft.CUFFT_FORWARD)
+        plan.fft(stage_k, stage_psi, cufft.CUFFT_INVERSE)
+        plan.fft(stage_psi, f[0], cufft.CUFFT_FORWARD)
         xp.cuda.get_current_stream().synchronize()
+        self._buffers = (spec, res, f, dr, stage_k, stage_psi, lap_k, lap_psi, rhs)
+        self._kernels = kernels
+        self._plan = plan
+        self._graph_scales = graph_scales
+        self._stage0_direct = stage0_direct
+        self._finish_in_stage = finish_in_stage
+        self._model_id = model_id
+        self._buffer_shape = self.shape
 
     def _pump(self, pump, t):
         term = pump.separable_term() if hasattr(pump, "separable_term") else None
@@ -436,6 +451,16 @@ class FusedIFRK:
             self._graph_cache.clear()
             self._graph_signature = None
             self._pump_combiner = None
+            self._buffers = None
+            self._plan = None
+            self._graph_scales = None
+            self._model_id = None
+            self._buffer_shape = None
+            self._zero_pump = None
+            self._potential_cached = None
+            self.vr = self.vi = None
+        if self._zero_pump is None:
+            self._zero_pump = self.xp.zeros(self.shape, dtype=self.real)
 
     def step(self, potential, pump, reservoir, boundary_condition, state):
         self._activate_shape(state)

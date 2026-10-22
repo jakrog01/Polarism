@@ -100,13 +100,12 @@ class RK4FDMFusedSolver(AbstractSolver):
         shape = psi.shape
         dtype = psi.dtype
         xp = self.xp
-        self._lap = xp.empty(shape, dtype=dtype)
-        self._k1_psi = xp.empty(shape, dtype=dtype)
-        self._k2_psi = xp.empty(shape, dtype=dtype)
-        self._k3_psi = xp.empty(shape, dtype=dtype)
-        self._k4_psi = xp.empty(shape, dtype=dtype)
-        self._tmp_psi = xp.empty(shape, dtype=dtype)
-        self._psi_next = xp.empty(shape, dtype=dtype)
+        self._buf_initialized = False
+        (self._lap, self._k1_psi, self._k2_psi, self._k3_psi,
+         self._k4_psi, self._tmp_psi, self._psi_next) = (None,) * 7
+        buffers = tuple(xp.empty(shape, dtype=dtype) for _ in range(7))
+        (self._lap, self._k1_psi, self._k2_psi, self._k3_psi,
+         self._k4_psi, self._tmp_psi, self._psi_next) = buffers
         self._buf_initialized = True
 
     def _laplacian(self, psi, out) -> None:

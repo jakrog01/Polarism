@@ -70,9 +70,14 @@ class CudaPumpCombiner:
         envelopes = tuple(term[0] for term in terms)
         batched = shape is not None and len(shape) == 3
         member_coefficients = batched and any(np.ndim(term[1](0.0)) != 0 for term in terms)
-        if (self._envelopes is None or len(envelopes) != len(self._envelopes)
-                or any(a is not b for a, b in zip(envelopes, self._envelopes))
-                or getattr(self, "_batched", None) != batched):
+        changed = (self._envelopes is None or len(envelopes) != len(self._envelopes)
+                   or any(a is not b for a, b in zip(envelopes, self._envelopes))
+                   or getattr(self, "_batched", None) != batched)
+        if changed:
+            self._envelopes = None
+            self.env = None
+            self.offsets = None
+            self.sizes = None
             if batched:
                 arrays = [self.xp.ascontiguousarray(
                     self.xp.asarray(e, dtype=self.dtype)).ravel() for e in envelopes]
@@ -86,26 +91,26 @@ class CudaPumpCombiner:
                 self.offsets = self.xp.asarray(offsets)
                 self.sizes = self.xp.asarray(sizes)
                 if not hasattr(self, "_batch_kernel"):
-                    self._batch_kernel = self.xp.RawKernel(
+                    kernel = self.xp.RawKernel(
                         _BATCH_SOURCE.format(real="float" if self.dtype == self.xp.float32
                                              else "double"),
                         "pump_combine_batched", options=("--std=c++11", "--fmad=false"),
                     )
-                    self._batch_kernel.compile()
+                    kernel.compile()
+                    self._batch_kernel = kernel
             else:
                 self.env = self.xp.stack([
                     self.xp.ascontiguousarray(self.xp.asarray(e, dtype=self.dtype)).ravel()
                     for e in envelopes
                 ])
-            self._envelopes = envelopes
-            self._batched = batched
         if member_coefficients and not hasattr(self, "_member_kernel"):
-            self._member_kernel = self.xp.RawKernel(
+            kernel = self.xp.RawKernel(
                 _MEMBER_SOURCE.format(real="float" if self.dtype == self.xp.float32
                                       else "double"),
                 "pump_combine_members", options=("--std=c++11", "--fmad=false"),
             )
-            self._member_kernel.compile()
+            kernel.compile()
+            self._member_kernel = kernel
         self._member_coefficients = member_coefficients
         self._members = shape[0] if batched else 1
         self._spatial_n = shape[-2] * shape[-1] if batched else self.n
@@ -114,6 +119,9 @@ class CudaPumpCombiner:
         size = samples * len(terms) * (self._members if member_coefficients else 1)
         if not hasattr(self, "coeffs") or self.coeffs.size < size:
             self.coeffs = self.xp.empty(size, self.dtype)
+        if changed:
+            self._envelopes = envelopes
+            self._batched = batched
 
     def coefficients(self, terms, times, stream):
         dtype = np.float32 if self.dtype == self.xp.float32 else np.float64

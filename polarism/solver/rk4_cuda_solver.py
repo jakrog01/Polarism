@@ -1070,6 +1070,7 @@ class RK4CudaSolver(AbstractSolver):
         self._use_gpu = hasattr(self.xp, "cuda")
         self._batched = False
         self._members = 1
+        self._batch_ready = True
         self._physics_fields = tuple(name for name in self.batch_physics.host
                                      if name in ("hbar", "m_eff", "g_C", "g_R", "g_I", "R",
                                                  "gamma_C", "gamma_R", "gamma_I", "gamma_A",
@@ -1156,10 +1157,23 @@ class RK4CudaSolver(AbstractSolver):
     def _activate_batch(self, shape):
         batched = len(shape) == 3
         members = shape[0] if batched else 1
-        if batched == self._batched and members == self._members:
+        if batched == self._batched and members == self._members and self._batch_ready:
             return
         import numpy as np
 
+        self._batch_ready = False
+        self._graph_cache.clear()
+        self._graph_signature = None
+        self._tiled_kernels.clear()
+        for name in ("_graph_kernels", "_advance_buffers", "_graph_scales",
+                     "_advance_stream", "_pump_combiner", "_zero_pump"):
+            if hasattr(self, name):
+                delattr(self, name)
+        self._k_psi = None
+        self._k_reservoir = None
+        self._potential_cached = None
+        self._V_re_flat = None
+        self._V_im_flat = None
         self._batched = batched
         self._members = members
         if batched:
@@ -1183,22 +1197,13 @@ class RK4CudaSolver(AbstractSolver):
                 columns[name] = values(field)
             names = _batch_parameter_names(self._physics_fields)
             if names:
+                self._physics_device = None
                 self._physics_device = self.xp.asarray(
                     np.stack([columns[name] for name in names]),
                     dtype=self._np_real).ravel()
         self._compile_kernels()
         self._init_gpu_buffers()
-        self._tiled_kernels.clear()
-        self._graph_cache.clear()
-        self._graph_signature = None
-        if hasattr(self, "_graph_kernels"):
-            del self._graph_kernels
-        if hasattr(self, "_advance_buffers"):
-            del self._advance_buffers
-        if hasattr(self, "_pump_combiner"):
-            del self._pump_combiner
-        if hasattr(self, "_zero_pump"):
-            del self._zero_pump
+        self._batch_ready = True
 
     def _build_kernel_source(
         self, bc_type: str, real_type: str, reservoir_type: str
@@ -1448,9 +1453,11 @@ class RK4CudaSolver(AbstractSolver):
         psi = tuple(xp.empty(total, self._complex_dtype) for _ in range(2))
         res = tuple(tuple(xp.empty(total, self._real_dtype) for _ in range(fields))
                     for _ in range(2))
+        graph_scales = xp.empty(64 * 3, self._real_dtype)
+        advance_stream = xp.cuda.Stream(non_blocking=True)
         self._advance_buffers = (psi, res)
-        self._graph_scales = xp.empty(64 * 3, self._real_dtype)
-        self._advance_stream = xp.cuda.Stream(non_blocking=True)
+        self._graph_scales = graph_scales
+        self._advance_stream = advance_stream
 
     def _graph_for(self, length, potential, envelope, pump_flat, v_im_scale,
                    combiner=None):

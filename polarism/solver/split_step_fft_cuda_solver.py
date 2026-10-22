@@ -337,13 +337,22 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         return self._graph_kernel_cache[key]
 
     def _ensure_advance_buffers(self, n_fields):
-        if (hasattr(self, "_advance_buffers")
+        if (getattr(self, "_advance_buffers", None) is not None
                 and self._advance_shape == self._shape
                 and len(self._advance_buffers[1][0]) == n_fields):
             return
         xp = self.xp
         from cupy.cuda import cufft
 
+        self._graph_cache.clear()
+        self._graph_signature = None
+        self._pump_combiner = None
+        self._plan_cache.clear()
+        self._advance_plan = None
+        self._advance_stream = None
+        self._graph_scales = None
+        self._advance_buffers = None
+        self._advance_shape = None
         spectrum = tuple(xp.empty(self._shape, self._complex_dtype) for _ in range(2))
         local = xp.empty(self._shape, self._complex_dtype)
         out = xp.empty_like(local)
@@ -352,19 +361,20 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         multiplied = out
         fields = tuple(tuple(xp.empty(self._shape, self._real_dtype)
                              for _ in range(n_fields)) for _ in range(2))
-        self._advance_buffers = (spectrum, fields, local, out, multiplied)
-        self._advance_shape = self._shape
-        self._graph_scales = xp.empty(64 * 2, self._real_dtype)
-        self._advance_stream = xp.cuda.Stream(non_blocking=True)
-        self._advance_plan = self._plan(spectrum[0])
-        self._graph_cache.clear()
-        self._graph_signature = None
-        with self._advance_stream:
+        graph_scales = xp.empty(64 * 2, self._real_dtype)
+        advance_stream = xp.cuda.Stream(non_blocking=True)
+        advance_plan = self._plan(spectrum[0])
+        with advance_stream:
             xp.multiply(spectrum[0], self._full_normalized, out=multiplied)
             xp.multiply(spectrum[0], self._half, out=multiplied)
-            self._advance_plan.fft(spectrum[0], multiplied, cufft.CUFFT_FORWARD)
-            self._advance_plan.fft(multiplied, spectrum[0], cufft.CUFFT_INVERSE)
-            self._advance_stream.synchronize()
+            advance_plan.fft(spectrum[0], multiplied, cufft.CUFFT_FORWARD)
+            advance_plan.fft(multiplied, spectrum[0], cufft.CUFFT_INVERSE)
+            advance_stream.synchronize()
+        self._advance_buffers = (spectrum, fields, local, out, multiplied)
+        self._graph_scales = graph_scales
+        self._advance_stream = advance_stream
+        self._advance_plan = advance_plan
+        self._advance_shape = self._shape
 
     def _graph_for(self, length, model, potential, envelope, pump_flat,
                    combiner=None):
