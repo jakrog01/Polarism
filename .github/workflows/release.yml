@@ -117,11 +117,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+            --jq '.[0].body // ""' > notes.md
+          if [ ! -s notes.md ]; then
+            echo "Release $VERSION" > notes.md
+          fi
           gh release create "v$VERSION" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "Polarism $VERSION" \
-            --generate-notes
+            --notes-file notes.md
 
   docs:
     needs: release
