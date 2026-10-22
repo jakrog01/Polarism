@@ -45,9 +45,26 @@ python -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 ```
 
+For GPU tests, also install CuPy together with the CUDA headers it needs to
+compile Polarism's kernels at runtime:
+
+```bash
+.venv/bin/pip install -e ".[dev,cuda12]" "cupy-cuda12x[ctk]"
+```
+
+Use `cuda13` and `cupy-cuda13x[ctk]` on CUDA 13 machines. Without the `ctk`
+extra, GPU tests fail with `Failed to find CUDA headers` unless a CUDA toolkit
+is already on the system (for example through `module load` on a cluster).
+
+The repository has no `uv.lock`. With uv, install into the environment with
+`uv venv` and `uv pip install -e ".[dev,cuda12]" "cupy-cuda12x[ctk]"`; do not
+use `uv sync` or `uv run --frozen`, which expect a lock file and rebuild
+`.venv`.
+
 Run the default CPU-oriented tests with `.venv/bin/pytest -q`. On CUDA hardware,
-use `.venv/bin/pytest -q --use-gpu` for GPU-marked tests. The
-[Testing and CI](testing-and-ci.md) page has the complete CPU/GPU command.
+use `.venv/bin/pytest -q -m "gpu and not slow" --use-gpu` for the GPU-marked
+tests. The [Testing and CI](testing-and-ci.md) page has the complete CPU/GPU
+command.
 
 Preview the site locally with:
 

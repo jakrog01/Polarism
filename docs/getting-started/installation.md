@@ -38,6 +38,10 @@ Recommended workflow:
   `pip install "polarism[cuda12]"` for CUDA 12.x or
   `pip install "polarism[cuda13]"` for CUDA 13.x.
 - V100 (Volta) systems need `polarism[cuda12]`; CUDA 13 no longer supports Volta.
+- Polarism compiles some CUDA kernels at runtime, which needs the CUDA headers.
+  If a GPU run fails with `Failed to find CUDA headers`, load a CUDA toolkit
+  (for example `module load` on a cluster) or install
+  `pip install "cupy-cuda12x[ctk]"` (`cupy-cuda13x[ctk]` for CUDA 13).
 - Re-run the compliance or benchmark suites on GPU hardware before trusting production-scale timings.
 
 For solver choice, precision, and CUDA graph chunks, see [Running on GPUs](../user-guide/running-on-gpus.md).
