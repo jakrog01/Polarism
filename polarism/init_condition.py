@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+import numpy as np
+
 
 def make_initial_psi(
     xp,
@@ -47,7 +49,9 @@ def make_initial_psi(
         Low-pass cutoff ``|k|`` in rad/um.  Required when
         ``mode='filtered_complex_gaussian'``; ignored otherwise.
     seed : int or None
-        RNG seed.  ``None`` → non-deterministic.
+        RNG seed.  ``None`` → non-deterministic.  Random draws always come
+        from NumPy on the host and are then copied to *xp*, so the same seed
+        gives the same noise on CPU and GPU.
     cdtype : dtype or None
         Target complex dtype.  Defaults to ``xp.complex128``.
     rdtype : dtype or None
@@ -62,18 +66,18 @@ def make_initial_psi(
     if rdtype is None:
         rdtype = xp.float64
 
-    rng = xp.random.default_rng(seed)
+    rng = np.random.default_rng(seed)
 
     if mode == "legacy_positive_uniform":
         psi = eps * (
-            rng.random((ny, nx), dtype=rdtype)
-            + 1j * rng.random((ny, nx), dtype=rdtype)
+            xp.asarray(rng.random((ny, nx), dtype=rdtype))
+            + 1j * xp.asarray(rng.random((ny, nx), dtype=rdtype))
         )
         return psi.astype(cdtype)
 
     if mode == "complex_gaussian_zero_mean":
-        re = rng.standard_normal((ny, nx)).astype(rdtype)
-        im = rng.standard_normal((ny, nx)).astype(rdtype)
+        re = xp.asarray(rng.standard_normal((ny, nx)).astype(rdtype))
+        im = xp.asarray(rng.standard_normal((ny, nx)).astype(rdtype))
         psi = re + 1j * im
         psi -= xp.mean(psi)
         rms = float(xp.sqrt(xp.mean(xp.abs(psi) ** 2)))
@@ -86,8 +90,8 @@ def make_initial_psi(
             raise ValueError(
                 "init_mode='filtered_complex_gaussian' requires init_k_cutoff_um to be set."
             )
-        re = rng.standard_normal((ny, nx)).astype(rdtype)
-        im = rng.standard_normal((ny, nx)).astype(rdtype)
+        re = xp.asarray(rng.standard_normal((ny, nx)).astype(rdtype))
+        im = xp.asarray(rng.standard_normal((ny, nx)).astype(rdtype))
         psi = (re + 1j * im).astype(xp.complex128)
 
         kx = 2.0 * xp.pi * xp.fft.fftfreq(nx, d=dx)

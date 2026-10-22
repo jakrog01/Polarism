@@ -211,7 +211,7 @@ Initial-condition options:
 | `init_eps` | amplitude scale of the initial condensate seed | positive float |
 | `init_mode` | initial seed generator | `legacy_positive_uniform`, `complex_gaussian_zero_mean`, `filtered_complex_gaussian` |
 | `init_k_cutoff_um` | radial cutoff in rad/um for `filtered_complex_gaussian` | positive float, required for filtered mode |
-| `init_seed` | optional RNG seed | integer or `null` |
+| `init_seed` | optional RNG seed; noise is drawn with NumPy on the host, so CPU and GPU runs with the same seed start from the same field | integer or `null` |
 | `kinetic_relaxation_eta` | condensate kinetic-energy relaxation strength | nonnegative float, default `0.0` |
 | `reservoir_diffusion_I` | inactive-reservoir diffusion coefficient | nonnegative float, default `0.0` |
 | `reservoir_diffusion_A` | active-density diffusion coefficient for `double` | nonnegative float, default `0.0` |
