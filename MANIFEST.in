@@ -1,0 +1,10 @@
+include LICENSE README.md pyproject.toml
+recursive-include polarism *.py py.typed
+prune tests
+prune docs
+prune examples
+prune scripts
+prune artifacts
+prune simulation_results
+prune site
+global-exclude __pycache__ *.pyc
