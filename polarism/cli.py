@@ -16,13 +16,20 @@ def main() -> None:
     load_plugins()
     args = sys.argv[1:]
     sweep_path = None
+    config_path = None
     if "--sweep" in args:
         index = args.index("--sweep")
         if index + 1 >= len(args):
             raise ValueError("--sweep requires a YAML path")
         sweep_path = args[index + 1]
         del args[index:index + 2]
-    cfg = tyro.cli(Config, args=args)
+    if "--config" in args:
+        index = args.index("--config")
+        if index + 1 >= len(args):
+            raise ValueError("--config requires a YAML path")
+        config_path = args[index + 1]
+        del args[index:index + 2]
+    cfg = tyro.cli(Config, default=Config.from_yaml(config_path), args=args) if config_path else tyro.cli(Config, args=args)
     compute_engine.configure(cfg.compute_engine)
     if sweep_path is None:
         SimulationController(cfg).run()

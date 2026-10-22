@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Union
 import yaml
 
 from polarism.config.simulation_parameters import LaserParameters
-from polarism.laser.laser_registy import available_lasers
+from polarism.laser.laser_registry import available_lasers
 
 if TYPE_CHECKING:
     import numpy as np
@@ -45,12 +45,7 @@ class LaserFactory:
     ) -> list[AbstractLaser]:
         """Create one laser from the config."""
         laser_type = laser_config.laser_type
-        if laser_type not in available_lasers:
-            raise ValueError(
-                f"Unknown laser type: '{laser_type}'. "
-                f"Available: {list(available_lasers.keys())}"
-            )
-        return [available_lasers[laser_type](laser_config, X, Y, precision)]
+        return [available_lasers.lookup(laser_type)(laser_config, X, Y, precision)]
 
     @staticmethod
     def _create_multiple_lasers(
@@ -82,12 +77,12 @@ class LaserFactory:
                     f"Laser entry {i} in '{laser_config.config_file}' "
                     f"is missing 'laser_type'."
                 )
-            if laser_type not in available_lasers:
+            try:
+                laser_class = available_lasers.lookup(laser_type)
+            except ValueError as exc:
                 raise ValueError(
-                    f"Unknown laser type '{laser_type}' in entry {i} of "
-                    f"'{laser_config.config_file}'. "
-                    f"Available: {list(available_lasers.keys())}"
-                )
+                    f"Laser entry {i} in '{laser_config.config_file}': {exc}"
+                ) from exc
             known = {f.name for f in fields(LaserParameters)}
             extra = {
                 **laser_config.extra,
@@ -99,7 +94,7 @@ class LaserFactory:
                 **{k: v for k, v in item.items() if k in known},
                 "extra": extra,
             })
-            lasers.append(available_lasers[laser_type](individual_config, X, Y, precision))
+            lasers.append(laser_class(individual_config, X, Y, precision))
         return lasers
 
 

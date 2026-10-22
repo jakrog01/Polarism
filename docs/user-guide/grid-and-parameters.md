@@ -98,3 +98,29 @@ cfg.compute_engine.use_gpu = True
 `gpu_device` selects the CUDA device by index among the visible devices; see
 [Running on GPUs](running-on-gpus.md#device-selection). If CuPy or a CUDA device is unavailable, the backend
 falls back to NumPy. Validate CUDA paths on the target hardware.
+
+## YAML configuration
+
+Save or load the complete configuration with `Config.to_yaml` and
+`Config.from_yaml`:
+
+```python
+from polarism import Config
+
+cfg = Config()
+cfg.grid.nx = 128
+cfg.to_yaml("run.yaml")
+restored = Config.from_yaml("run.yaml")
+```
+
+The YAML file uses the same nested sections and field names as `Config`.
+Unknown keys raise an error with the full path, such as `grid.typo`.
+Loaded values pass through configuration validation.
+
+Run the file from the CLI and override individual fields with flags:
+
+```bash
+polarism --config run.yaml --grid.nx 256
+```
+
+`--sweep sweep.yaml` can be used alongside `--config`.

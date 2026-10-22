@@ -137,7 +137,7 @@ For multiple pumps, point at a YAML file:
 
 ```python
 cfg.laser.mode = "multiple"
-cfg.laser.config_file = "lasers_setup.yaml"
+cfg.laser.config_file = "examples/lasers_setup.yaml"
 ```
 
 The YAML file should define a `lasers:` list where each entry names a `laser_type` plus its parameters.

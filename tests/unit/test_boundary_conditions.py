@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polarism.boundary_conditions.absorption.absorption_registry import available_boundary_conditions
+from polarism.boundary_conditions.absorption.absorption_registry import available_absorptions
 from polarism.boundary_conditions.absorption.absorption_strategy import create_absorption_profile
 from polarism.boundary_conditions.absorption.create_absorption_strategy import create_absorption_strategy
 from polarism.compute_engine import compute_engine
@@ -96,4 +96,4 @@ def test_unknown_absorption_configuration_errors() -> None:
         create_absorption_profile(8, 8, BoundaryConditionParameters(absorption="mask", profile_type="bad"))
     with pytest.raises(ValueError, match="Available") as exc:
         create_absorption_strategy(grid(), BoundaryConditionParameters(absorption="bad"), PhysicsConstants())
-    assert str(list(available_boundary_conditions.keys())) in str(exc.value)
+    assert str(sorted(available_absorptions)) in str(exc.value)

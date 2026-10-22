@@ -178,7 +178,7 @@ def test_shared_laser_and_potential_arrays():
 
 def test_plugin_laser_extra_key(monkeypatch):
     from polarism.laser.abstract_laser import AbstractLaser
-    from polarism.laser.laser_registy import available_lasers
+    from polarism.laser.laser_registry import available_lasers
 
     class RingLaser(AbstractLaser):
         def __init__(self, laser_config, X, Y, precision="double"):

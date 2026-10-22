@@ -11,11 +11,11 @@ import numpy as np
 import pytest
 
 from polarism import Config, SimulationController
-from polarism.boundary_conditions.absorption.absorption_registry import available_boundary_conditions
+from polarism.boundary_conditions.absorption.absorption_registry import available_absorptions
 from polarism.grid.grid_registry import available_grids
-from polarism.laser.laser_registy import available_lasers
+from polarism.laser.laser_registry import available_lasers
 from polarism.plugins import load_plugins
-from polarism.potential.potential_registy import available_potentials
+from polarism.potential.potential_registry import available_potentials
 from polarism.reservoir.reservoir_registry import available_reservoirs
 from polarism.results.observable_registry import available_observables
 from polarism.results.storage import available_storages
@@ -29,7 +29,7 @@ def example_plugins(tmp_path, monkeypatch):
     shutil.copytree(root / "polarism_plugins", tmp_path / "polarism_plugins")
     monkeypatch.setattr(sys, "path", list(sys.path))
     registries = (
-        available_boundary_conditions,
+        available_absorptions,
         available_grids,
         available_lasers,
         available_potentials,

@@ -1,6 +1,9 @@
 """Simulation config dataclasses."""
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 
 @dataclass
@@ -71,7 +74,7 @@ class LaserParameters:
     """Store laser settings."""
     expose_results: bool = True
     mode: str = "single"
-    config_file: str = "lasers_setup.yaml"
+    config_file: str | None = None
     laser_type: str = "pulse-gaussian"
     P0: float = 0.4
     Pmax: float = 1.2
@@ -176,3 +179,38 @@ class Config:
     )
     checkpoint: CheckpointParameters = field(default_factory=CheckpointParameters)
     sweep: SweepParameters = field(default_factory=SweepParameters)
+
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> "Config":
+        """Load nested configuration from YAML and validate its values."""
+        from polarism.config.validation import validate_config
+
+        with open(path, encoding="utf-8") as handle:
+            data = yaml.safe_load(handle)
+        if not isinstance(data, dict):
+            raise ValueError("Config YAML must be a mapping")
+        cfg = cls()
+        sections = {item.name for item in fields(cls)}
+        for section, values in data.items():
+            if section not in sections:
+                raise ValueError(f"Unknown config key '{section}'")
+            if not isinstance(values, dict):
+                raise ValueError(f"Config section '{section}' must be a mapping")
+            target = getattr(cfg, section)
+            known = {item.name for item in fields(target)}
+            for name, value in values.items():
+                dotted = f"{section}.{name}"
+                if name not in known:
+                    raise ValueError(f"Unknown config key '{dotted}'")
+                if isinstance(getattr(target, name), tuple) and isinstance(value, list):
+                    value = tuple(value)
+                setattr(target, name, value)
+        validate_config(cfg)
+        return cfg
+
+    def to_yaml(self, path: str | Path) -> Path:
+        """Write the complete configuration to YAML."""
+        output = Path(path)
+        with output.open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(asdict(self), handle, sort_keys=False)
+        return output

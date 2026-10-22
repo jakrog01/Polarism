@@ -169,3 +169,9 @@ class IFRKFFTCudaSolver(AbstractSolver):
         else:
             fused.advance(potential, pump, reservoir, boundary_condition,
                           state, start_step, n_steps)
+
+
+@register_solver("ifrk4-fft-cuda")
+class IFRK4FFTCudaSolver(IFRKFFTCudaSolver):
+    """Use the RK4 tableau regardless of the generic solver's setting."""
+    tableau_name = "rk4"

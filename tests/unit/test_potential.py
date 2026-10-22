@@ -6,7 +6,7 @@ import pytest
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import PotentialParameters
 from polarism.potential.create_potential import create_potential
-from polarism.potential.potential_registy import available_potentials
+from polarism.potential.potential_registry import available_potentials
 from tests.unit.conftest import grid
 
 TOL_MACHINE_F64 = 1e-12  # Exact algebraic identity in float64.
@@ -50,4 +50,4 @@ def test_zero_and_unknown_potentials() -> None:
     assert np.array_equal(create_potential(PotentialParameters(potential_type="zero"), g), np.zeros_like(g.X))
     with pytest.raises(ValueError, match="Available") as exc:
         create_potential(PotentialParameters(potential_type="missing"), g)
-    assert str(list(available_potentials.keys())) in str(exc.value)
+    assert str(sorted(available_potentials)) in str(exc.value)

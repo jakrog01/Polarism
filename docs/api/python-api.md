@@ -11,11 +11,12 @@ For constructor calls and working extension examples, see the [plugin guide](../
       members:
         - BoundaryCondition
         - Config
+        - create_absorption_strategy
+        - create_grid
         - create_potential
         - create_reservoir
         - create_solver
         - AbstractSolver
-        - RK4CudaSolver
         - LaserFactory
         - load_plugins
         - RealTimeVisualization
@@ -33,10 +34,6 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - StorageVisitor
         - VisualizationVisitor
         - ResultVisitor
-        - hdf5_storage
-        - json_storage
-        - npy_storage
-        - base_storage
 
 ## Configuration dataclasses
 

@@ -6,7 +6,7 @@ import warnings
 from typing import TYPE_CHECKING
 
 from polarism.boundary_conditions.absorption.absorption_registry import (
-    available_boundary_conditions,
+    available_absorptions,
 )
 from polarism.grid.create_grid import grid_boundary
 from polarism.results.observable_registry import available_observables
@@ -122,11 +122,10 @@ def _validate_result(cfg: Config) -> None:
         if not isinstance(names, (tuple, list)) or any(not isinstance(name, str) for name in names):
             raise ConfigValidationError(f"result.{field} must be a tuple of names")
         for name in names:
-            if name not in registry:
-                raise ConfigValidationError(
-                    f"result.{field} name '{name}' is not recognised. "
-                    f"Available: {list(registry.keys())}."
-                )
+            try:
+                registry.lookup(name)
+            except ValueError as exc:
+                raise ConfigValidationError(f"result.{field}: {exc}") from exc
     if not isinstance(r.compression, str) or r.compression not in {"none", "lzf", "gzip"}:
         raise ConfigValidationError("result.compression must be one of none, lzf, gzip")
     if type(r.compression_level) is not int or not 0 <= r.compression_level <= 9:
@@ -172,11 +171,10 @@ def _validate_boundary(cfg: Config) -> None:
             f"boundary_condition.mask_width_percent must be in [0, 0.5], "
             f"got {bc.mask_width_percent}"
         )
-    if bc.absorption not in available_boundary_conditions:
-        raise ConfigValidationError(
-            f"boundary_condition.absorption='{bc.absorption}' is not recognised. "
-            f"Valid values: {sorted(available_boundary_conditions)}."
-        )
+    try:
+        available_absorptions.lookup(bc.absorption)
+    except ValueError as exc:
+        raise ConfigValidationError(f"boundary_condition.absorption: {exc}") from exc
     if bc.absorption != "no-absorption" and bc.profile_type not in _VALID_PROFILE_TYPES:
         raise ConfigValidationError(
             f"boundary_condition.profile_type='{bc.profile_type}' is not recognised. "

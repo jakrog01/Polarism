@@ -1,30 +1,28 @@
 """Grid registry helpers."""
 from __future__ import annotations
 
-import warnings
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+from polarism.registry import Registry
+
+if TYPE_CHECKING:
+    from polarism.grid.simulation_grid_2d import SimulationGrid2D
 
 GRID_BOUNDARIES = {"periodic", "closed-interval"}
 
-available_grids: dict[str, type] = {}
+available_grids: Registry[type[SimulationGrid2D]] = Registry("grid")
 
 
-def register_grid(name: str):
-    """Register grid."""
-    def decorator(cls: type) -> type:
-        """Register the decorated object and return it."""
+def register_grid(name: str) -> Callable[[type[SimulationGrid2D]], type[SimulationGrid2D]]:
+    """Return a decorator that registers a grid under ``name``."""
+    def decorator(cls: type[SimulationGrid2D]) -> type[SimulationGrid2D]:
         boundary = getattr(cls, "boundary", None)
         if boundary not in GRID_BOUNDARIES:
             raise ValueError(
                 f"Grid '{name}' must define a class attribute 'boundary' set to one of "
                 f"{sorted(GRID_BOUNDARIES)}, got {boundary!r}."
             )
-        existing = available_grids.get(name)
-        if existing is not None and existing is not cls:
-            warnings.warn(
-                f"Grid '{name}' is already registered; overriding {existing!r}.",
-                stacklevel=2,
-            )
-        available_grids[name] = cls
-        return cls
+        return available_grids.register(name)(cls)
 
     return decorator

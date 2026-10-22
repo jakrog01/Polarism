@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Union
 
 from polarism.laser.continuous_exp import ContinuousExponentialPump
-from polarism.laser.laser_registy import register_laser
+from polarism.laser.laser_registry import register_laser
 
 if TYPE_CHECKING:
     import cupy as cp

@@ -7,7 +7,7 @@ import numpy as np
 
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import PotentialParameters
-from polarism.potential.potential_registy import register_potential
+from polarism.potential.potential_registry import register_potential
 
 if TYPE_CHECKING:
     import cupy as cp

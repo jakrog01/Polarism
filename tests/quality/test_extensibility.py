@@ -3,12 +3,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polarism.boundary_conditions.absorption.absorption_registry import available_boundary_conditions, register_absorption
+from polarism.boundary_conditions.absorption.absorption_registry import available_absorptions, register_absorption
 from polarism.boundary_conditions.absorption.absorption_strategy import AbsorptionStrategy
 from polarism.compute_engine import compute_engine
 from polarism.laser.abstract_laser import AbstractLaser
-from polarism.laser.laser_registy import available_lasers, register_laser
-from polarism.potential.potential_registy import available_potentials, register_potential
+from polarism.laser.laser_registry import available_lasers, register_laser
+from polarism.potential.potential_registry import available_potentials, register_potential
 from polarism.simulation_controller import SimulationController
 from tests.unit.conftest import small_config
 
@@ -33,5 +33,5 @@ def test_registry_extensions_run_without_solver_edits(monkeypatch) -> None:
         def apply_absorption(self, psi): return psi
     cfg = small_config(laser__laser_type="dummy_test", potential__potential_type="dummy_test", boundary_condition__absorption="dummy_test", solver__total_time=0.02)
     SimulationController(cfg).run()
-    for registry in (available_lasers, available_potentials, available_boundary_conditions):
+    for registry in (available_lasers, available_potentials, available_absorptions):
         monkeypatch.delitem(registry, "dummy_test")
