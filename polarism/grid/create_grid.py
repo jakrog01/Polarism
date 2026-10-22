@@ -10,12 +10,7 @@ from polarism.grid.periodic_simulation_grid_2d import PeriodicSimulationGrid2D
 
 def create_grid(cfg):
     """Create grid."""
-    if cfg.grid_type not in available_grids:
-        raise ValueError(
-            f"Unknown grid_type: '{cfg.grid_type}'. "
-            f"Available: {list(available_grids.keys())}"
-        )
-    return available_grids[cfg.grid_type](cfg)
+    return available_grids.lookup(cfg.grid_type)(cfg)
 
 
 def grid_boundary(grid_type: str) -> str:

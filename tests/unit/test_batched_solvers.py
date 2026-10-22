@@ -217,7 +217,7 @@ def test_builtin_batch_power_coefficient_matches_lasers(laser_type, definition):
     from polarism.config.simulation_parameters import LaserParameters
     from polarism.laser.abstract_laser import AbstractLaser
     from polarism.laser import LaserFactory
-    from polarism.laser.laser_registy import available_lasers
+    from polarism.laser.laser_registry import available_lasers
 
     X, Y = np.meshgrid(np.arange(4.0), np.arange(4.0))
     lasers = [LaserFactory.create_laser(

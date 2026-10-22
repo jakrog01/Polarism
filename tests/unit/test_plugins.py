@@ -11,10 +11,10 @@ from polarism import SimulationController
 from polarism.config.simulation_parameters import LaserParameters, PotentialParameters
 from polarism.grid.grid_registry import available_grids, register_grid
 from polarism.laser.laser_factory import LaserFactory
-from polarism.laser.laser_registy import available_lasers, register_laser
+from polarism.laser.laser_registry import available_lasers, register_laser
 from polarism.plugins import load_plugins
 from polarism.potential.create_potential import create_potential
-from polarism.potential.potential_registy import available_potentials
+from polarism.potential.potential_registry import available_potentials
 from polarism.reservoir.reservoir_registry import available_reservoirs
 from polarism.solver.solver_compatibility import SolverCompatibilityError, check_solver_compatibility
 from tests.unit.conftest import grid, small_config

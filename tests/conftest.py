@@ -14,7 +14,7 @@ def pytest_addoption(parser):
         "--use-gpu",
         action="store_true",
         default=False,
-        help="Run benchmarks on GPU (requires CuPy)",
+        help="Run GPU-marked tests on CUDA (requires CuPy)",
     )
 
 
@@ -27,10 +27,9 @@ def use_gpu(request):
 @pytest.fixture(autouse=True)
 def configure_backend(request, use_gpu):
     """Configure the compute backend for a test."""
-    is_benchmark = "phoenix_benchmark" in str(request.fspath)
     is_gpu_test = request.node.get_closest_marker("gpu") is not None
 
-    if use_gpu and (is_benchmark or is_gpu_test):
+    if use_gpu and is_gpu_test:
         engine_cfg = ComputeEngineParameters(use_gpu=True)
         compute_engine.configure(engine_cfg)
     else:

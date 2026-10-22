@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from polarism.boundary_conditions.absorption.absorption_registry import (
-    available_boundary_conditions,
+    available_absorptions,
 )
 
 if TYPE_CHECKING:
@@ -24,12 +24,6 @@ def create_absorption_strategy(
     physics_constants: PhysicsConstants,
 ) -> AbsorptionStrategy:
     """Create absorption strategy."""
-    if boundary_conditions_config.absorption not in available_boundary_conditions:
-        raise ValueError(
-            f"Unknown boundary conditions: '{boundary_conditions_config.absorption}'. "
-            f"Available: {list(available_boundary_conditions.keys())}"
-        )
-
-    return available_boundary_conditions[boundary_conditions_config.absorption](
+    return available_absorptions.lookup(boundary_conditions_config.absorption)(
         grid, boundary_conditions_config, physics_constants
     )

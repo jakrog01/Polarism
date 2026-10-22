@@ -8,6 +8,9 @@ copyright: Copyright &copy; 2026 Jakub Rogala
 docs_dir: docs
 strict: true
 
+exclude_docs: |
+  plans/
+
 nav:
   - Home:
       - Polarism: index.md

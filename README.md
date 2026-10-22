@@ -86,6 +86,15 @@ Open a saved run with `ps.load_results(run_dir)`. Its `fields["density"]`,
 `scalars["norm"]`, and `static["pump"]` use stable ASCII names; `x` and `y`
 contain the grid coordinates. HDF5 datasets are read lazily, so `fields["density"][::10]` loads every tenth frame only. Use the returned object as a context manager for HDF5 output.
 
+You can save this configuration to YAML with `cfg.to_yaml("run.yaml")`, load it
+with `ps.Config.from_yaml("run.yaml")`, or run it from the CLI:
+
+```bash
+polarism --config run.yaml --grid.nx 256
+```
+
+CLI flags override values in the file. See the [configuration guide](https://jakrog01.github.io/Polarism/user-guide/grid-and-parameters/#yaml-configuration).
+
 For long cluster jobs, `cfg.checkpoint.every_steps` writes restartable checkpoints and `cfg.checkpoint.resume_from` continues from one; see [Checkpoint and restart](https://jakrog01.github.io/Polarism/user-guide/checkpoint-and-restart/).
 
 For GPU execution, set `cfg.compute_engine.use_gpu = True`, choose `cfg.solver.method = "rk4-cuda"`, `"split-step-fft-cuda"`, or `"ifrk-fft-cuda"`, and consider `cfg.solver.precision = "single"` on consumer GPUs. FFT solvers require a periodic grid. Inspect CLI options with `polarism --help`.

@@ -5,7 +5,7 @@ import numpy as np
 
 from polarism.config.simulation_parameters import LaserParameters
 from polarism.laser.abstract_laser import AbstractLaser
-from polarism.laser.laser_registy import register_laser
+from polarism.laser.laser_registry import register_laser
 
 if TYPE_CHECKING:
     import numpy as np

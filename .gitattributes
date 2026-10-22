@@ -1,3 +1,0 @@
-# Phoenix reference data is verification input that the benchmark compares
-# element by element. Keep it byte-exact and out of any line-ending rewriting.
-tests/data/phoenix_benchmark/** -text

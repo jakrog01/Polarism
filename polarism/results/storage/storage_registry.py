@@ -1,27 +1,17 @@
 """Storage backend registry."""
 from __future__ import annotations
 
-import warnings
-
+from collections.abc import Callable
 from typing import TYPE_CHECKING
+
+from polarism.registry import Registry
 
 if TYPE_CHECKING:
     from polarism.results.storage.base_storage import BaseStorage
 
-available_storages: dict[str, type[BaseStorage]] = {}
+available_storages: Registry[type[BaseStorage]] = Registry("storage")
 
 
-def register_storage(name: str):
-    """Register a result storage backend."""
-    def decorator(cls: type[BaseStorage]) -> type[BaseStorage]:
-        """Register the decorated class and return it."""
-        existing = available_storages.get(name)
-        if existing is not None and existing is not cls:
-            warnings.warn(
-                f"Storage '{name}' is already registered; overriding {existing!r}.",
-                stacklevel=2,
-            )
-        available_storages[name] = cls
-        return cls
-
-    return decorator
+def register_storage(name: str) -> Callable[[type[BaseStorage]], type[BaseStorage]]:
+    """Return a decorator that registers a storage backend under ``name``."""
+    return available_storages.register(name)

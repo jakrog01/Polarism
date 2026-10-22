@@ -8,10 +8,13 @@ The repository has multiple pytest layers, and they serve different purposes. Th
 | --- | --- |
 | `.venv/bin/pytest -q` | Default CPU-oriented regression suite |
 | `.venv/bin/pytest -m compliance` | Solver-to-solver agreement and compatibility checks |
-| `.venv/bin/pytest -m slow --use-gpu` | Long-running Phoenix benchmark workflow |
-| `.venv/bin/pytest -q -m '' --use-gpu --junitxml=artifacts/reports/full_verification.xml` | Complete CPU and GPU verification, including Phoenix |
+| `.venv/bin/pytest -q -m "gpu and not slow" --use-gpu` | GPU-marked tests without the long-running ones |
+| `.venv/bin/pytest -m slow --use-gpu` | Convergence, memory and GPU-speedup studies |
+| `.venv/bin/pytest -q -m '' --use-gpu --junitxml=artifacts/reports/full_verification.xml` | Complete CPU and GPU verification |
 
 The default `pyproject.toml` configuration excludes `slow` and `compliance` markers from a plain `pytest` run.
+A `-m` option on the command line replaces that default, so `pytest -m gpu`
+also runs slow GPU tests; add `and not slow` to skip them.
 
 ## Recommended local workflow
 
@@ -48,36 +51,19 @@ Use the following command for a complete verification pass:
 ```
 
 `-m ''` overrides the normal development selection and includes every marker:
-unit, integration, reference, compliance, slow, and GPU. The command executes
-the complete Phoenix matrix as well as the CPU/GPU agreement checks. Do not run
-a second pytest process at the same time: Phoenix needs exclusive use of the
-GPU for meaningful timing and reproducible comparisons.
+unit, integration, reference, compliance, slow, and GPU. Do not run a second
+pytest process at the same time: the GPU-speedup study needs exclusive use of
+the GPU for meaningful timing.
 
 The JUnit XML is the primary machine-readable execution record. All outputs
 under `artifacts/` are local generated data and must not be committed.
 
 ## What the tests cover
 
-- `test_solver_decay.py` checks exponential decay against an analytic expectation.
-- `test_solver_uniformity.py` verifies that a uniform pump does not create artificial spatial structure.
-- `test_reservoir_0d_stationary.py` checks the single-reservoir stationary limit.
-- `test_solver_compliance.py` compares solver families and reservoir variants.
-- `test_phoenix_benchmark.py` is a long benchmark-style validation path.
-
-## Phoenix reference data
-
-`test_phoenix_benchmark.py` reads its reference traces from
-`tests/data/phoenix_benchmark/`, which is tracked in the repository. A fresh
-clone therefore contains everything the eleven `test_phoenix_accuracy` comparisons need
-(`rho_max.txt`, `psi_init.txt`, `pump.txt`, `potential.txt`,
-`phoenix_lasers_setup.yaml`, `timing.json`, `frame_first.npz`,
-`frame_last.npz`); there is no separate data download step. Unlike `artifacts/`,
-this directory is verification *input*, not generated output.
-
-The data was produced by `tests/data/phoenix_benchmark/example.ipynb` inside the
-`robertschade/phoenix:latest` container (pyphoenix, fp64, GPU) and is marked
-binary in `.gitattributes` so the byte-exact input checks stay valid regardless
-of the local `core.autocrlf` setting.
+- `tests/reference/test_solver_decay.py` checks exponential decay against an analytic expectation.
+- `tests/reference/test_solver_uniformity.py` verifies that a uniform pump does not create artificial spatial structure.
+- `tests/reference/test_reservoir_0d_stationary.py` checks the single-reservoir stationary limit.
+- `tests/crosscheck/test_solver_compliance.py` compares solver families and reservoir variants.
 
 ## GitHub Actions workflows
 

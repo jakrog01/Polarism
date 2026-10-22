@@ -17,14 +17,8 @@ if TYPE_CHECKING:
 
 def create_solver(config: Config, grid: SimulationGrid2D, batch_physics=None) -> AbstractSolver:
     """Create solver."""
-    if config.solver.method not in available_solvers:
-        raise ValueError(
-            f"Unknown solver method: '{config.solver.method}'. "
-            f"Available: {list(available_solvers.keys())}"
-        )
-
     physics = BatchPhysics(config.physics, batch_physics, compute_engine.xp, getattr(config.solver, "precision", "double"))
-    component = available_solvers[config.solver.method]
+    component = available_solvers.lookup(config.solver.method)
     if physics.size is None:
         return component(config, grid)
     parameters = inspect.signature(component).parameters

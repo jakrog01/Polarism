@@ -1,26 +1,17 @@
 """Reservoir registry helpers."""
 from __future__ import annotations
 
-import warnings
+from collections.abc import Callable
 from typing import TYPE_CHECKING
+
+from polarism.registry import Registry
 
 if TYPE_CHECKING:
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
 
-available_reservoirs: dict[str, type[AbstractReservoir]] = {}
+available_reservoirs: Registry[type[AbstractReservoir]] = Registry("reservoir")
 
 
-def register_reservoir(name: str):
-    """Register reservoir."""
-    def decorator(cls: type[AbstractReservoir]) -> type[AbstractReservoir]:
-        """Register the decorated object and return it."""
-        existing = available_reservoirs.get(name)
-        if existing is not None and existing is not cls:
-            warnings.warn(
-                f"Reservoir '{name}' is already registered; overriding {existing!r}.",
-                stacklevel=2,
-            )
-        available_reservoirs[name] = cls
-        return cls
-
-    return decorator
+def register_reservoir(name: str) -> Callable[[type[AbstractReservoir]], type[AbstractReservoir]]:
+    """Return a decorator that registers a reservoir under ``name``."""
+    return available_reservoirs.register(name)

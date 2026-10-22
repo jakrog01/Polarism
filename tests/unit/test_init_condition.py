@@ -37,3 +37,13 @@ def test_invalid_initialisation_modes() -> None:
         make_initial_psi(np, 16, 16, 1e-3, mode="filtered_complex_gaussian", dx=1.0, dy=1.0, k_cutoff_um=0.1, seed=1)
     with pytest.raises(ValueError, match="legacy_positive_uniform"):
         make_initial_psi(np, 8, 8, 1e-3, mode="bad", seed=1)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("mode", ["legacy_positive_uniform", "complex_gaussian_zero_mean", "filtered_complex_gaussian"])
+def test_same_seed_gives_same_noise_on_cpu_and_gpu(mode) -> None:
+    cp = pytest.importorskip("cupy")
+    kwargs = dict(mode=mode, dx=0.5, dy=0.5, k_cutoff_um=2.0, seed=42)
+    cpu = make_initial_psi(np, 64, 48, 1e-3, **kwargs)
+    gpu = cp.asnumpy(make_initial_psi(cp, 64, 48, 1e-3, **kwargs))
+    np.testing.assert_allclose(gpu, cpu, rtol=0, atol=1e-15)

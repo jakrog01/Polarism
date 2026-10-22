@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from polarism.boundary_conditions.absorption.absorption_registry import available_boundary_conditions, register_absorption
+from polarism.boundary_conditions.absorption.absorption_registry import available_absorptions, register_absorption
 from polarism.boundary_conditions.absorption.create_absorption_strategy import create_absorption_strategy
 from polarism.config.simulation_parameters import BoundaryConditionParameters, LaserParameters, PhysicsConstants, PotentialParameters, ReservoirParameters
 from polarism.reservoir.create_reservoir import create_reservoir
 from polarism.laser.laser_factory import LaserFactory
-from polarism.laser.laser_registy import available_lasers, register_laser
+from polarism.laser.laser_registry import available_lasers, register_laser
 from polarism.potential.create_potential import create_potential
-from polarism.potential.potential_registy import available_potentials, register_potential
+from polarism.potential.potential_registry import available_potentials, register_potential
 from polarism.solver.create_solver import create_solver
 from polarism.solver.solver_registry import available_solvers, register_solver
 from polarism.results import register_observable
@@ -32,9 +32,9 @@ def test_unknown_registry_identifier_lists_available_entries(family: str) -> Non
             registry = available_potentials
             create_potential(PotentialParameters(potential_type="missing"), g)
         else:
-            registry = available_boundary_conditions
+            registry = available_absorptions
             create_absorption_strategy(g, BoundaryConditionParameters(absorption="missing"), small_config().physics)
-    assert str(list(registry.keys())) in str(exc.value)
+    assert str(sorted(registry)) in str(exc.value)
 
 
 def test_registry_decorators_register_and_cleanup(monkeypatch) -> None:
@@ -50,8 +50,8 @@ def test_registry_decorators_register_and_cleanup(monkeypatch) -> None:
     @register_solver("dummy_registry")
     class DummySolver:
         pass
-    assert all("dummy_registry" in registry for registry in (available_lasers, available_potentials, available_boundary_conditions, available_solvers))
-    for registry in (available_lasers, available_potentials, available_boundary_conditions, available_solvers):
+    assert all("dummy_registry" in registry for registry in (available_lasers, available_potentials, available_absorptions, available_solvers))
+    for registry in (available_lasers, available_potentials, available_absorptions, available_solvers):
         monkeypatch.delitem(registry, "dummy_registry")
 
 

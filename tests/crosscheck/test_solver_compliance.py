@@ -32,7 +32,7 @@ from tests._helpers import (
 
 pytestmark = pytest.mark.compliance
 
-RESULTS_DIR = Path(__file__).resolve().parent / "test_results" / "solver_compliance"
+RESULTS_DIR = Path(__file__).resolve().parents[1] / "test_results" / "solver_compliance"
 
 PERIODIC_SOLVERS = [
     RK4FDMFusedSolver,

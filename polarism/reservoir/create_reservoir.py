@@ -26,13 +26,9 @@ def create_reservoir(
 ) -> AbstractReservoir:
     """Create a reservoir with zero fields, optionally shaped ``(B, ny, nx)``."""
     reservoir_type = reservoir_config.reservoir_type
-    if reservoir_type not in available_reservoirs:
-        raise ValueError(
-            f"Unknown reservoir type: '{reservoir_type}'. "
-            f"Available: {list(available_reservoirs.keys())}"
-        )
+
     batched = BatchPhysics(physics, batch_physics, compute_engine.xp, precision)
-    component = available_reservoirs[reservoir_type]
+    component = available_reservoirs.lookup(reservoir_type)
     if batched.size is None:
         reservoir = component(reservoir_config, physics, grid, precision)
     else:
