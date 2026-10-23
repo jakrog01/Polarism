@@ -19,7 +19,7 @@ from tqdm import tqdm
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine, has_full_rate_fp64
 from polarism.config.dtype_utils import complex_dtype, real_dtype
-from polarism.config.validation import validate_config
+from polarism.config.validation import _validate_time_multiple, validate_config
 from polarism.grid.create_grid import create_grid
 from polarism.grid.simulation_grid import SimulationGrid
 from polarism.laser.laser_factory import LaserFactory
@@ -217,7 +217,6 @@ class SimulationController:
         self.results_manager = ResultsManager()
         self.storage_visitor = None
         self.animation_visitor = None
-        self._step = 0
         self._state_shape_explicit = batched
         self._stop_requested = False
         self._resumed = False
@@ -234,7 +233,7 @@ class SimulationController:
 
         if self.storage_visitor is not None:
             self.run_directory = self.storage_visitor.output_dir
-        elif (cfg.checkpoint.every_steps or cfg.checkpoint.path is not None
+        elif (cfg.checkpoint.every or cfg.checkpoint.path is not None
               or cfg.checkpoint.resume_from is not None):
             self.run_directory = create_run_directory(cfg.result.output_directory)
 
@@ -465,15 +464,13 @@ class SimulationController:
             raise ValueError("psi batch shape must have at least one member")
         if not np.isfinite(t) or t < 0:
             raise ValueError("t must be finite and nonnegative")
-        step = round(t / self.cfg.solver.dt)
-        if not np.isclose(t, step * self.cfg.solver.dt, rtol=0, atol=1e-12):
-            raise ValueError("t must lie on a solver step boundary")
         dtype = complex_dtype(self.xp, self.cfg.solver.precision)
         self.state.batch_size = shape[0] if len(shape) == self.grid.ndim + 1 else 1
         self.state.batched = len(shape) == self.grid.ndim + 1
         self.state.psi = self.xp.asarray(psi, dtype=dtype).copy()
-        self.state.t = step * self.cfg.solver.dt
-        self._step = step
+        self.state.t0 = float(t)
+        self.state.t = float(t)
+        self.state.step = 0
         self._state_shape_explicit = True
         if reservoir_state is not None:
             fields = tuple(reservoir_state)
@@ -516,31 +513,32 @@ class SimulationController:
             self.reservoir.set_state(arrays)
 
     def save_checkpoint(self, path: str | os.PathLike) -> None:
-        """Atomically save the current step boundary to an HDF5 checkpoint."""
+        """Atomically save the current state to an HDF5 checkpoint."""
         from polarism import __version__
 
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        step = round(self.state.t / self.cfg.solver.dt)
-        if self.state.t != step * self.cfg.solver.dt:
-            raise ValueError("checkpoint requires a solver step boundary")
-        self._step = step
         if self.storage_visitor is not None:
             self.storage_visitor.flush()
-        psi = compute_engine.to_cpu(self.state.psi)
-        psi_k = self.state.psi_k
-        fields = tuple(compute_engine.to_cpu(value[:, 0] if self.state.batched else value[0, 0])
-                       for value in self.reservoir.get_state())
+        field = compute_engine.to_cpu(self.state.field)
+        field_k = self.state.field_k
+        fields = tuple(compute_engine.to_cpu(value) for value in self.reservoir.get_state())
+        names = getattr(self.reservoir, "state_names", tuple(str(i) for i in range(len(fields))))
         fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
         try:
             with os.fdopen(fd, "wb"):
                 pass
             with h5py.File(temporary, "w") as h5:
-                h5.attrs["checkpoint_version"] = 1
+                h5.attrs["checkpoint_version"] = 2
                 h5.attrs["polarism_version"] = __version__
-                h5.attrs["step"] = self._step
+                h5.attrs["step"] = self.state.step
                 h5.attrs["t"] = self.state.t
+                h5.attrs["t0"] = self.state.t0
                 h5.attrs["dt"] = self.cfg.solver.dt
+                h5.attrs["ndim"] = self.grid.ndim
+                h5.attrs["shape"] = self.grid.shape
+                h5.attrs["components"] = self.state.components
+                h5.attrs["batched"] = self.state.batched
                 h5.attrs["reservoir_type"] = self.cfg.reservoir.reservoir_type
                 h5.attrs["config_json"] = json.dumps(asdict(self.cfg))
                 if self._member_configs is not None:
@@ -549,12 +547,12 @@ class SimulationController:
                          "laser_entries": getattr(member, "_laser_entry_overrides", {})}
                         for member in self._member_configs
                     ], sort_keys=True)
-                h5.create_dataset("psi", data=psi)
-                if psi_k is not None:
-                    h5.create_dataset("psi_k", data=compute_engine.to_cpu(psi_k))
+                h5.create_dataset("field", data=field)
+                if field_k is not None:
+                    h5.create_dataset("field_k", data=compute_engine.to_cpu(field_k))
                 group = h5.create_group("reservoir")
-                for index, value in enumerate(fields):
-                    group.create_dataset(str(index), data=value)
+                for name, value in zip(names, fields):
+                    group.create_dataset(name, data=value)
             os.replace(temporary, target)
         finally:
             if os.path.exists(temporary):
@@ -563,8 +561,9 @@ class SimulationController:
     def load_checkpoint(self, path: str | os.PathLike) -> None:
         """Validate and restore a checkpoint for the current configuration."""
         with h5py.File(path, "r") as h5:
-            if h5.attrs.get("checkpoint_version") != 1:
-                raise ValueError("unsupported checkpoint version")
+            version = h5.attrs.get("checkpoint_version")
+            if version != 2:
+                raise ValueError(f"checkpoint format v{version} is not supported by Polarism 0.7; supported: 2")
             if h5.attrs["reservoir_type"] != self.cfg.reservoir.reservoir_type:
                 raise ValueError("reservoir type mismatch")
             if h5.attrs["dt"] != self.cfg.solver.dt:
@@ -577,37 +576,50 @@ class SimulationController:
                 ], sort_keys=True)
                 if h5.attrs.get("member_configs_json") != expected:
                     raise ValueError("checkpoint member physics, pump or potential mismatch")
-            psi = h5["psi"][:]
-            shape = psi.shape
-            if shape[-self.grid.ndim:] != self.grid.shape or len(shape) not in (self.grid.ndim, self.grid.ndim + 1):
+            field = h5["field"][:]
+            shape = field.shape
+            if int(h5.attrs["ndim"]) != self.grid.ndim or tuple(h5.attrs["shape"]) != self.grid.shape:
                 raise ValueError("checkpoint grid shape mismatch")
-            if self._state_shape_explicit and shape != self.state.psi.shape:
+            if int(h5.attrs["components"]) != self.state.components or shape[1] != self.state.components:
+                raise ValueError("checkpoint components mismatch")
+            if shape[-self.grid.ndim:] != self.grid.shape or len(shape) != self.grid.ndim + 2:
+                raise ValueError("checkpoint field shape mismatch")
+            batched = bool(h5.attrs["batched"])
+            public_shape = (shape[0], *self.grid.shape) if batched else self.grid.shape
+            if not batched and shape[0] != 1:
                 raise ValueError("checkpoint batch shape mismatch")
-            fields = tuple(h5["reservoir"][str(i)][:] for i in range(len(h5["reservoir"])))
+            if self._state_shape_explicit and public_shape != self.state.psi.shape:
+                raise ValueError("checkpoint batch shape mismatch")
+            names = getattr(self.reservoir, "state_names", tuple(str(i) for i in range(len(self.reservoir.get_state()))))
+            if set(h5["reservoir"]) != set(names):
+                raise ValueError("checkpoint reservoir names mismatch")
+            fields = tuple(h5["reservoir"][name][:] for name in names)
             if len(fields) != len(self.reservoir.get_state()) or any(x.shape != shape for x in fields):
                 raise ValueError("checkpoint reservoir batch shape mismatch")
             step = int(h5.attrs["step"])
             t = float(h5.attrs["t"])
-            if step < 0 or t != step * self.cfg.solver.dt:
+            t0 = float(h5.attrs["t0"])
+            if step < 0 or not np.isfinite(t) or not np.isfinite(t0) or t != t0 + step * self.cfg.solver.dt:
                 raise ValueError("checkpoint time and step mismatch")
             source_precision = json.loads(h5.attrs["config_json"])["solver"]["precision"]
             precision_changed = source_precision != self.cfg.solver.precision
-            psi_k = h5["psi_k"][:] if "psi_k" in h5 else None
-            if psi_k is not None and psi_k.shape != shape:
+            field_k = h5["field_k"][:] if "field_k" in h5 else None
+            if field_k is not None and field_k.shape != shape:
                 raise ValueError("checkpoint spectral batch shape mismatch")
             if precision_changed:
                 warnings.warn("checkpoint precision differs; casting state", UserWarning, stacklevel=2)
         dtype = complex_dtype(self.xp, self.cfg.solver.precision) if precision_changed else None
-        self.state.batch_size = shape[0] if len(shape) == self.grid.ndim + 1 else 1
-        self.state.batched = len(shape) == self.grid.ndim + 1
-        self.state.psi = self.xp.asarray(psi, dtype=dtype).copy()
+        self.state.batch_size = shape[0]
+        self.state.batched = batched
+        self.state.field = self.xp.asarray(field, dtype=dtype).copy()
         self.state.t = t
-        self._step = step
+        self.state.t0 = t0
+        self.state.step = step
         self._state_shape_explicit = True
         self._restore_reservoir(fields, cast=precision_changed)
         self._resumed = True
-        if psi_k is not None:
-            self.state.psi_k = self.xp.asarray(psi_k, dtype=dtype).copy()
+        if field_k is not None:
+            self.state.field_k = self.xp.asarray(field_k, dtype=dtype).copy()
         self.solver = create_solver(self.cfg, self.grid, batch_physics=self._batch_physics)
 
     def run(self) -> None:
@@ -615,9 +627,10 @@ class SimulationController:
         self.pump_field.lasers = self.lasers
         dt = self.cfg.solver.dt
         n_steps = round(self.cfg.solver.total_time / dt)
-        if self._step > n_steps:
+        if self.state.step > n_steps:
             raise ValueError("checkpoint step exceeds configured total_time")
-        interval = self.cfg.checkpoint.every_steps
+        interval = (_validate_time_multiple("checkpoint.every", self.cfg.checkpoint.every, dt)
+                    if self.cfg.checkpoint.every else 0)
         checkpoint_enabled = (interval > 0 or self.cfg.checkpoint.path is not None
                               or self.cfg.checkpoint.resume_from is not None)
         last_checkpoint_step = -1
@@ -633,13 +646,16 @@ class SimulationController:
                 signal.signal(signum, request_stop)
 
         try:
-            if self._step == 0 and not self._resumed and (self.results_manager.visitors or self.storage_visitor is not None or self.animation_visitor is not None):
+            if self.state.step == 0 and not self._resumed and (self.results_manager.visitors or self.storage_visitor is not None or self.animation_visitor is not None):
                 self._record_results(self.state.t)
                 if self.visualizer is not None:
                     self.next_viz_time += self.cfg.result.real_time_refresh_interval
 
-            save_interval = max(1, self.cfg.result.save_interval)
-            step = self._step
+            save_steps = (
+                _validate_time_multiple("result.save_every", self.cfg.result.save_every, dt)
+                if self.cfg.result.save_every is not None else 1
+            )
+            step = self.state.step
             with tqdm(total=n_steps, initial=step, desc="Simulating") as progress:
                 while step < n_steps and not self._stop_requested:
                     recording = (
@@ -653,7 +669,7 @@ class SimulationController:
                     if self.visualizer is not None:
                         end = step + 1
                     elif recording:
-                        end = min(n_steps, ((step // save_interval) + 1) * save_interval)
+                        end = min(n_steps, ((step // save_steps) + 1) * save_steps)
                     else:
                         end = n_steps
                     if interval:
@@ -666,9 +682,10 @@ class SimulationController:
                     )
                     progress.update(end - step)
                     step = end
-                    self._step = step
-                    t_after = step * dt
-                    should_save = recording and step % save_interval == 0
+                    self.state.step = step
+                    t_after = self.state.t0 + step * dt
+                    self.state.t = t_after
+                    should_save = recording and step % save_steps == 0
                     should_viz = (
                         self.visualizer is not None and t_after >= self.next_viz_time
                     )
@@ -682,7 +699,7 @@ class SimulationController:
 
                     should_animate = (
                         self.animation_visitor is not None
-                        and step % save_interval == 0
+                        and step % save_steps == 0
                     )
 
                     if should_save or should_viz or should_animate:
@@ -692,7 +709,7 @@ class SimulationController:
                     if interval and step % interval == 0:
                         self.save_checkpoint(self._checkpoint_path())
                         last_checkpoint_step = step
-            if (checkpoint_enabled or self._stop_requested) and last_checkpoint_step != self._step:
+            if (checkpoint_enabled or self._stop_requested) and last_checkpoint_step != self.state.step:
                 self.save_checkpoint(self._checkpoint_path())
         finally:
             try:
@@ -754,7 +771,7 @@ class SimulationController:
             if terms is not None:
                 values = {}
                 for i, field in enumerate(self.pump_field.last_components):
-                    if field.ndim == 2:
+                    if field.ndim == self.grid.ndim:
                         values[f"L{i}"] = self.xp.broadcast_to(field.max(), (len(self._member_configs),))
                     else:
                         values[f"L{i}"] = field.max(axis=tuple(range(-self.grid.ndim, 0)))[:, 0]

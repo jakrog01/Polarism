@@ -521,9 +521,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                             length, model, potential, envelope, pump_flat, combiner
                         )
                         times = [time for k in range(length) for time in (
-                            (start_step + done + k) * self.config.solver.dt
+                            state.t0 + (start_step + done + k) * self.config.solver.dt
                             + self.config.solver.dt / 4,
-                            (start_step + done + k) * self.config.solver.dt
+                            state.t0 + (start_step + done + k) * self.config.solver.dt
                             + 3 * self.config.solver.dt / 4)]
                         if multi:
                             pending_hosts.append(combiner.coefficients(terms, times, stream))
@@ -556,7 +556,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                     parity = (k - done) % 2
                     xp.multiply(spec[parity], self._full_normalized, out=multiplied)
                     plan.fft(multiplied, local, cufft.CUFFT_INVERSE)
-                    t = (start_step + k) * self.config.solver.dt
+                    t = state.t0 + (start_step + k) * self.config.solver.dt
                     times = (t + self.config.solver.dt / 4,
                              t + 3 * self.config.solver.dt / 4)
                     if multi:
@@ -583,7 +583,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             state.field_k = spec[final_index].copy()
             reservoir.set_state(tuple(field.copy() for field in res[final_index]))
             stream.synchronize()
-        state.t = (start_step + n_steps) * self.config.solver.dt
+        state.t = state.t0 + (start_step + n_steps) * self.config.solver.dt
 
     def step(self, potential, pump, reservoir: AbstractReservoir,
              boundary_condition: BoundaryCondition, state: SimulationState) -> None:

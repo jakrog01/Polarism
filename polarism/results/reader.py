@@ -10,22 +10,17 @@ import h5py
 import numpy as np
 
 
-_OLD_NAMES = {"|ψ|²": "density", "N(t)": "norm", "Pump": "pump"}
-
-
-def _name(name: str) -> str:
-    return _OLD_NAMES.get(name, name)
-
-
 class _LazyDatasets(Mapping):
     """Expose HDF5 datasets by name; slice them to read only part of a file."""
 
-    def __init__(self, group):
+    def __init__(self, group, *, field=False):
         self._group = group
-        self._names = {_name(name): name for name in group} if group is not None else {}
+        self._field = field
+        self._names = {name: name for name in group} if group is not None else {}
 
     def __getitem__(self, name):
-        return self._group[self._names[name]]
+        dataset = self._group[self._names[name]]
+        return _ScalarComponentDataset(dataset) if self._field else dataset
 
     def __iter__(self):
         return iter(self._names)
@@ -63,21 +58,51 @@ class Results:
         self.close()
 
 
+class _ScalarComponentDataset:
+    """Expose a canonical scalar field in its public shape without copying."""
+
+    def __init__(self, dataset):
+        self.dataset = dataset
+        self.attrs = dataset.attrs
+        self.dtype = dataset.dtype
+        self._component_axis = 2 if "member" in dataset.attrs["dims"] else 1
+        self.shape = tuple(size for axis, size in enumerate(dataset.shape)
+                           if axis != self._component_axis)
+        self.ndim = len(self.shape)
+
+    def __getitem__(self, key):
+        if not isinstance(key, tuple):
+            key = (key,)
+        key = list(key)
+        if Ellipsis in key:
+            index = key.index(Ellipsis)
+            key[index:index + 1] = [slice(None)] * (self.ndim - len(key) + 1)
+        key += [slice(None)] * (self._component_axis - len(key))
+        key.insert(self._component_axis, 0)
+        return self.dataset[tuple(key)]
+
+    def __array__(self, dtype=None, copy=None):
+        return np.asarray(self[:], dtype=dtype)
+
+
 class _MemberDataset:
     """Read one member's frames from its batch dataset."""
 
-    def __init__(self, dataset, position, static=False):
+    def __init__(self, dataset, position, static=False, spatial_ndim=2):
         self.dataset = dataset
         self.position = position
         self.static = static
-        self.shape = dataset.shape[1:] if static and dataset.ndim == 3 else (
+        self._static_member = static and ("member" in getattr(dataset, "attrs", {}).get("dims", ())
+                                          or not hasattr(dataset, "attrs") and dataset.ndim == spatial_ndim + 1)
+        self.shape = dataset.shape[1:] if self._static_member else (
             dataset.shape if static else (dataset.shape[0], *dataset.shape[2:])
         )
         self.dtype = dataset.dtype
+        self.attrs = getattr(dataset, "attrs", {})
 
     def __getitem__(self, key):
         if self.static:
-            return self.dataset[self.position][key] if self.dataset.ndim == 3 else self.dataset[key]
+            return self.dataset[self.position][key] if self._static_member else self.dataset[key]
         return self.dataset[key, self.position]
 
     def __array__(self, dtype=None, copy=None):
@@ -96,6 +121,7 @@ class _SweepDataset:
             raise ValueError("Sweep batches have incompatible frame or grid shapes")
         self.shape = (first.shape[0], len(locations), *first.shape[2:])
         self.dtype = first.dtype
+        self.attrs = getattr(first, "attrs", {})
 
     def __getitem__(self, key):
         if not isinstance(key, tuple):
@@ -171,7 +197,8 @@ class SweepResults:
                 target = target[part]
             target[parts[-1]] = value
         select = lambda mapping, static=False: {
-            name: _MemberDataset(value, position, static=static)
+            name: _MemberDataset(value, position, static=static,
+                                 spatial_ndim=int(result.attrs.get("ndim", 2)))
             for name, value in mapping.items()
         }
         return Results(result.time, select(result.fields), select(result.scalars),
@@ -196,6 +223,9 @@ def _load_hdf5(path: Path) -> Results:
     handle = h5py.File(path, "r")
     try:
         attrs = dict(handle.attrs)
+        version = attrs.get("format_version")
+        if version != 3:
+            raise ValueError(f"results format v{version} is not supported by Polarism 0.7; supported: 3")
         config = json.loads(handle["config"].attrs["json"]) if "config" in handle else {}
         grid = handle.get("grid")
         x = grid["x"][:] if grid is not None and "x" in grid else None
@@ -203,7 +233,7 @@ def _load_hdf5(path: Path) -> Results:
         groups = handle.get("scalar_groups")
         scalar_groups = {name: _LazyDatasets(group) for name, group in groups.items()} if groups else {}
         return Results(
-            handle["time"][:], _LazyDatasets(handle.get("fields")),
+            handle["time"][:], _LazyDatasets(handle.get("fields"), field=True),
             _LazyDatasets(handle.get("scalars")), scalar_groups,
             _LazyDatasets(handle.get("static")), config, x, y, attrs, handle,
         )
@@ -215,6 +245,9 @@ def _load_hdf5(path: Path) -> Results:
 def _load_npy(path: Path) -> Results:
     metadata_path = path / "metadata.json"
     metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
+    version = metadata.get("format_version")
+    if version != 3:
+        raise ValueError(f"results format v{version} is not supported by Polarism 0.7; supported: 3")
     batches = sorted(path.glob("batch_*.npz"))
     if not batches:
         raise FileNotFoundError(f"No NumPy result batches in {path}")
@@ -224,14 +257,14 @@ def _load_npy(path: Path) -> Results:
             for name in data.files:
                 arrays.setdefault(name, []).append(data[name])
     combined = {name: np.concatenate(parts, axis=0) for name, parts in arrays.items()}
-    fields = {_name(key[6:]): value for key, value in combined.items() if key.startswith("field_")}
-    scalars = {_name(key[7:]): value for key, value in combined.items() if key.startswith("scalar_")}
+    fields = {key[6:]: value for key, value in combined.items() if key.startswith("field_")}
+    scalars = {key[7:]: value for key, value in combined.items() if key.startswith("scalar_")}
     scalar_groups = {}
     for key, value in combined.items():
         if key.startswith("group_"):
             group, label = key[6:].rsplit("_", 1)
             scalar_groups.setdefault(group, {})[label] = value
-    static = {_name(file.stem[7:]): np.load(file) for file in path.glob("static_*.npy")}
+    static = {file.stem[7:]: np.load(file) for file in path.glob("static_*.npy")}
     x_path, y_path = path / "grid_x.npy", path / "grid_y.npy"
     return Results(combined["time"], fields, scalars, scalar_groups, static,
                    metadata.get("config", {}), np.load(x_path) if x_path.exists() else None,
@@ -245,6 +278,9 @@ def _load_json(path: Path) -> Results:
         raise FileNotFoundError(f"No JSON result batches in {path}")
     metadata_path = path / "metadata.json"
     metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
+    version = metadata.get("format_version")
+    if version != 3:
+        raise ValueError(f"results format v{version} is not supported by Polarism 0.7; supported: 3")
     data = [json.loads(file.read_text()) for file in batches]
 
     def decode(value):

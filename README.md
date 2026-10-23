@@ -95,7 +95,7 @@ polarism --config run.yaml --grid.nx 256
 
 CLI flags override values in the file. See the [configuration guide](https://jakrog01.github.io/Polarism/user-guide/grid-and-parameters/#yaml-configuration).
 
-For long cluster jobs, `cfg.checkpoint.every_steps` writes restartable checkpoints and `cfg.checkpoint.resume_from` continues from one; see [Checkpoint and restart](https://jakrog01.github.io/Polarism/user-guide/checkpoint-and-restart/).
+For long cluster jobs, `cfg.checkpoint.every` sets the checkpoint cadence in ps and `cfg.checkpoint.resume_from` continues from one; see [Checkpoint and restart](https://jakrog01.github.io/Polarism/user-guide/checkpoint-and-restart/).
 
 For GPU execution, set `cfg.compute_engine.use_gpu = True`, choose `cfg.solver.method = "rk4-cuda"`, `"split-step-fft-cuda"`, or `"ifrk-fft-cuda"`, and consider `cfg.solver.precision = "single"` on consumer GPUs. FFT solvers require a periodic grid. Inspect CLI options with `polarism --help`.
 

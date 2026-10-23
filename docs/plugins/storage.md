@@ -12,7 +12,9 @@ The constructor contract is `StorageClass(output_dir, batch_size, config, x, y)`
 are host coordinate arrays. Subclass `BaseStorage` and implement `dump_batch`,
 `write_static`, and `finalize`. Its `add_to_batch(t, nodes, **context)` buffers
 saved fields and scalars and calls `dump_batch` at the configured batch size.
-`node_metadata` holds each saved node's label and optional units. Override
+`node_metadata` holds each saved node's label and optional units. Built-in
+formats add `dims` and `units` metadata; plugins can use
+`dataset_metadata(name, static=False, field=False)` for the same mapping. Override
 `add_to_batch` if a format supports only some node types.
 
 Per-frame storage methods run on the background writer thread; construction

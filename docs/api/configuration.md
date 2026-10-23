@@ -151,7 +151,7 @@ with reduced grid-direction anisotropy.
 | `save_hdf5`, `save_json`, `save_npy` | storage backends | booleans |
 | `formats` | additional registered storage formats, combined with enabled `save_*` options | tuple of names, default `()` |
 | `observables` | registered observable factories that add result nodes | tuple of names, default `()` |
-| `save_interval` | number of solver steps between writes after the initial state | positive integer |
+| `save_every` | time in ps between writes after the initial state; defaults to one `solver.dt` | positive multiple of `solver.dt` |
 | `batch_size` | buffered result chunk size | positive integer |
 | `compression` | compression for every HDF5 dataset | `none` (default), `lzf`, `gzip` |
 | `compression_level` | gzip level, used only when `compression="gzip"` | integer from 0 to 9; default `4` |
@@ -173,12 +173,12 @@ only the movie stream, while storage visitors remain fatal by default.
 
 | Field | Meaning | Default |
 | --- | --- | --- |
-| `every_steps` | write at these absolute step boundaries and at the run end; zero disables periodic writes | `0` |
+| `every` | checkpoint cadence in ps and at the run end; zero disables periodic writes | `0` |
 | `path` | checkpoint destination; defaults to `checkpoint.h5` in the run directory | `None` |
 | `resume_from` | load a checkpoint before running to the absolute `solver.total_time` | `None` |
 | `on_signal` | checkpoint and stop after the current chunk on SIGTERM or SIGUSR1 | `True` |
 
-`every_steps` must be a nonnegative integer, both paths must be nonempty strings
+`every` must be zero or a positive multiple of `solver.dt`, both paths must be nonempty strings
 or `None`, and `on_signal` must be a boolean. A run directory is created even
 when result storage is disabled if periodic checkpointing is enabled.
 

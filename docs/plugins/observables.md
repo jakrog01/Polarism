@@ -30,5 +30,5 @@ t=..., cached=..., **context)` receives each sampled frame. `cached` maps
 node names to `(field, reduced)` pairs. Set `data_location` to `"cpu"` or
 `"device"` to choose host or backend arrays. `fatal_on_error` controls whether
 a visit error stops the run. An optional `finalize()` is called at the end of
-the run, including after an exception. Sampling uses `result.save_interval`
+the run, including after an exception. Sampling uses `result.save_every`
 and always includes the initial state.

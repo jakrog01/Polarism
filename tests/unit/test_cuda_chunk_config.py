@@ -32,7 +32,7 @@ def test_controller_chunked_recording_matches_per_step_loop():
     cfg.solver.method = "rk4-fdm"
     cfg.solver.dt = 0.01
     cfg.solver.total_time = 0.1
-    cfg.result.save_interval = 3
+    cfg.result.save_every = 3 * cfg.solver.dt
     cfg.physics.init_seed = 12
     chunked = SimulationController(cfg)
     baseline = SimulationController(cfg)
@@ -57,7 +57,7 @@ def test_controller_chunked_recording_matches_per_step_loop():
                              baseline.reservoir, baseline.boundary_condition,
                              baseline.state)
         baseline.state.t = (step + 1) * cfg.solver.dt
-        if (step + 1) % cfg.result.save_interval == 0:
+        if (step + 1) % round(cfg.result.save_every / cfg.solver.dt) == 0:
             expected.append((baseline.state.t, baseline.state.psi.copy(),
                              tuple(field.copy() for field in baseline.reservoir.get_state())))
     assert len(records) == len(expected)

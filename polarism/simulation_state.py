@@ -19,6 +19,8 @@ class SimulationState:
     _field: Union[np.ndarray, cp.ndarray] | None
     _field_k: Union[np.ndarray, cp.ndarray] | None
     t: float
+    t0: float
+    step: int
 
     def __init__(
         self,
@@ -57,6 +59,8 @@ class SimulationState:
         self._field = psi.reshape(self.batch_size, self.components, *grid.shape)
         self._field_k = None
         self.t = 0.0
+        self.t0 = 0.0
+        self.step = 0
 
     @property
     def field(self) -> Union[np.ndarray, cp.ndarray]:

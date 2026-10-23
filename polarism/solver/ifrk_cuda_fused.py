@@ -567,7 +567,7 @@ class FusedIFRK:
                     while n_steps - done >= 2:
                         length = min(max_length, (n_steps-done)//2*2)
                         graph = self._graph(length, signature, pump_flat, combiner)
-                        times = [(start_step+done+k)*self.host_dt+c*self.host_dt
+                        times = [state.t0+(start_step+done+k)*self.host_dt+c*self.host_dt
                                  for k in range(length) for c in self.unique_c]
                         if multi:
                             pending_hosts.append(combiner.coefficients(terms, times, stream))
@@ -592,7 +592,7 @@ class FusedIFRK:
                     self._copy_in(state, reservoir)
                     done = 0
             for k in range(done, n_steps):
-                t = (start_step+k)*self.host_dt
+                t = state.t0+(start_step+k)*self.host_dt
                 if multi:
                     times = [t+c*self.host_dt for c in self.unique_c]
                     pending_hosts.append(combiner.coefficients(terms, times, stream))
@@ -618,4 +618,4 @@ class FusedIFRK:
                 state.field_k = self._fft_forward(state.field, plan=self._plan)
                 reservoir.set_state(tuple(field.copy() for field in res[index]))
             stream.synchronize()
-        state.t = (start_step+n_steps)*self.host_dt
+        state.t = state.t0+(start_step+n_steps)*self.host_dt

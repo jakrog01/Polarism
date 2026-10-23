@@ -19,7 +19,8 @@ The controller is the right abstraction for running a simulation end-to-end. If 
 ### Checkpoint API
 
 `set_initial_state(psi, reservoir_state=None, t=0.0)` starts from a supplied
-real-space field at a solver step boundary. A leading batch axis is accepted;
+real-space field at any finite nonnegative time `t`. This becomes `state.t0`
+and resets `state.step` to zero. A leading batch axis is accepted;
 the reservoir is reset to matching zero arrays if densities are omitted.
 Inputs use public `grid.shape` or `(B, *S)` shapes; the controller converts
 them to canonical `(B, 1, *S)` solver and reservoir fields.
@@ -27,11 +28,11 @@ them to canonical `(B, 1, *S)` solver and reservoir fields.
 
 `save_checkpoint(path)` writes the current step, time, full-precision field,
 authoritative spectral field when present, and reservoir arrays atomically to
-HDF5 in the version 1 public shapes. `load_checkpoint(path)` validates the grid shape, batch shape when an
+HDF5 in version 2 canonical `(B, C, *S)` shapes. `load_checkpoint(path)` validates the grid shape, batch shape when an
 initial state was explicitly set, reservoir type, and timestep before restoring
 the fields. A precision difference casts the arrays with a warning. The loaded
 step becomes the starting index for `run()` and `solver.total_time` remains the
-absolute end time.
+target duration from `t0`.
 
 The `run_directory` property points to the unique directory for this run when
 storage or checkpointing creates one. A resumed run gets its own directory.

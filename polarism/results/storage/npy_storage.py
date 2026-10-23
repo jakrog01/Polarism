@@ -21,8 +21,14 @@ class NPYStorage(BaseStorage):
                  compress: bool | None = None):
         """Set up NumPy batch storage."""
         super().__init__(output_dir, batch_size)
+        self.ndim = config.grid.ndim if config is not None else (2 if y is not None else 1)
         self.batch_number = 0
         self._resume = getattr(config, "_storage_resume", False)
+        metadata_path = self.output_dir / "metadata.json"
+        if self._resume and metadata_path.exists():
+            found = json.loads(metadata_path.read_text()).get("format_version")
+            if found != 3:
+                raise ValueError(f"results format v{found} is not supported by Polarism 0.7; supported: 3")
         self.members = getattr(config, "_storage_members", None)
         if self._resume:
             self.batch_number = len(list(self.output_dir.glob("batch_*.npz")))
@@ -32,13 +38,15 @@ class NPYStorage(BaseStorage):
         self.compress = (config.result.compression != "none") if compress is None and config is not None else bool(compress)
         from polarism import __version__
         self.metadata = {
-            "format_version": 2,
+            "format_version": 3,
+            "ndim": self.ndim,
             "polarism_version": __version__,
-            "datasets": {"time": {"label": "time", "units": "ps"}},
+            "datasets": {"time": {"label": "time", "units": "ps", "dims": ["time"]}},
             "config": asdict(config) if is_dataclass(config) else config or {},
         }
         if self.members is not None:
             self.metadata["members"] = self.members
+            self.metadata["datasets"]["member_index"] = {"dims": ["member"], "units": ""}
             member_path = self.output_dir / "member_index.npy"
             if not self._resume or not member_path.exists():
                 np.save(member_path, np.asarray(config._storage_indices))
@@ -46,12 +54,12 @@ class NPYStorage(BaseStorage):
             grid_path = self.output_dir / "grid_x.npy"
             if not self._resume or not grid_path.exists():
                 np.save(grid_path, np.asarray(x))
-            self.metadata["datasets"]["grid/x"] = {"units": "µm"}
+            self.metadata["datasets"]["grid/x"] = {"units": "µm", "dims": ["x"]}
         if y is not None:
             grid_path = self.output_dir / "grid_y.npy"
             if not self._resume or not grid_path.exists():
                 np.save(grid_path, np.asarray(y))
-            self.metadata["datasets"]["grid/y"] = {"units": "µm"}
+            self.metadata["datasets"]["grid/y"] = {"units": "µm", "dims": ["y"]}
 
     def dump_batch(self) -> None:
         """Write the current batch to NumPy files."""
@@ -77,12 +85,14 @@ class NPYStorage(BaseStorage):
 
         self.batch_number += 1
         for name in self.field_buffers:
-            self.metadata["datasets"][f"fields/{name}"] = self.node_metadata[name]
+            self.metadata["datasets"][f"fields/{name}"] = self.dataset_metadata(name, field=True)
         for name in self.scalar_buffers:
-            self.metadata["datasets"][f"scalars/{name}"] = self.node_metadata[name]
+            self.metadata["datasets"][f"scalars/{name}"] = self.dataset_metadata(name)
         for group, values in self.scalar_group_buffers.items():
             for label in values:
-                self.metadata["datasets"][f"scalar_groups/{group}/{label}"] = {"label": label}
+                self.metadata["datasets"][f"scalar_groups/{group}/{label}"] = self.dataset_metadata(label)
+        if self.batch_number == 1:
+            (self.output_dir / "metadata.json").write_text(json.dumps(self.metadata, sort_keys=True))
         self.total_saved += len(self.time_buffer)
         self._clear_buffers()
 
@@ -91,7 +101,10 @@ class NPYStorage(BaseStorage):
         path = self.output_dir / f"static_{name}.npy"
         if not self._resume or not path.exists():
             np.save(path, field)
-        self.metadata["datasets"][f"static/{name}"] = self.node_metadata.get(name, {"label": name})
+        metadata = self.dataset_metadata(name, static=True, field=True)
+        if self.members is not None and field.ndim == self.ndim:
+            metadata["dims"].remove("member")
+        self.metadata["datasets"][f"static/{name}"] = metadata
 
     def finalize(self) -> None:
         """Flush remaining data and close NumPy storage."""

@@ -30,7 +30,7 @@ def configuration(tmp_path, method="rk4-fdm", reservoir="single"):
     cfg.result.save_results = True
     cfg.result.save_hdf5 = True
     cfg.result.save_psi = True
-    cfg.result.save_interval = 2
+    cfg.result.save_every = 2 * cfg.solver.dt
     cfg.result.output_directory = str(tmp_path)
     return cfg
 
@@ -62,7 +62,7 @@ def test_split_run_is_bit_exact(tmp_path, method, reservoir):
 
     first_cfg = configuration(tmp_path / "split", method, reservoir)
     first_cfg.solver.total_time = 0.04
-    first_cfg.checkpoint.every_steps = 3
+    first_cfg.checkpoint.every = 3 * first_cfg.solver.dt
     first = SimulationController(first_cfg)
     first.run()
     path = first.run_directory / "checkpoint.h5"
@@ -147,7 +147,7 @@ def test_resume_from_step_zero_does_not_repeat_initial_frame(tmp_path):
 def test_checkpoint_validation_and_precision_cast(tmp_path):
     cfg = configuration(tmp_path / "source")
     cfg.result.save_results = False
-    cfg.checkpoint.every_steps = 1
+    cfg.checkpoint.every = 1 * cfg.solver.dt
     source = SimulationController(cfg)
     source.run()
     path = source.run_directory / "checkpoint.h5"
@@ -174,7 +174,7 @@ def test_checkpoint_validation_and_precision_cast(tmp_path):
 def test_batched_checkpoint_roundtrip(tmp_path):
     cfg = configuration(tmp_path)
     cfg.result.save_results = False
-    cfg.checkpoint.every_steps = 2
+    cfg.checkpoint.every = 2 * cfg.solver.dt
     first = SimulationController(cfg)
     first.set_initial_state(np.ones((2, 16, 16), dtype=np.complex128))
     first.run()
@@ -196,7 +196,7 @@ def test_batched_spectral_restart_is_bit_exact(tmp_path):
     first_cfg = configuration(tmp_path / "split", "ifrk-fft-cuda", "double")
     first_cfg.result.save_results = False
     first_cfg.solver.total_time = 0.04
-    first_cfg.checkpoint.every_steps = 4
+    first_cfg.checkpoint.every = 4 * first_cfg.solver.dt
     first = SimulationController(first_cfg)
     first.set_initial_state(initial)
     first.run()
@@ -216,22 +216,22 @@ def test_checkpoint_options_accept_yaml_and_cli():
 
     from polarism.config.simulation_parameters import CheckpointParameters, Config
 
-    data = yaml.safe_load("every_steps: 7\npath: checkpoint.h5\nresume_from: old.h5\non_signal: false\n")
+    data = yaml.safe_load("every: 0.07\npath: checkpoint.h5\nresume_from: old.h5\non_signal: false\n")
     options = CheckpointParameters(**data)
-    assert options.every_steps == 7
+    assert options.every == 0.07
     assert options.resume_from == "old.h5"
     assert not options.on_signal
     parsed = tyro.cli(Config, args=["--checkpoint.resume-from", "old.h5",
-                                    "--checkpoint.every-steps", "7"])
+                                    "--checkpoint.every", "0.07"])
     assert parsed.checkpoint.resume_from == "old.h5"
-    assert parsed.checkpoint.every_steps == 7
+    assert parsed.checkpoint.every == 0.07
 
 
 def test_cli_resume_from_file(tmp_path):
     cfg = configuration(tmp_path / "first")
     cfg.result.save_results = False
     cfg.solver.total_time = 0.04
-    cfg.checkpoint.every_steps = 4
+    cfg.checkpoint.every = 4 * cfg.solver.dt
     first = SimulationController(cfg)
     first.run()
     destination = tmp_path / "resumed"
@@ -255,7 +255,7 @@ def test_cli_resume_from_file(tmp_path):
 
 
 @pytest.mark.parametrize("field,value", [
-    ("every_steps", -1), ("every_steps", True), ("path", ""),
+    ("every", -1), ("every", True), ("path", ""),
     ("resume_from", ""), ("on_signal", 1),
 ])
 def test_checkpoint_config_rejects_invalid_values(field, value):
@@ -278,7 +278,10 @@ def test_set_initial_state_continues_from_absolute_time(tmp_path):
     first_cfg.solver.total_time = 0.04
     first = SimulationController(first_cfg)
     first.run()
-    second = SimulationController(cfg)
+    second_cfg = configuration(tmp_path / "second")
+    second_cfg.result.save_results = False
+    second_cfg.solver.total_time = 0.04
+    second = SimulationController(second_cfg)
     second.set_initial_state(first.state.psi,
                              tuple(field[0, 0] for field in first.reservoir.get_state()),
                              first.state.t)
@@ -290,14 +293,14 @@ def test_set_initial_state_continues_from_absolute_time(tmp_path):
 def test_checkpoint_without_storage_creates_run_directory(tmp_path):
     cfg = configuration(tmp_path)
     cfg.result.save_results = False
-    cfg.checkpoint.every_steps = 3
+    cfg.checkpoint.every = 3 * cfg.solver.dt
     controller = SimulationController(cfg)
     controller.run()
     path = controller.run_directory / "checkpoint.h5"
     assert path.exists()
     assert not list(controller.run_directory.glob(".checkpoint.h5.*.tmp"))
     with h5py.File(path) as h5:
-        assert h5.attrs["checkpoint_version"] == 1
+        assert h5.attrs["checkpoint_version"] == 2
         assert h5.attrs["step"] == 8
         assert h5.attrs["t"] == 0.08
         assert h5.attrs["dt"] == 0.01
@@ -317,7 +320,7 @@ def test_absorption_restart_is_bit_exact(tmp_path, absorption):
     first_cfg.boundary_condition.absorption = absorption
     first_cfg.result.save_results = False
     first_cfg.solver.total_time = 0.04
-    first_cfg.checkpoint.every_steps = 4
+    first_cfg.checkpoint.every = 4 * first_cfg.solver.dt
     first = SimulationController(first_cfg)
     first.run()
     second_cfg = configuration(tmp_path / "split", "ifrk-fft-cuda", "double")
@@ -341,7 +344,7 @@ def test_spectral_state_survives_checkpoint_without_result_materialization(tmp_p
     first_cfg = configuration(tmp_path / "split", method)
     first_cfg.result.save_results = False
     first_cfg.solver.total_time = 0.04
-    first_cfg.checkpoint.every_steps = 4
+    first_cfg.checkpoint.every = 4 * first_cfg.solver.dt
     first = SimulationController(first_cfg)
     first.run()
     assert first.state.psi_k is not None
@@ -367,7 +370,7 @@ def test_ifrk_tableau_restart(tmp_path, tableau):
     first_cfg.solver.tableau = tableau
     first_cfg.solver.total_time = 0.04
     first_cfg.result.save_results = False
-    first_cfg.checkpoint.every_steps = 4
+    first_cfg.checkpoint.every = 4 * first_cfg.solver.dt
     first = SimulationController(first_cfg)
     first.run()
     second_cfg = configuration(tmp_path / "split", "ifrk-fft-cuda")
@@ -391,7 +394,7 @@ def test_single_precision_cpu_restart_is_bit_exact(tmp_path, method):
     first_cfg.solver.precision = "single"
     first_cfg.result.save_results = False
     first_cfg.solver.total_time = 0.04
-    first_cfg.checkpoint.every_steps = 4
+    first_cfg.checkpoint.every = 4 * first_cfg.solver.dt
     first = SimulationController(first_cfg)
     first.run()
     second_cfg = configuration(tmp_path / "split", method)
@@ -421,7 +424,7 @@ def test_gpu_restart_agrees_with_full_run(tmp_path, method, precision, use_gpu):
     first_cfg.compute_engine.use_gpu = True
     first_cfg.solver.precision = precision
     first_cfg.solver.total_time = 0.04
-    first_cfg.checkpoint.every_steps = 3
+    first_cfg.checkpoint.every = 3 * first_cfg.solver.dt
     first = SimulationController(first_cfg)
     first.run()
     second_cfg = configuration(tmp_path / "split", method)

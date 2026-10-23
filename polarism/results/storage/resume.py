@@ -20,6 +20,9 @@ def _trim_hdf5(path: Path, checkpoint_time: float) -> None:
     if not path.exists():
         return
     with h5py.File(path, "r+") as handle:
+        version = handle.attrs.get("format_version")
+        if version != 3:
+            raise ValueError(f"results format v{version} is not supported by Polarism 0.7; supported: 3")
         if "time" not in handle:
             return
         keep = _keep_count(handle["time"][:], checkpoint_time)
@@ -113,6 +116,15 @@ def _trim_json(directory: Path, checkpoint_time: float) -> None:
 
 def trim_saved_frames(directory: Path, checkpoint_time: float, names, *, compressed: bool) -> None:
     """Discard frames newer than the checkpoint for every enabled backend."""
+    if "npy" in names or "json" in names:
+        metadata_path = directory / "metadata.json"
+        existing = (("npy" in names and any(directory.glob("batch_*.npz")))
+                    or ("json" in names and any(directory.glob("batch_*.json"))))
+        if existing:
+            version = (json.loads(metadata_path.read_text()).get("format_version")
+                       if metadata_path.exists() else None)
+            if version != 3:
+                raise ValueError(f"results format v{version} is not supported by Polarism 0.7; supported: 3")
     if "hdf5" in names:
         _trim_hdf5(directory / "results.h5", checkpoint_time)
     if "npy" in names:

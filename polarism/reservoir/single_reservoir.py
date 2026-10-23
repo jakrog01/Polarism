@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 @register_reservoir("single")
 class SingleReservoir(AbstractReservoir, ResultProvider):
+    state_names = ("nR",)
     """Model a single active reservoir."""
     config: ReservoirParameters
     R: float

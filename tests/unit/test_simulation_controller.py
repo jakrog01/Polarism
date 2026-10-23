@@ -49,7 +49,7 @@ def test_custom_visitor_receives_frames_and_finalizes() -> None:
     cfg.solver.dt = 0.001
     cfg.solver.total_time = 0.004
     cfg.result.save_results = False
-    cfg.result.save_interval = 2
+    cfg.result.save_every = 2 * cfg.solver.dt
     controller = SimulationController(cfg)
 
     class Collector(ResultVisitor):
@@ -286,7 +286,7 @@ def test_visualization_visitor_alone_does_not_trigger_per_step_recording() -> No
             self.updates += 1
 
     cfg = small_config()
-    cfg.result.save_interval = 1
+    cfg.result.save_every = 1 * cfg.solver.dt
     controller = SimulationController(cfg)
     recorder = Recorder()
     controller.add_visitor(VisualizationVisitor(recorder))

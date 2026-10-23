@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 @register_reservoir("double")
 class DoubleReservoir(AbstractReservoir, ResultProvider):
+    state_names = ("nA", "nI")
     """Model coupled active and inactive reservoirs."""
     config: ReservoirParameters
     R: float

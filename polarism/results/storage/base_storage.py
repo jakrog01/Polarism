@@ -34,6 +34,24 @@ class BaseStorage(ABC):
         self.static_fields: dict[str, np.ndarray] = {}
         self.node_metadata: dict[str, dict[str, str]] = {}
         self.members: int | None = None
+        self.ndim = 2
+
+    def dataset_metadata(self, name: str, *, static: bool = False, field: bool = False) -> dict:
+        """Describe public dimensions and physical units of a saved array."""
+        axes = (["y", "x"] if self.ndim == 2 else ["x"])
+        dims = ([] if static else ["time"])
+        if self.members is not None:
+            dims.append("member")
+        if field:
+            dims.extend(axes)
+        units = self.node_metadata.get(name, {}).get("units", "")
+        if name == "density" or name.startswith(("N_R", "nR", "nA", "nI")):
+            units = f"µm^-{self.ndim}"
+        elif name == "psi":
+            units = f"µm^-{self.ndim / 2:g}"
+        elif name == "potential":
+            units = "meV"
+        return {**self.node_metadata.get(name, {"label": name}), "dims": dims, "units": units}
 
     def add_to_batch(self, t: float, nodes: list, **context) -> None:
         """Add one result step to the current batch."""

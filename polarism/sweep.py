@@ -142,7 +142,7 @@ class Sweep:
         probe_cfg.result.real_time_view = False
         probe_cfg.result.animate = False
         probe_cfg.result.view_member = 0
-        probe_cfg.checkpoint.every_steps = 0
+        probe_cfg.checkpoint.every = 0
         probe_cfg.checkpoint.path = None
         probe_cfg.checkpoint.resume_from = None
         count = len(overrides)
@@ -219,7 +219,7 @@ class Sweep:
         if output and not (self.cfg.result.formats or self.cfg.result.save_hdf5
                            or self.cfg.result.save_npy or self.cfg.result.save_json):
             raise ValueError("sweep output requires at least one storage format")
-        checkpoint_enabled = bool(checkpoint.every_steps or checkpoint.path or source)
+        checkpoint_enabled = bool(checkpoint.every or checkpoint.path or source)
         run_dir = Path(source) if source else (
             create_run_directory(self.cfg.result.output_directory)
             if output or checkpoint_enabled else None

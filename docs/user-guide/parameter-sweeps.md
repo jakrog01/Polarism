@@ -117,7 +117,7 @@ maps each parameter path to an array in member order. `member(i)` returns a
 frame and member axes; slice them to avoid loading the entire sweep. Close the
 result or use a context manager to release HDF5 handles.
 
-For restart, set `cfg.checkpoint.every_steps` or `cfg.checkpoint.path`, then pass the
+For restart, set `cfg.checkpoint.every` or `cfg.checkpoint.path`, then pass the
 sweep directory to `run(resume=...)`. Completed batches are skipped; an
 incomplete batch resumes from its checkpoint. The manifest preserves the
 original batch plan even if batch size settings change. Keep simulation

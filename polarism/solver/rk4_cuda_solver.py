@@ -1913,9 +1913,9 @@ class RK4CudaSolver(AbstractSolver):
                             length, potential, envelope, pump_flat, vi_scale, combiner
                         )
                         times = [time for k in range(length) for time in (
-                            (start_step + done + k) * self._dt,
-                            (start_step + done + k) * self._dt + 0.5 * self._dt,
-                            (start_step + done + k) * self._dt + self._dt)]
+                            state.t0 + (start_step + done + k) * self._dt,
+                            state.t0 + (start_step + done + k) * self._dt + 0.5 * self._dt,
+                            state.t0 + (start_step + done + k) * self._dt + self._dt)]
                         if multi:
                             pump_times = [times[0]]
                             pump_times.extend(time for i, time in enumerate(times[1:])
@@ -1945,7 +1945,7 @@ class RK4CudaSolver(AbstractSolver):
                         xp.copyto(target, source)
                     done = 0
             for k in range(done, n_steps):
-                t = (start_step + k) * self._dt
+                t = state.t0 + (start_step + k) * self._dt
                 times = (t, t + 0.5 * self._dt, t + self._dt)
                 if multi:
                     first = k == done
@@ -1979,7 +1979,7 @@ class RK4CudaSolver(AbstractSolver):
             reservoir.set_state(tuple(field.reshape(shape).copy()
                                       for field in work_res[final_index]))
             stream.synchronize()
-        state.t = (start_step + n_steps) * self._dt
+        state.t = state.t0 + (start_step + n_steps) * self._dt
 
     def _cpu_laplacian_9pt(self, psi, out) -> None:
         """Apply the 9-point isotropic CPU Laplacian (requires dx == dy)."""

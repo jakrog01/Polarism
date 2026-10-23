@@ -27,6 +27,22 @@ class ConfigValidationError(ValueError):
     """Raised when a required config constraint is violated."""
 
 
+def _validate_time_multiple(name: str, value: float, dt: float) -> int:
+    """Return the nearest positive step count for a fixed-time interval."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ConfigValidationError(f"{name} must be a positive finite time in ps")
+    ratio = value / dt
+    nearest = round(ratio)
+    if nearest < 1 or not math.isclose(ratio, nearest, rel_tol=1e-9, abs_tol=0):
+        lower = max(1, math.floor(ratio))
+        upper = max(1, math.ceil(ratio))
+        raise ConfigValidationError(
+            f"{name} must be an integer multiple of solver.dt; nearest valid values: "
+            f"{lower * dt:g} and {upper * dt:g} ps"
+        )
+    return nearest
+
+
 def validate_config(cfg: Config) -> None:
     """Raise ConfigValidationError for invalid values; warn for instability risk."""
     _validate_grid(cfg)
@@ -141,16 +157,18 @@ def _validate_result(cfg: Config) -> None:
         raise ConfigValidationError("result.compression_level must be an integer in [0, 9]")
     if not isinstance(r.save_psi, bool):
         raise ConfigValidationError("result.save_psi must be a boolean")
-    if r.save_interval < 1:
-        raise ConfigValidationError(f"result.save_interval must be >= 1, got {r.save_interval}")
+    if r.save_every is not None:
+        _validate_time_multiple("result.save_every", r.save_every, cfg.solver.dt)
     if r.batch_size < 1:
         raise ConfigValidationError(f"result.batch_size must be >= 1, got {r.batch_size}")
 
 
 def _validate_checkpoint(cfg: Config) -> None:
     c = cfg.checkpoint
-    if type(c.every_steps) is not int or c.every_steps < 0:
-        raise ConfigValidationError("checkpoint.every_steps must be a nonnegative integer")
+    if isinstance(c.every, bool) or not isinstance(c.every, (int, float)) or not math.isfinite(c.every):
+        raise ConfigValidationError("checkpoint.every must be a nonnegative finite time in ps")
+    if c.every != 0:
+        _validate_time_multiple("checkpoint.every", c.every, cfg.solver.dt)
     for name in ("path", "resume_from"):
         value = getattr(c, name)
         if value is not None and (not isinstance(value, str) or not value):

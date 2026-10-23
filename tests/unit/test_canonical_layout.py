@@ -126,10 +126,10 @@ def test_public_initial_state_and_v1_checkpoint(tmp_path, batched):
     path = tmp_path / "checkpoint.h5"
     first.save_checkpoint(path)
     with h5py.File(path, "r") as saved:
-        assert saved.attrs["checkpoint_version"] == 1
-        assert saved["psi"].shape == public_shape
-        assert saved["psi_k"].shape == public_shape
-        assert saved["reservoir"]["0"].shape == public_shape
+        assert saved.attrs["checkpoint_version"] == 2
+        assert saved["field"].shape == first.state.field.shape
+        assert saved["field_k"].shape == first.state.field.shape
+        assert saved["reservoir"]["nR"].shape == first.state.field.shape
     second = SimulationController(cfg, members=members)
     second.load_checkpoint(path)
     np.testing.assert_array_equal(second.state.psi, psi)

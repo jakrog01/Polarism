@@ -97,7 +97,7 @@ def test_interleaved_groups_concatenate_in_member_order(tmp_path):
 
 def test_interrupted_sweep_resumes_bitwise(tmp_path, monkeypatch):
     cfg = sweep_config(tmp_path)
-    cfg.checkpoint.every_steps = 2
+    cfg.checkpoint.every = 2 * cfg.solver.dt
     sweep = Sweep(cfg, {"laser.P0": [0.2, 0.3, 0.4]})
     with sweep.run() as complete:
         expected = {name: complete.fields[name][:].copy() for name in complete.fields}
@@ -127,7 +127,7 @@ def test_resume_trims_frames_newer_than_checkpoint(tmp_path, monkeypatch, backen
     full_cfg = sweep_config(tmp_path / "full", backend)
     full_cfg.solver.total_time = 0.08
     full_cfg.result.batch_size = 2
-    full_cfg.checkpoint.every_steps = 2
+    full_cfg.checkpoint.every = 2 * full_cfg.solver.dt
     parameters = {"laser.P0": [0.2, 0.3]}
     with Sweep(full_cfg, parameters).run() as full:
         expected_time = full.member(0).time.copy()
@@ -142,7 +142,7 @@ def test_resume_trims_frames_newer_than_checkpoint(tmp_path, monkeypatch, backen
     cfg = sweep_config(tmp_path / "resumed", backend)
     cfg.solver.total_time = 0.08
     cfg.result.batch_size = 2
-    cfg.checkpoint.every_steps = 2
+    cfg.checkpoint.every = 2 * cfg.solver.dt
     sweep = Sweep(cfg, parameters)
     record = SimulationController._record_results
     save = SimulationController.save_checkpoint
@@ -200,7 +200,7 @@ def test_single_run_resume_in_same_directory_trims_extra_frames(tmp_path, monkey
     full_cfg = sweep_config(tmp_path / "full", backend)
     full_cfg.solver.total_time = 0.08
     full_cfg.result.batch_size = 2
-    full_cfg.checkpoint.every_steps = 2
+    full_cfg.checkpoint.every = 2 * full_cfg.solver.dt
     full = SimulationController(full_cfg)
     full.run()
     with load_results(full.run_directory) as saved:
@@ -210,7 +210,7 @@ def test_single_run_resume_in_same_directory_trims_extra_frames(tmp_path, monkey
     cfg = sweep_config(tmp_path / "resumed", backend)
     cfg.solver.total_time = 0.08
     cfg.result.batch_size = 2
-    cfg.checkpoint.every_steps = 2
+    cfg.checkpoint.every = 2 * cfg.solver.dt
     record = SimulationController._record_results
     save = SimulationController.save_checkpoint
 
@@ -251,7 +251,7 @@ def test_json_sweep_member_reader(tmp_path):
 
 def test_checkpoint_rejects_changed_member_pump(tmp_path):
     cfg = sweep_config(tmp_path)
-    cfg.checkpoint.every_steps = 2
+    cfg.checkpoint.every = 2 * cfg.solver.dt
     first = SimulationController(cfg, members=[{"laser.P0": 0.2}, {"laser.P0": 0.3}])
     first.run()
     second = SimulationController(cfg, members=[{"laser.P0": 0.2}, {"laser.P0": 0.4}])

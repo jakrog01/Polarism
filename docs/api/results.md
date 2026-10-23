@@ -89,13 +89,13 @@ a `Results` object. Its `time`, `fields`, `scalars`, `scalar_groups`, `static`,
 `config`, `x`, `y`, and `attrs` properties provide the saved values. HDF5 fields
 are read when accessed. Use it as a context manager or call `close()` when done.
 Built-in names are ASCII: `density`, `norm`, and `pump`; their display labels
-remain `|ψ|²`, `N(t)`, and `Pump`. Older HDF5 files are read with these names
-mapped automatically.
+remain `|ψ|²`, `N(t)`, and `Pump`. Result readers accept format v3 files.
 
-HDF5 format version 2 records `format_version` and `polarism_version` at the
-root, 1-D coordinates in `grid/x` and `grid/y`, and dataset labels. Time uses
-ps and coordinates use µm. NPY output writes the coordinates as `grid_x.npy`
-and `grid_y.npy` with `metadata.json` holding the same metadata.
+HDF5 format version 3 records `format_version`, `polarism_version`, `ndim`,
+`grid_type`, `components`, and coordinate units at the root. Field datasets
+have a scalar component axis and each dataset has `dims` and `units` attributes.
+Time uses ps and coordinates use µm. NPY and JSON output keep public field
+shapes and record dimensions and units in `metadata.json`.
 
 The user-facing result configuration exposes these main storage choices:
 

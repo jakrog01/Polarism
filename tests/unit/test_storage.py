@@ -33,7 +33,7 @@ def _frames(storage) -> None:
 def test_batch_storage_layouts(tmp_path) -> None:
     hdf = HDF5Storage(tmp_path / "hdf", 2); _frames(hdf)
     with h5py.File(tmp_path / "hdf" / "results.h5") as f:
-        assert f["time"].shape == (2,) and f["fields/psi2"].shape == (2, 3, 4) and f["scalars/N"].shape == (2,)
+        assert f["time"].shape == (2,) and f["fields/psi2"].shape == (2, 1, 3, 4) and f["scalars/N"].shape == (2,)
         assert np.allclose(f["time"][:], [0.0, 0.1], rtol=TOL_MACHINE_F64)
     npy = NPYStorage(tmp_path / "npy", 2); _frames(npy)
     with np.load(tmp_path / "npy" / "batch_000000.npz") as data:

@@ -186,12 +186,12 @@ def test_1d_checkpoint_and_hdf5(tmp_path):
     checkpoint = tmp_path / "checkpoint.h5"
     run.save_checkpoint(checkpoint)
     with h5py.File(run.run_directory / "results.h5") as h5:
-        assert h5["fields/psi"].shape == (5, 32)
+        assert h5["fields/psi"].shape == (5, 1, 32)
         assert h5["grid/x"].shape == (32,)
         assert "grid/y" not in h5
     with h5py.File(checkpoint) as h5:
-        assert h5["psi"].shape == (32,)
-        assert h5["reservoir/0"].shape == (32,)
+        assert h5["field"].shape == (1, 1, 32)
+        assert h5["reservoir/nR"].shape == (1, 1, 32)
     with np.load(next(run.run_directory.glob("batch_*.npz"))) as npy:
         assert npy["field_psi"].shape == (5, 32)
     restored = SimulationController(cfg)

@@ -23,7 +23,7 @@ def test_hdf5_and_npy_round_trip_with_lazy_fields(tmp_path):
         assert "pump" in result.static
         assert np.array_equal(result.x, controller.grid.X[0, :])
         assert np.array_equal(result.y, controller.grid.Y[:, 0])
-        assert result.attrs["format_version"] == 2
+        assert result.attrs["format_version"] == 3
         assert result.config["result"]["save_psi"]
         psi = result.fields["psi"][:]
         assert np.allclose(result.fields["density"][:], psi.real ** 2 + psi.imag ** 2)
@@ -45,22 +45,19 @@ def test_hdf5_and_npy_round_trip_with_lazy_fields(tmp_path):
         assert "norm" in result.scalars
         assert "pump" in result.static
         assert "P_lasers" in result.scalar_groups
-        assert result.attrs["format_version"] == 2
+        assert result.attrs["format_version"] == 3
 
 
-def test_v1_hdf5_names_are_mapped(tmp_path):
+def test_v2_hdf5_is_rejected(tmp_path):
     path = tmp_path / "results.h5"
     with h5py.File(path, "w") as handle:
+        handle.attrs["format_version"] = 2
         handle.create_dataset("time", data=[0.0, 1.0])
         handle.create_dataset("fields/|ψ|²", data=np.ones((2, 2, 3)))
         handle.create_dataset("scalars/N(t)", data=[2.0, 3.0])
         handle.create_dataset("static/Pump", data=np.ones((2, 3)))
-    with ps.load_results(path) as result:
-        assert list(result.fields) == ["density"]
-        assert list(result.scalars) == ["norm"]
-        assert list(result.static) == ["pump"]
-        assert result.x is None and result.y is None
-        assert "format_version" not in result.attrs
+    with pytest.raises(ValueError, match="results format v2.*supported: 3"):
+        ps.load_results(path)
 
 
 def test_old_animation_field_names_warn_and_select_new_nodes(tmp_path, monkeypatch):

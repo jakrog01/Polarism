@@ -57,4 +57,4 @@ class AbstractSolver(ABC):
             self.batch_physics.check(state.field)
         for k in range(n_steps):
             self.step(potential, pump, reservoir, boundary_condition, state)
-            state.t = (start_step + k + 1) * self.config.solver.dt
+            state.t = state.t0 + (start_step + k + 1) * self.config.solver.dt

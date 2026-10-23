@@ -20,8 +20,14 @@ class JSONStorage(BaseStorage):
     def __init__(self, output_dir: Path, batch_size: int, config=None, x=None, y=None):
         """Set up JSON batch storage."""
         super().__init__(output_dir, batch_size)
+        self.ndim = config.grid.ndim if config is not None else (2 if y is not None else 1)
         self.batch_number = 0
         self._resume = getattr(config, "_storage_resume", False)
+        metadata_path = self.output_dir / "metadata.json"
+        if self._resume and metadata_path.exists():
+            found = json.loads(metadata_path.read_text()).get("format_version")
+            if found != 3:
+                raise ValueError(f"results format v{found} is not supported by Polarism 0.7; supported: 3")
         self.members = getattr(config, "_storage_members", None)
         if self._resume:
             self.batch_number = len(list(self.output_dir.glob("batch_*.json")))
@@ -29,11 +35,18 @@ class JSONStorage(BaseStorage):
             member_path = self.output_dir / "member_index.json"
             if not self._resume or not member_path.exists():
                 member_path.write_text(json.dumps(config._storage_indices))
+        from polarism import __version__
+        self.metadata = {"format_version": 3, "polarism_version": __version__,
+                         "ndim": self.ndim, "datasets": {"time": {"label": "time", "units": "ps", "dims": ["time"]}},
+                         "config": asdict(config) if is_dataclass(config) else config or {}}
         if self.members is not None:
-            from polarism import __version__
-            self.metadata = {"format_version": 2, "polarism_version": __version__,
-                             "config": asdict(config) if is_dataclass(config) else config or {},
-                             "members": self.members}
+            self.metadata["members"] = self.members
+            self.metadata["datasets"]["member_index"] = {"dims": ["member"], "units": ""}
+        if self.members is not None and x is not None:
+            self.metadata["datasets"]["grid/x"] = {"units": "µm", "dims": ["x"]}
+        if self.members is not None and y is not None:
+            self.metadata["datasets"]["grid/y"] = {"units": "µm", "dims": ["y"]}
+        if self.members is not None:
             if x is not None:
                 grid_path = self.output_dir / "grid_x.json"
                 if not self._resume or not grid_path.exists():
@@ -76,12 +89,24 @@ class JSONStorage(BaseStorage):
             json.dump(batch_data, f, indent=2)
 
         self.batch_number += 1
+        for name in self.field_buffers:
+            self.metadata["datasets"][f"fields/{name}"] = self.dataset_metadata(name, field=True)
+        for name in self.scalar_buffers:
+            self.metadata["datasets"][f"scalars/{name}"] = self.dataset_metadata(name)
+        for group, values in self.scalar_group_buffers.items():
+            for label in values:
+                self.metadata["datasets"][f"scalar_groups/{group}/{label}"] = self.dataset_metadata(label)
+        if self.batch_number == 1:
+            (self.output_dir / "metadata.json").write_text(json.dumps(self.metadata, sort_keys=True))
         self.total_saved += len(self.time_buffer)
         self._clear_buffers()
 
     def write_static(self, name: str, field: np.ndarray) -> None:
         """Keep a static field for the first JSON batch."""
-        pass
+        metadata = self.dataset_metadata(name, static=True, field=True)
+        if self.members is not None and field.ndim == self.ndim:
+            metadata["dims"].remove("member")
+        self.metadata["datasets"][f"static/{name}"] = metadata
 
     @staticmethod
     def _json_field(field: np.ndarray):
@@ -94,5 +119,4 @@ class JSONStorage(BaseStorage):
         """Flush remaining data and close JSON storage."""
         if self.batch_count > 0:
             self.dump_batch()
-        if self.members is not None:
-            (self.output_dir / "metadata.json").write_text(json.dumps(self.metadata, sort_keys=True))
+        (self.output_dir / "metadata.json").write_text(json.dumps(self.metadata, sort_keys=True))

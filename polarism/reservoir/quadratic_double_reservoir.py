@@ -40,6 +40,7 @@ _QDOUBLE_RHS_KERNELS: dict[tuple[str, int], object] = {}
 
 @register_reservoir("quadratic-double")
 class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
+    state_names = ("nR", "nI")
     """Two-reservoir model with quadratic inactive→active transfer."""
 
     config: ReservoirParameters

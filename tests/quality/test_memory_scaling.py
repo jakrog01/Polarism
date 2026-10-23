@@ -26,7 +26,7 @@ SLOPE_FRACTION_OF_PAYLOAD = 0.25
 
 @dataclass(frozen=True)
 class MemoryScalingPoint:
-    save_interval: int
+    save_steps: int
     sample_count: int
     peak_rss_bytes: int | None
     peak_tracemalloc_bytes: int
@@ -35,7 +35,7 @@ class MemoryScalingPoint:
 
 
 def _measure_point(tmp_path: Path, sample_count: int) -> MemoryScalingPoint:
-    save_interval = N_STEPS // sample_count
+    save_steps = N_STEPS // sample_count
     output_directory = tmp_path / f"samples-{sample_count}"
     cfg = small_config(
         grid__nx=GRID_SIZE,
@@ -48,7 +48,7 @@ def _measure_point(tmp_path: Path, sample_count: int) -> MemoryScalingPoint:
         result__save_json=False,
         result__save_npy=False,
         result__output_directory=str(output_directory),
-        result__save_interval=save_interval,
+        result__save_every=save_steps * DT,
         result__batch_size=BATCH_SIZE,
         reservoir__expose_results=False,
         laser__expose_results=False,
@@ -70,7 +70,7 @@ def _measure_point(tmp_path: Path, sample_count: int) -> MemoryScalingPoint:
             for dataset in handle["fields"].values()
         )
     return MemoryScalingPoint(
-        save_interval=save_interval,
+        save_steps=save_steps,
         sample_count=actual_sample_count,
         peak_rss_bytes=monitor.result().peak_rss_bytes,
         peak_tracemalloc_bytes=peak_tracemalloc_bytes,
@@ -128,7 +128,7 @@ def test_storage_memory_scaling(tmp_path: Path) -> None:
             "n_steps": N_STEPS,
             "batch_size": BATCH_SIZE,
             "payload_bytes_per_sample": payload_bytes_per_sample,
-            "save_intervals": [point.save_interval for point in points],
+            "save_steps": [point.save_steps for point in points],
         },
         "points": [asdict(point) for point in points],
         "peak_tracemalloc_slope_bytes_per_sample": trace_slope,

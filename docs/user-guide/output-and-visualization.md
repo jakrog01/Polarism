@@ -23,16 +23,16 @@ Per-laser peak powers are stored as the scalar group `P_lasers` (`L0`, `L1`, …
 Additional quantities come from [observable plugins](../plugins/observables.md)
 selected with `cfg.result.observables`.
 
-The initial state is recorded at its starting time. After that, every output
-receives a frame every `save_interval` solver steps, at times
-`save_interval * dt`, `2 * save_interval * dt`, and so on.
+The initial state is recorded at its starting time `t0`. After that, every
+output receives a frame every `save_every` ps. The interval must be a positive
+multiple of `solver.dt`; by default every step is saved.
 
 ## Saving results
 
 ```python
 cfg.result.save_results = True
 cfg.result.formats = ("hdf5",)
-cfg.result.save_interval = 10
+cfg.result.save_every = 0.01
 cfg.result.save_psi = False
 cfg.result.compression = "none"
 cfg.result.output_directory = "simulation_results"
@@ -47,7 +47,7 @@ Built-in formats:
 | --- | --- | --- |
 | `hdf5` | `results.h5` | default choice for long runs and large fields |
 | `npy` | `batch_*.npz`, `static_*.npy`, `grid_*.npy`, `metadata.json` | NumPy-only downstream tools |
-| `json` | `batch_*.json` | debugging small runs |
+| `json` | `batch_*.json`, `metadata.json` | debugging small runs |
 
 The older switches `save_hdf5`, `save_npy` and `save_json` still work and are
 merged with `formats`. Further formats can be added as
@@ -92,32 +92,43 @@ with ps.load_results("simulation_results/20260101-120000") as result:
     dt = result.config["solver"]["dt"]
 ```
 
-For HDF5 runs, `fields`, `scalars` and `static` return `h5py` datasets, so
-slicing reads only the selected frames from disk; use `[:]` for the whole
-array. NPY runs return NumPy arrays. `attrs` holds the file metadata
-(`format_version`, `polarism_version`). Files written by Polarism 0.3 load with
-their old names mapped to the new ones.
+For HDF5 runs, `fields` returns lazy scalar-field views and `scalars` and
+`static` return `h5py` datasets. Slicing reads only the selected frames from
+disk; use `[:]` for the whole array. NPY and JSON runs return NumPy arrays.
+`attrs` holds file metadata including `format_version` and `polarism_version`.
+Only format v3 files load.
 
 For saved parameter sweeps, `polarism.load_results` accepts the sweep directory
 and returns a `SweepResults` view with lazy frame and member slicing. See
 [Parameter Sweeps](parameter-sweeps.md#output-and-restart) for its layout and
 reader API.
 
-The HDF5 layout (`format_version = 2`) is:
+## File formats
+
+The HDF5 results layout (`format_version = 3`) is:
 
 | Path | Content |
 | --- | --- |
 | `time` | frame times in ps |
-| `fields/<name>` | field frames, shape `(frames, *S)` |
+| `fields/<name>` | field frames, shape `(time, component, *S)` for one run or `(time, member, component, *S)` for a batch |
 | `scalars/<name>` | scalar series |
 | `scalar_groups/<group>/<label>` | grouped scalar series |
 | `static/<name>` | time-independent fields |
 | `grid/x` and, in 2D, `grid/y` | spatial grid coordinates in µm |
 | `config` | attribute `json` with the full configuration |
 
-Datasets carry `label` and, where known, `units` attributes.
-In 1D, spatial fields have shape `(frames, nx)` and HDF5 stores `grid/x` without
-`grid/y`. Live visualization and animation are currently available only in 2D.
+The root stores `ndim`, `grid_type`, `components = ["scalar"]`,
+`polarism_version`, and coordinate and time units. Every dataset has `dims`
+and `units` attributes. Coordinates use µm and time uses ps. Density has units
+µm⁻ⁿᵈⁱᵐ, wavefunction has µm⁻ⁿᵈⁱᵐᐟ², and potential has meV; unknown units are
+an empty string. Static fields omit the time dimension. In 1D, HDF5 stores
+`grid/x` without `grid/y`. `load_results` hides the scalar component axis;
+the public field shape remains `(time, *S)` or `(time, member, *S)`.
+
+NPY and JSON fields keep those public shapes. Their `metadata.json` records
+`format_version = 3`, `ndim`, and each array's `dims` and `units`. Older result
+versions are rejected with the found and supported versions. Live visualization
+and animation are currently available only in 2D.
 
 ## Online animation
 

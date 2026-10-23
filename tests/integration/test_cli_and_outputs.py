@@ -22,7 +22,7 @@ def test_cli_help() -> None:
 
 def test_programmatic_hdf5_output_and_figure(tmp_path) -> None:
     compute_engine.xp = np
-    cfg = small_config(result__save_results=True, result__save_hdf5=True, result__output_directory=str(tmp_path), result__save_interval=1, result__batch_size=2)
+    cfg = small_config(result__save_results=True, result__save_hdf5=True, result__output_directory=str(tmp_path), result__save_every=0.01, result__batch_size=2)
     controller = SimulationController(cfg); controller.run()
     assert controller.storage_visitor is not None
     output = controller.storage_visitor.output_dir / "results.h5"
@@ -76,11 +76,11 @@ def test_fast_output_matches_uncompressed_cpu_run(tmp_path) -> None:
         for name in ("time", "fields/density", "fields/N_R", "fields/psi", "static/pump", "scalars/norm"):
             assert np.array_equal(plain[name][:], fast[name][:])
         with np.load(paths[1] / "batch_000000.npz") as npy:
-            assert np.array_equal(npy["field_psi"], fast["fields/psi"][:3])
+            assert np.array_equal(npy["field_psi"], fast["fields/psi"][:3, 0])
             assert np.array_equal(np.load(paths[1] / "static_pump.npy"), fast["static/pump"][:])
         data = json.loads((paths[1] / "batch_000000.json").read_text())
         encoded = data["fields"]["psi"][0]
-        assert np.array_equal(np.array(encoded["real"]) + 1j * np.array(encoded["imag"]), fast["fields/psi"][0])
+        assert np.array_equal(np.array(encoded["real"]) + 1j * np.array(encoded["imag"]), fast["fields/psi"][0, 0])
         assert np.array_equal(np.array(data["static"]["pump"]), fast["static/pump"][:])
 
 
