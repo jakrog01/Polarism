@@ -11,7 +11,7 @@ import numpy as np
 
 import polarism.laser
 from polarism.grid.create_grid import create_grid
-from polarism.grid.simulation_grid_2d import SimulationGrid2D
+from polarism.grid.simulation_grid import SimulationGrid
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,7 @@ class GridCfg:
     lx: float = 200.0
     ly: float = 200.0
     grid_type: str = "periodic"
+    ndim: int = 2
 
 
 @dataclass(frozen=True)
@@ -136,7 +137,7 @@ class State:
 
 class NullReservoir:
     """Test helper reservoir with zero density."""
-    def __init__(self, grid: SimulationGrid2D):
+    def __init__(self, grid: SimulationGrid):
         """Set up zero reservoir arrays."""
         self._n0 = np.zeros((grid.ny, grid.nx), dtype=np.float64)
         self._state = (self._n0,)
@@ -174,7 +175,7 @@ class NullReservoir:
         return state[0]
 
 
-def make_grid(cfg: GridCfg | None = None) -> SimulationGrid2D:
+def make_grid(cfg: GridCfg | None = None) -> SimulationGrid:
     """Build a test grid."""
     return create_grid(cfg or GridCfg())
 
@@ -252,7 +253,7 @@ def potential_zero(X: np.ndarray) -> np.ndarray:
     return np.zeros_like(X, dtype=np.float64)
 
 
-def potential_periodic(grid: SimulationGrid2D, V0: float = 0.7) -> np.ndarray:
+def potential_periodic(grid: SimulationGrid, V0: float = 0.7) -> np.ndarray:
     """Return a cosine lattice potential."""
     kx = 2 * np.pi / grid.lx
     ky = 2 * np.pi / grid.ly
@@ -260,14 +261,14 @@ def potential_periodic(grid: SimulationGrid2D, V0: float = 0.7) -> np.ndarray:
 
 
 def initial_uniform(
-    grid: SimulationGrid2D, amp: float, phase: float = 0.0
+    grid: SimulationGrid, amp: float, phase: float = 0.0
 ) -> np.ndarray:
     """Return a uniform initial field."""
     return (amp * np.exp(1j * phase)) * np.ones((grid.ny, grid.nx), dtype=np.complex128)
 
 
 def initial_packet(
-    grid: SimulationGrid2D, sigma: float = 25.0, kx: float = 0.15
+    grid: SimulationGrid, sigma: float = 25.0, kx: float = 0.15
 ) -> np.ndarray:
     """Return a normalized Gaussian wave packet."""
     env = np.exp(-0.5 * (grid.X**2 + grid.Y**2) / (sigma**2))

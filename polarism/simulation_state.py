@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     import cupy as cp
     import numpy as np
 
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
 
 
 class SimulationState:
@@ -22,7 +22,7 @@ class SimulationState:
 
     def __init__(
         self,
-        grid: SimulationGrid2D,
+        grid: SimulationGrid,
         eps: float = 1e-3,
         precision: str = "double",
         *,
@@ -31,7 +31,7 @@ class SimulationState:
         seed: Optional[int] = None,
         batch_size: int | None = None,
     ):
-        """Initialize each member from the seeded two-dimensional field."""
+        """Initialize each member from a seeded spatial field."""
         if batch_size is not None and (
             isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1
         ):
@@ -39,22 +39,22 @@ class SimulationState:
         self.batch_size = 1 if batch_size is None else batch_size
         self.components = 1
         self.batched = batch_size is not None
-        self._spatial_shape = (grid.ny, grid.nx)
+        self._spatial_shape = grid.shape
+        self._fft_axes = tuple(range(-grid.ndim, 0))
         xp = compute_engine.xp
         rdtype = real_dtype(xp, precision)
         cdtype = complex_dtype(xp, precision)
         psi = make_initial_psi(
-            xp, grid.ny, grid.nx, eps,
+            xp, grid.shape, grid.spacing, eps,
             mode=mode,
-            dx=grid.dx, dy=grid.dy,
             k_cutoff_um=k_cutoff_um,
             seed=seed,
             cdtype=cdtype,
             rdtype=rdtype,
         )
         if self.batched:
-            psi = xp.broadcast_to(psi, (self.batch_size, grid.ny, grid.nx)).copy()
-        self._field = psi.reshape(self.batch_size, self.components, grid.ny, grid.nx)
+            psi = xp.broadcast_to(psi, (self.batch_size, *grid.shape)).copy()
+        self._field = psi.reshape(self.batch_size, self.components, *grid.shape)
         self._field_k = None
         self.t = 0.0
 
@@ -86,7 +86,7 @@ class SimulationState:
         self._field_k = value
 
     @property
-    def _canonical_shape(self) -> tuple[int, int, int, int]:
+    def _canonical_shape(self) -> tuple[int, ...]:
         return (self.batch_size, self.components, *self._spatial_shape)
 
     @property
@@ -131,7 +131,9 @@ class SimulationState:
         if self._field is None:
             if self._field_k is None:
                 raise ValueError("Cannot materialize psi without psi_k")
-            self._field = xp.fft.ifft2(self._field_k, axes=(-2, -1))
+            self._field = (xp.fft.ifft2(self._field_k, axes=self._fft_axes)
+                           if len(self._spatial_shape) == 2
+                           else xp.fft.ifft(self._field_k, axis=-1))
 
     def invalidate_psi_k(self) -> None:
         """Clear the spectral cache after external real-space mutation."""

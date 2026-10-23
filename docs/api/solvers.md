@@ -14,8 +14,9 @@ At the abstraction level, every solver must:
 requested time. The step starts at `state.t` and advances the fields by
 `config.solver.dt`; the caller updates `state.t` afterward.
 Solvers read and write `state.field` and `state.field_k` as
-`(B, 1, ny, nx)` arrays. Public `state.psi` and `state.psi_k` omit the
+`(B, 1, *S)` arrays. Public `state.psi` and `state.psi_k` omit the
 component axis and also omit the member axis for unbatched runs.
+`S` is `(nx,)` in 1D or `(ny, nx)` in 2D.
 
 RK4 solvers evaluate the pump once at each of `t`, `t + dt/2`, and `t + dt`,
 using the midpoint value for both middle stages. `etd-rk2` passes
@@ -31,11 +32,12 @@ Besides `pump(t)`, it offers `separable_term()`, which returns
 `(envelope, coefficient)` when there is exactly one built-in laser. `rk4-cuda`
 then scales the cached envelope inside its kernels instead of building three
 pump arrays per step. Any other callable falls back to `pump(t)`.
-`rk4-cuda` uses one tiled CUDA kernel per step in single precision and on GPUs
+In 2D, `rk4-cuda` uses one tiled CUDA kernel per step in single precision and on GPUs
 classified as full-rate FP64 in double precision. The tile includes a stencil halo
 in shared memory. Other double-precision GPUs, and devices without enough shared
 memory for a tile, use staged kernels. Tiled and staged results agree to rounding
 level.
+In 1D it uses flat left/right staged kernels with coalesced memory access.
 
 This replaces the former pump-array argument and intentionally breaks the
 plugin solver interface. Plugin solvers must evaluate the callable at their
@@ -181,8 +183,8 @@ Key properties:
 
 | `solver.laplacian` | Description | Notes |
 | --- | --- | --- |
-| `five-point` | nearest-neighbor 2D Laplacian | default, historical behavior |
-| `isotropic-9pt` | 9-point isotropic stencil | requires square cells (`dx == dy`) |
+| `five-point` | 3-point 1D or nearest-neighbor 5-point 2D Laplacian | default, historical 2D behavior |
+| `isotropic-9pt` | 9-point isotropic stencil | 2D only; requires square cells (`dx == dy`) |
 
 The 9-point stencil is a numerical discretization of the same kinetic operator,
 not a new physical term.  It is useful when high-k modes expose the angular
@@ -226,18 +228,18 @@ Use `SimulationState(grid, ..., batch_size: int | None = None)` and
 `create_reservoir(config, physics, grid, precision="double", *, batch_size: int | None = None)`.
 The built-in reservoir instances also expose `reset(batch_size: int | None = None)`.
 The leading batch axis is independent. Solver fields and reservoir tuples are
-`(B, 1, ny, nx)`; shared potential and boundary fields stay 2-D, while
-member-stacked fields use `(B, 1, ny, nx)`.
+`(B, 1, *S)`; shared potential and boundary fields use `grid.shape`, while
+member-stacked fields use `(B, 1, *S)`.
 
 | Solver | Batched execution |
 | --- | --- |
-| `rk4-fdm`, `rk4-fdm-fused` | Native array RK4; spatial stencils use the last two axes |
+| `rk4-fdm`, `rk4-fdm-fused` | Native array RK4; spatial stencils use the last `grid.ndim` axes |
 | `split-step-fft`, `ip-rk4`, `etd-rk2` | Native batched FFT and array operations |
 | `ifrk-fft-cuda`, `ifrk4-fft-cuda` | Native batched cuFFT and fused CUDA stages for built-in reservoirs; existing generic path for plugin or diffusive reservoirs |
 | `split-step-fft-cuda` | Native batched cuFFT and local CUDA kernel; existing generic path for plugin or diffusive reservoirs |
-| `rk4-cuda` | Array RK4 fallback on batched states, including the 9-point stencil; the tiled and staged RawKernels remain optimized for 2-D states |
+| `rk4-cuda` | Batched staged RawKernels; 1D uses flat left/right kernels and 2D retains its tiled or staged path |
 
 CUDA graph buffers and FFT plans are selected by the active field shape. A
 separable pump with scalar time coefficient uses its cached envelope. When the
 coefficient varies across batch members, the solver evaluates `pump(t)` at each
-stage and uses the returned `(B, 1, ny, nx)` field.
+stage and uses the returned `(B, 1, *S)` field.

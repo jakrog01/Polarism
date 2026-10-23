@@ -38,6 +38,7 @@ class _SolverCaps(TypedDict):
         producing results incomparable with solvers that implement it.
     """
     grid_types: set[str]
+    ndim: set[int]
     supports_potential: bool
     reservoir_types: set[str]
     reservoir_types_quantitative: set[str]
@@ -154,6 +155,8 @@ _SOLVER_CAPABILITIES: dict[str, _SolverCaps] = {
     },
 }
 _SOLVER_CAPABILITIES["ifrk4-fft-cuda"] = _SOLVER_CAPABILITIES["ifrk-fft-cuda"]
+for _caps in _SOLVER_CAPABILITIES.values():
+    _caps["ndim"] = {1, 2}
 
 
 class SolverCompatibilityError(RuntimeError):

@@ -12,22 +12,22 @@ from polarism.reservoir.double_reservoir import DoubleReservoir
 from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
 from polarism.reservoir.reservoir_registry import available_reservoirs
 from polarism.reservoir.single_reservoir import SingleReservoir
-from polarism.grid.simulation_grid_2d import SimulationGrid2D
+from polarism.grid.simulation_grid import SimulationGrid
 
 
 def create_reservoir(
     reservoir_config: ReservoirParameters,
     physics: PhysicsConstants,
-    grid: SimulationGrid2D,
+    grid: SimulationGrid,
     precision: str = "double",
     *,
     batch_size: int | None = None,
     batch_physics=None,
 ) -> AbstractReservoir:
-    """Create a reservoir with canonical zero fields shaped ``(B, 1, ny, nx)``."""
+    """Create a reservoir with canonical zero fields shaped ``(B, 1, *S)``."""
     reservoir_type = reservoir_config.reservoir_type
 
-    batched = BatchPhysics(physics, batch_physics, compute_engine.xp, precision)
+    batched = BatchPhysics(physics, batch_physics, compute_engine.xp, precision, ndim=grid.ndim)
     component = available_reservoirs.lookup(reservoir_type)
     if batched.size is None:
         reservoir = component(reservoir_config, physics, grid, precision)

@@ -11,13 +11,13 @@ from polarism.solver.solver_registry import available_solvers
 
 if TYPE_CHECKING:
     from polarism.config.simulation_parameters import Config
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
     from polarism.solver.abstract_solver import AbstractSolver
 
 
-def create_solver(config: Config, grid: SimulationGrid2D, batch_physics=None) -> AbstractSolver:
+def create_solver(config: Config, grid: SimulationGrid, batch_physics=None) -> AbstractSolver:
     """Create solver."""
-    physics = BatchPhysics(config.physics, batch_physics, compute_engine.xp, getattr(config.solver, "precision", "double"))
+    physics = BatchPhysics(config.physics, batch_physics, compute_engine.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
     component = available_solvers.lookup(config.solver.method)
     if physics.size is None:
         return component(config, grid)

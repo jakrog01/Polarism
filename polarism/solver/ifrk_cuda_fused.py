@@ -210,9 +210,11 @@ class FusedIFRK:
         self.solver = solver
         self.xp = solver.xp
         self.fft = fft
-        self.shape = (1, 1, grid.ny, grid.nx)
+        self.ndim = grid.ndim
+        self._fft_forward = fft.fft if grid.ndim == 1 else fft.fft2
+        self.shape = (1, 1, *grid.shape)
         self._batched = False
-        self.spatial_n = grid.nx * grid.ny
+        self.spatial_n = int(np.prod(grid.shape))
         self.n = self.spatial_n
         self.s = solver.tableau.stages
         self.real = solver._real_dtype
@@ -331,7 +333,7 @@ class FusedIFRK:
         module = xp.RawModule(code=source, options=("--std=c++11",))
         kernels = {name: module.get_function(name)
                    for name in ("combine_k", "stage_rhs", "finish_res")}
-        plan = self.fft.get_fft_plan(stage_k, axes=(-2, -1))
+        plan = self.fft.get_fft_plan(stage_k, axes=tuple(range(-self.ndim, 0)))
         graph_scales = xp.empty((64, len(self.unique_c)), self.real)
         # Warm cuFFT before graph capture. Run on the current stream: warming the
         # plan on the private non-blocking stream left later FFTs racing the
@@ -433,7 +435,7 @@ class FusedIFRK:
         spectrum = state.field_k
         if spectrum is None:
             psi = self._array(state.field, self.complex)
-            spectrum = self.fft.fft2(psi, plan=self._plan)
+            spectrum = self._fft_forward(psi, plan=self._plan)
         xp.copyto(spec[0], spectrum)
         for target, source in zip(res[0], reservoir.get_state()):
             xp.copyto(target, source)
@@ -478,7 +480,7 @@ class FusedIFRK:
             state.field = None
             state.field_k = spec[1].copy()
             state.field = boundary_condition.after_step_action(state.field)
-            state.field_k = self.fft.fft2(state.field, plan=self._plan)
+            state.field_k = self._fft_forward(state.field, plan=self._plan)
             reservoir.set_state(tuple(field.copy() for field in res[1]))
         else:
             self._copy_out(1, reservoir, state)
@@ -613,7 +615,7 @@ class FusedIFRK:
                 state.field = None
                 state.field_k = spec[index].copy()
                 state.field = boundary_condition.after_step_action(state.field)
-                state.field_k = self.fft.fft2(state.field, plan=self._plan)
+                state.field_k = self._fft_forward(state.field, plan=self._plan)
                 reservoir.set_state(tuple(field.copy() for field in res[index]))
             stream.synchronize()
         state.t = (start_step+n_steps)*self.host_dt

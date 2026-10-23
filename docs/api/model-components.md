@@ -4,12 +4,13 @@ This page describes the main interchangeable building blocks used by the simulat
 
 ## Grid interface
 
-The grid layer is defined by the `SimulationGrid2D` protocol. Concrete grids must provide:
+The grid layer is defined by the `SimulationGrid` protocol. Concrete grids must provide:
 
-- domain sizes and resolution: `nx`, `ny`, `lx`, `ly`
-- real-space coordinates: `X`, `Y`
-- spacings: `dx`, `dy`
-- spectral coordinates: `kx`, `ky`, `KX`, `KY`, `k_squared`
+- spatial dimension `ndim` (1 or 2), `shape`, `spacing`, and `lengths` in array axis order
+- x-axis fields `nx`, `lx`, `dx`, `X`, `kx`, and `KX`
+- `boundary`, `grid_type`, and `k_squared` with shape `grid.shape`
+
+2D grids also provide `ny`, `ly`, `dy`, `Y`, `ky`, and `KY`. A 1D grid has no y-axis attributes. `PeriodicGrid` and `ClosedIntervalGrid` implement both dimensions.
 
 ### Supported grid types
 
@@ -82,14 +83,14 @@ the 1/e radial decay length should use `continuous-exp-length`, which evaluates
 
 Reservoir models share the `AbstractReservoir` contract:
 
-- store current state tuples as `(B, 1, ny, nx)` arrays
+- store current state tuples as `(B, 1, *S)` arrays
 - expose the active density that couples to the condensate
 - compute reservoir derivatives
 - advance the reservoir in time
 - optionally expose result nodes for storage and visualization
 
-`get_reservoir_density()` and result nodes expose public `(ny, nx)` or
-`(B, ny, nx)` arrays.
+`get_reservoir_density()` and result nodes expose public spatial `(*S)` or
+`(B, *S)` arrays, where `S` is `(nx,)` or `(ny, nx)`.
 
 ### Supported reservoir types
 

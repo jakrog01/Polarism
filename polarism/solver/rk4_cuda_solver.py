@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
 
 PREAMBLE_1D = """
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -629,6 +629,79 @@ def build_kernel_source_1d(
     return sources
 
 
+def build_flat_1d_sources(bc_type, real_type="double", reservoir_type="single",
+                          batched=False, physics_fields=()):
+    """Generate flat one-dimensional kernels from the staged RK4 templates."""
+    import re
+
+    sources = build_kernel_source_1d(
+        bc_type, real_type, reservoir_type, batched=batched,
+        physics_fields=physics_fields,
+    )
+    result = []
+    for source in sources:
+        if batched:
+            preamble = re.compile(
+                r"    const int spatial = blockIdx.x.*?    const int j = spatial % nx;\n",
+                re.DOTALL,
+            )
+            replacement = (
+                "    const int spatial = blockIdx.x * blockDim.x + threadIdx.x;\n"
+                "    const int N = nx;\n"
+                "    if (spatial >= N) return;\n"
+                "    const int member = blockIdx.y;\n"
+                "    const int member_offset = member * N;\n"
+                "    const int tid = member_offset + spatial;\n"
+                "    const int potential_offset = potential_n == N ? 0 : member_offset;\n"
+                "    const int pump_offset = pump_n == N ? 0 : member_offset;\n"
+            )
+            coordinate = "spatial"
+        else:
+            preamble = re.compile(
+                r"    const int tid = blockIdx.x.*?    const int j = tid % nx;\n",
+                re.DOTALL,
+            )
+            replacement = (
+                "    const int tid = blockIdx.x * blockDim.x + threadIdx.x;\n"
+                "    if (tid >= nx) return;\n"
+            )
+            coordinate = "tid"
+        source, count = preamble.subn(replacement, source, count=1)
+        if count != 1:
+            raise ValueError("1D kernel preamble not found")
+        neighbors = re.compile(r"    const int up = .*?    const int rt = .*?;\n", re.DOTALL)
+        if bc_type == "periodic":
+            replacement = (
+                f"    const int lt = {coordinate} > 0 ? tid - 1 : tid + nx - 1;\n"
+                f"    const int rt = {coordinate} < nx - 1 ? tid + 1 : tid - nx + 1;\n"
+            )
+        else:
+            replacement = (
+                f"    const int lt = {coordinate} > 0 ? tid - 1 : tid + 1;\n"
+                f"    const int rt = {coordinate} < nx - 1 ? tid + 1 : tid - 1;\n"
+            )
+        source, count = neighbors.subn(replacement, source, count=1)
+        if count != 1:
+            raise ValueError("1D kernel neighbors not found")
+        source = re.sub(
+            r"    const (?:float|double) (?:psi|nR|nA|nI)_(?:up|dn)_(?:re|im) = [^;]*;\n",
+            "", source,
+        )
+        source = re.sub(
+            r"    const (?:float|double) (?:nR|nA|nI)_(?:up|dn) = [^;]*;\n",
+            "", source,
+        )
+        source = re.sub(
+            r"(const (?:float|double) lap_\w+ = )[^\n]*\* inv_dy2\n\s*\+ ([^;]*\* inv_dx2;)",
+            r"\1\2", source,
+        )
+        body = source.split(") {", 1)[1]
+        if re.search(r"\b(?:up|dn)\b|\binv_dy2\b", body):
+            raise ValueError("1D kernel retains a y-axis access")
+        result.append(source)
+    return tuple(result)
+
+
 def _batch_parameter_names(physics_fields):
     names = {"g_C": "g_C", "g_R": "g_R", "g_I": "g_I", "R": "R_cond",
              "gamma_C": "gamma_C", "gamma_R": "gamma_R", "gamma_I": "gamma_I",
@@ -706,6 +779,34 @@ def _tile_halo_indices(nx: int, ny: int, tile_x: int, tile_y: int,
     return y[:, None] * nx + x[None, :]
 
 
+def _tile_halo_indices_1d(nx: int, tile_x: int, block_x: int, bc_type: str):
+    """Emulate the grid indices loaded by a one-dimensional tile."""
+    import numpy as np
+
+    return np.array([_tile_index(block_x * tile_x + i - 4, nx, bc_type)
+                     for i in range(tile_x + 8)])
+
+
+def _tile_shared_bytes_1d(tile_x: int, real_type: str,
+                          reservoir_type: str) -> int:
+    fields = 3 if reservoir_type == "single" else 4
+    byte_width = 4 if real_type == "float" else 8
+    return byte_width * fields * (2 * (tile_x + 8) + 3 * tile_x)
+
+
+def _choose_tile_x(real_type: str, reservoir_type: str, block_limit: int,
+                   sm_limit: int):
+    candidates = (512, 256, 128, 64)
+    for tile_x in candidates:
+        needed = _tile_shared_bytes_1d(tile_x, real_type, reservoir_type)
+        if needed <= block_limit and 2 * needed <= sm_limit:
+            return tile_x
+    for tile_x in candidates:
+        if _tile_shared_bytes_1d(tile_x, real_type, reservoir_type) <= block_limit:
+            return tile_x
+    return None
+
+
 def _tile_shared_bytes(tile_x: int, tile_y: int, real_type: str,
                        reservoir_type: str) -> int:
     fields = 3 if reservoir_type == "single" else 4
@@ -729,6 +830,204 @@ def _choose_tile_shape(real_type: str, reservoir_type: str, block_limit: int,
 
 def _prefer_tiled(precision: str, major: int, minor: int) -> bool:
     return precision == "single" or has_full_rate_fp64(major, minor)
+
+
+def build_tiled_1d_kernel_source(bc_type: str, real_type: str,
+                                 reservoir_type: str, tile_x: int,
+                                 complex_potential: bool, graph: bool = False,
+                                 batched: bool = False, physics_fields=()) -> str:
+    """Build a whole-step one-dimensional kernel from the flat RHS."""
+    import re
+
+    rhs_source = build_flat_1d_sources(bc_type, real_type, reservoir_type)[0]
+    fields = ("nR",) if reservoir_type == "single" else (
+        ("nA", "nI") if reservoir_type == "double" else ("nR", "nI")
+    )
+    derivative_names = {"nR": "dnR_dt", "nA": "dnA_dt", "nI": "dnI_dt"}
+    suffix = {"single": "", "double": "_double",
+              "quadratic-double": "_qdouble"}[reservoir_type]
+    header, body = rhs_source.split(") {", 1)
+    body = body.rsplit("\n}", 1)[0]
+    body, count = re.subn(
+        r"    const int tid = blockIdx.x \* blockDim.x \+ threadIdx.x;\n"
+        r"    if \(tid >= nx\) return;\n", "", body, count=1,
+    )
+    if count != 1:
+        raise ValueError("1D tiled kernel preamble not found")
+    neighbors = re.compile(r"    const int lt = .*?    const int rt = .*?;\n", re.DOTALL)
+    if bc_type == "periodic":
+        tile_neighbors = "    const int lt = tid - 1;\n    const int rt = tid + 1;\n"
+    else:
+        tile_neighbors = (
+            "    const int x = tiled_coord_1d(vx, nx);\n"
+            "    const int lt = tiled_coord_1d(vx - 1, nx) == (x > 0 ? x - 1 : 1)"
+            " ? tid - 1 : tid + 1;\n"
+            "    const int rt = tiled_coord_1d(vx + 1, nx) == (x < nx-1 ? x + 1 : nx-2)"
+            " ? tid + 1 : tid - 1;\n"
+        )
+    body, count = neighbors.subn(tile_neighbors, body, count=1)
+    if count != 1:
+        raise ValueError("1D tiled kernel neighbors not found")
+    spatial = "potential_offset + gid" if batched else "gid"
+    pump_spatial = "pump_offset + gid" if batched else "gid"
+    body = body.replace("V_re[tid]", f"V_re[{spatial}]")
+    body = body.replace("V_im[tid]", f"V_im[{spatial}]")
+    body = body.replace("pump[tid]", f"pump[{pump_spatial}]")
+    if not complex_potential:
+        body = body.replace(f"V_im[{spatial}]", f"V_re[{spatial}]")
+    body = body.replace("dpsi[2*tid+1]", "dpsi[1]")
+    body = body.replace("dpsi[2*tid]", "dpsi[0]")
+    for name in derivative_names.values():
+        body = body.replace(f"{name}[tid]", f"{name}[0]")
+    parameter_declarations = f"const {real_type} inv_dx2," + rhs_source.split(
+        f"const {real_type} inv_dx2,", 1
+    )[1].split(") {", 1)[0]
+    parameter_names = re.findall(rf"const {real_type} (\w+)", parameter_declarations)
+    rhs_header = re.sub(
+        r'^extern "C" __global__\s*void \w+\(',
+        '__device__ __forceinline__ void tiled_rhs_1d(', header.strip(), count=1,
+    )
+    extra_indices = (" const int potential_offset, const int pump_offset,"
+                     if batched else "")
+    rhs_header = rhs_header.replace(
+        "const int nx, const int ny,",
+        f"const int nx, const int ny, const int tid, const int gid,"
+        f" const int vx,{extra_indices}",
+    )
+    if bc_type == "periodic":
+        coord_source = """__device__ __forceinline__ int tiled_coord_1d(int index, int size) {
+    int wrapped = index % size;
+    return wrapped < 0 ? wrapped + size : wrapped;
+}"""
+    else:
+        coord_source = """__device__ __forceinline__ int tiled_coord_1d(int index, int size) {
+    const int period = 2 * (size - 1);
+    int folded = index % period;
+    if (folded < 0) folded += period;
+    return folded < size ? folded : period - folded;
+}"""
+    declarations = [f"const {real_type}* __restrict__ psi_initial"]
+    declarations += [f"const {real_type}* __restrict__ {name}_initial" for name in fields]
+    declarations += [f"const {real_type}* __restrict__ V_re",
+                     f"const {real_type}* __restrict__ V_im"]
+    declarations += [f"const {real_type}* __restrict__ pump{stage}" for stage in range(3)]
+    declarations += [f"{real_type}* __restrict__ psi_out"]
+    declarations += [f"{real_type}* __restrict__ {name}_out" for name in fields]
+    declarations += ["const int nx", "const int ny"]
+    if graph:
+        declarations += [f"const {real_type}* pump_scales", "const int pump_index"]
+    else:
+        declarations += [f"const {real_type} scale{stage}" for stage in range(3)]
+    declarations += [f"const {real_type} v_im_scale",
+                     f"const {real_type} half_dt", f"const {real_type} dt",
+                     f"const {real_type} dt6", parameter_declarations]
+    if batched:
+        declarations += ["const int members", "const int potential_n",
+                         "const int pump_n0", "const int pump_n1",
+                         "const int pump_n2",
+                         f"const {real_type}* __restrict__ batch_constants"]
+    scale_values = ([f"pump_scales[pump_index + {i}]" for i in range(3)] if graph
+                    else [f"scale{i}" for i in range(3)])
+    count = 2 + len(fields)
+    lines = [
+        f"extern __shared__ {real_type} scratch[];",
+        f"const int area = {tile_x}+8;",
+        "const int lane = threadIdx.x;",
+        f"const int base_x = blockIdx.x * {tile_x};",
+    ]
+    if batched:
+        lines += [
+            "const int member = blockIdx.y;",
+            "const int member_offset = member * nx;",
+            "const int potential_offset = potential_n == nx ? 0 : member_offset;",
+            "const int pump_offset0 = pump_n0 == nx ? 0 : member_offset;",
+            "const int pump_offset1 = pump_n1 == nx ? 0 : member_offset;",
+            "const int pump_offset2 = pump_n2 == nx ? 0 : member_offset;",
+        ]
+        for name in ("psi_initial", *[f"{field}_initial" for field in fields],
+                     "psi_out", *[f"{field}_out" for field in fields]):
+            factor = "2*" if name.startswith("psi_") else ""
+            lines.append(f"{name} += {factor}member_offset;")
+        for index, name in enumerate(_batch_parameter_names(physics_fields)):
+            lines.append(f"const {real_type} {name}_member = "
+                         f"__ldg(batch_constants + {index}*members+member);")
+    for bank in (0, 1):
+        offset = bank * count
+        lines.append(f"{real_type}* psi{bank} = scratch + {offset}*area;")
+        for index, name in enumerate(fields):
+            lines.append(f"{real_type}* {name}{bank} = scratch + {offset+2+index}*area;")
+    k_base = 2 * count
+    lines.append(f"{real_type}* kp = scratch + {k_base}*area;")
+    for index, name in enumerate(fields):
+        lines.append(f"{real_type}* k{name} = scratch + {k_base}*area + "
+                     f"(2+{index})*{tile_x}*3;")
+    lines += [
+        "for (int p = lane; p < area; p += blockDim.x) {",
+        "    const int gid = tiled_coord_1d(base_x + p - 4, nx);",
+        "    psi0[2*p] = psi_initial[2*gid];",
+        "    psi0[2*p+1] = psi_initial[2*gid+1];",
+    ]
+    for name in fields:
+        lines.append(f"    {name}0[p] = {name}_initial[gid];")
+    lines += ["}", "__syncthreads();", "#pragma unroll",
+              "for (int stage = 0; stage < 4; ++stage) {",
+              "    for (int p = lane; p < area; p += blockDim.x) {",
+              "        if (p < stage+1 || p >= area-stage-1) continue;",
+              "        const int vx = base_x + p - 4;",
+              "        const int gid = tiled_coord_1d(vx, nx);",
+              "        const int out = p - 4;",
+              f"        {real_type} dp[2];"]
+    for name in fields:
+        lines.append(f"        {real_type} d{name}[1];")
+    lines.append(f"        const {real_type}* input_psi = (stage & 1) ? psi1 : psi0;")
+    for name in fields:
+        lines.append(f"        const {real_type}* input_{name} = (stage & 1) ? {name}1 : {name}0;")
+    lines += [
+        f"        const {real_type}* stage_pump = stage == 0 ? pump0 : "
+        "(stage == 3 ? pump2 : pump1);",
+        f"        const {real_type} stage_scale = stage == 0 ? {scale_values[0]} : "
+        f"(stage == 3 ? {scale_values[2]} : {scale_values[1]});",
+    ]
+    if batched:
+        lines.append("        const int pump_offset = stage == 0 ? pump_offset0 : "
+                     "(stage == 3 ? pump_offset2 : pump_offset1);")
+    call_parameters = [f"{name}_member" if batched and name in
+                       _batch_parameter_names(physics_fields) else name
+                       for name in parameter_names]
+    lines += [
+        "        tiled_rhs_1d(input_psi, "
+        + ", ".join(f"input_{name}" for name in fields)
+        + ", V_re, V_im, stage_pump, dp, "
+        + ", ".join(f"d{name}" for name in fields)
+        + ", nx, ny, p, gid, vx, "
+        + ("potential_offset, pump_offset, " if batched else "")
+        + "stage_scale, v_im_scale, " + ", ".join(call_parameters) + ");",
+        "        if (stage < 3) {",
+        f"            const {real_type} c_dt = stage == 2 ? dt : half_dt;",
+        f"            {real_type}* next_psi = (stage & 1) ? psi0 : psi1;",
+        "            next_psi[2*p] = psi_initial[2*gid] + c_dt * dp[0];",
+        "            next_psi[2*p+1] = psi_initial[2*gid+1] + c_dt * dp[1];",
+    ]
+    for name in fields:
+        lines += [f"            {real_type}* next_{name} = (stage & 1) ? {name}0 : {name}1;",
+                  f"            next_{name}[p] = {name}_initial[gid] + c_dt * d{name}[0];"]
+    lines += ["        }", f"        if (p >= 4 && p < 4+{tile_x}) {{",
+              "            if (stage < 3) {",
+              f"                kp[stage*2*{tile_x}+2*out] = dp[0];",
+              f"                kp[stage*2*{tile_x}+2*out+1] = dp[1];"]
+    for name in fields:
+        lines.append(f"                k{name}[stage*{tile_x}+out] = d{name}[0];")
+    lines += ["            } else if (vx < nx) {",
+              f"                psi_out[2*gid] = psi_initial[2*gid] + dt6 * (kp[2*out] + 2*kp[2*{tile_x}+2*out] + 2*kp[4*{tile_x}+2*out] + dp[0]);",
+              f"                psi_out[2*gid+1] = psi_initial[2*gid+1] + dt6 * (kp[2*out+1] + 2*kp[2*{tile_x}+2*out+1] + 2*kp[4*{tile_x}+2*out+1] + dp[1]);"]
+    for name in fields:
+        lines += [f"                {real_type} {name}_new = {name}_initial[gid] + dt6 * (k{name}[out] + 2*k{name}[{tile_x}+out] + 2*k{name}[2*{tile_x}+out] + d{name}[0]);",
+                  f"                {name}_out[gid] = ({name}_new < 0) ? 0 : {name}_new;"]
+    lines += ["            }", "        }", "    }", "    __syncthreads();", "}"]
+    kernel = "\n    ".join(lines)
+    return (coord_source + "\n" + rhs_header + ") {\n" + body + "\n}\n"
+            + f'extern "C" __global__ void tiled_step_1d{suffix}('
+            + ",\n    ".join(declarations) + ") {\n    " + kernel + "\n}\n")
 
 
 def build_tiled_kernel_source(bc_type: str, real_type: str, reservoir_type: str,
@@ -994,13 +1293,14 @@ def _auto_tune_block_size(kern_rhs, _N: int) -> int:
 class RK4CudaSolver(AbstractSolver):
     """Generic fused RK4 CUDA solver with overridable kernel and launch hooks."""
 
-    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None):
+    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None):
         """Set up the rk 4 cuda solver."""
         super().__init__(config)
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
+        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
+        self.ndim = grid.ndim
         self.nx = grid.nx
-        self.ny = grid.ny
-        self.N = grid.nx * grid.ny
+        self.ny = grid.ny if grid.ndim == 2 else None
+        self.N = grid.nx * grid.ny if grid.ndim == 2 else grid.nx
         self.grid_type = grid.boundary
         _res_cfg = getattr(config, "reservoir", None)
         self._reservoir_type = (
@@ -1048,7 +1348,7 @@ class RK4CudaSolver(AbstractSolver):
             self._kappa = self.batch_physics.get("kappa")
 
         self._inv_dx2 = 1.0 / (grid.dx ** 2)
-        self._inv_dy2 = 1.0 / (grid.dy ** 2)
+        self._inv_dy2 = 1.0 / (grid.dy ** 2) if grid.ndim == 2 else 0.0
         self._neg_hbar2_over_2m = -(self._hbar ** 2) / (2.0 * self._m_eff)
         self._inv_hbar = 1.0 / self._hbar
 
@@ -1058,6 +1358,8 @@ class RK4CudaSolver(AbstractSolver):
                 f"solver.laplacian='{laplacian}' is not recognised. "
                 "Valid values: 'five-point', 'isotropic-9pt'."
             )
+        if laplacian == "isotropic-9pt" and grid.ndim == 1:
+            raise ValueError("solver.laplacian='isotropic-9pt' is not supported in 1D")
         if laplacian == "isotropic-9pt":
             rel_diff = abs(grid.dx - grid.dy) / max(grid.dx, grid.dy)
             if rel_diff > 1e-8:
@@ -1083,7 +1385,7 @@ class RK4CudaSolver(AbstractSolver):
             _cast = self._np_real
 
             self._k_nx = _np.int32(self.nx)
-            self._k_ny = _np.int32(self.ny)
+            self._k_ny = _np.int32(self.ny if self.ny is not None else 0)
             self._k_N = _np.int32(self.N)
             self._k_int = _np.int32
             self._k_inv_dx2 = _cast(self._inv_dx2)
@@ -1208,9 +1510,10 @@ class RK4CudaSolver(AbstractSolver):
         self, bc_type: str, real_type: str, reservoir_type: str
     ) -> tuple[str, str, str]:
         """Build the CUDA kernel source."""
-        return build_kernel_source_1d(
+        builder = build_flat_1d_sources if self.ndim == 1 else build_kernel_source_1d
+        return builder(
             bc_type, real_type, reservoir_type,
-            laplacian_type=self._laplacian_type,
+            **({"laplacian_type": self._laplacian_type} if self.ndim == 2 else {}),
             batched=self._batched, physics_fields=self._physics_fields,
         )
 
@@ -1255,6 +1558,10 @@ class RK4CudaSolver(AbstractSolver):
         props = cp.cuda.runtime.getDeviceProperties(cp.cuda.runtime.getDevice())
         block_limit = props.get("sharedMemPerBlockOptin", props["sharedMemPerBlock"])
         sm_limit = props.get("sharedMemPerMultiprocessor", block_limit)
+        if self.ndim == 1:
+            tile_x = _choose_tile_x(self._real_type, self._reservoir_type,
+                                    block_limit, sm_limit)
+            return (tile_x, 1) if tile_x is not None else None
         return _choose_tile_shape(self._real_type, self._reservoir_type,
                                   block_limit, sm_limit)
 
@@ -1264,16 +1571,27 @@ class RK4CudaSolver(AbstractSolver):
             import cupy as cp
 
             tile_x, tile_y = self._tile_shape
-            source = build_tiled_kernel_source(
-                self.grid_type, self._real_type, self._reservoir_type,
-                self._laplacian_type, tile_x, tile_y, complex_potential, graph,
-                self._batched, self._physics_fields,
-            )
+            if self.ndim == 1:
+                source = build_tiled_1d_kernel_source(
+                    self.grid_type, self._real_type, self._reservoir_type,
+                    tile_x, complex_potential, graph, self._batched,
+                    self._physics_fields,
+                )
+            else:
+                source = build_tiled_kernel_source(
+                    self.grid_type, self._real_type, self._reservoir_type,
+                    self._laplacian_type, tile_x, tile_y, complex_potential, graph,
+                    self._batched, self._physics_fields,
+                )
             suffix = {"single": "", "double": "_double",
                       "quadratic-double": "_qdouble"}[self._reservoir_type]
-            kernel = cp.RawKernel(source, "tiled_step" + suffix)
-            shared_bytes = _tile_shared_bytes(tile_x, tile_y, self._real_type,
-                                               self._reservoir_type)
+            name = "tiled_step_1d" if self.ndim == 1 else "tiled_step"
+            kernel = cp.RawKernel(source, name + suffix)
+            shared_bytes = (_tile_shared_bytes_1d(tile_x, self._real_type,
+                                                   self._reservoir_type)
+                            if self.ndim == 1 else
+                            _tile_shared_bytes(tile_x, tile_y, self._real_type,
+                                               self._reservoir_type))
             if shared_bytes > cp.cuda.runtime.getDeviceProperties(
                     cp.cuda.runtime.getDevice())["sharedMemPerBlock"]:
                 kernel.max_dynamic_shared_size_bytes = shared_bytes
@@ -1355,9 +1673,12 @@ class RK4CudaSolver(AbstractSolver):
             tile_x, tile_y = self._tile_shape
             scale_args = ((scale_buffer, self._k_int(scale_offset))
                           if scale_buffer is not None else pump_scales)
+            tile_grid = (((self.nx + tile_x - 1) // tile_x, self._members)
+                         if self.ndim == 1 else
+                         ((self.nx + tile_x - 1) // tile_x,
+                          (self.ny + tile_y - 1) // tile_y, self._members))
             kernel(
-                ((self.nx + tile_x - 1) // tile_x,
-                 (self.ny + tile_y - 1) // tile_y, self._members), (256,),
+                tile_grid, (256,),
                 (psi0, *reservoir0, V_re, V_im, *pumps,
                  psi_out, *reservoir_out, self._k_nx, self._k_ny,
                  *scale_args, v_im_scale, self._k_half_dt, self._k_dt,
@@ -1688,6 +2009,16 @@ class RK4CudaSolver(AbstractSolver):
 
     def _cpu_laplacian(self, psi, out):
         """Apply the CPU Laplacian stencil."""
+        if self.ndim == 1:
+            if self.grid_type == "periodic":
+                out[:] = (self.xp.roll(psi, -1, axis=-1) - 2 * psi
+                          + self.xp.roll(psi, 1, axis=-1)) * self._inv_dx2
+            else:
+                out[..., 1:-1] = (psi[..., 2:] - 2 * psi[..., 1:-1]
+                                  + psi[..., :-2]) * self._inv_dx2
+                out[..., 0] = 2 * (psi[..., 1] - psi[..., 0]) * self._inv_dx2
+                out[..., -1] = 2 * (psi[..., -2] - psi[..., -1]) * self._inv_dx2
+            return
         if self._laplacian_type == "isotropic-9pt":
             if psi.ndim == 2:
                 self._cpu_laplacian_9pt(psi, out)

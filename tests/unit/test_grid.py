@@ -6,7 +6,7 @@ import pytest
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import Config, GridParameters
 from polarism.config.validation import validate_config
-from polarism.grid.closed_interval_simulation_grid_2d import ClosedIntervalSimulationGrid2D
+from polarism.grid.closed_interval_grid import ClosedIntervalGrid
 from polarism.grid.create_grid import create_grid
 
 TOL_MACHINE_F64 = 1e-12  # Exact algebraic identity in float64.
@@ -38,7 +38,7 @@ def test_grid_spacing_and_nodes(nx: int, grid_type: str) -> None:
 def test_closed_interval_requires_two_nodes_but_periodic_allows_one() -> None:
     compute_engine.xp = np
     with pytest.raises(ValueError, match="nx >= 2"):
-        ClosedIntervalSimulationGrid2D(GridParameters(nx=1, ny=4, lx=4.0, ly=4.0, grid_type="closed-interval"))
+        ClosedIntervalGrid(GridParameters(nx=1, ny=4, lx=4.0, ly=4.0, grid_type="closed-interval"))
     create_grid(GridParameters(nx=1, ny=4, lx=4.0, ly=4.0, grid_type="periodic"))
 
 

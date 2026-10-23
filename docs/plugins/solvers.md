@@ -17,7 +17,7 @@ For per-member physics, the factory calls
 `SolverClass(config, grid, batch_physics=values)`, where `values` maps a
 `PhysicsConstants` float field to a one-dimensional array of length `B`.
 Accept this optional constructor argument only if the solver supports a leading
-batch axis on canonical `(B, 1, ny, nx)` fields and applies each member's constants. The factory keeps
+batch axis on canonical `(B, 1, *S)` fields and applies each member's constants. The factory keeps
 the two-argument call for ordinary runs and raises a named error if a physics
 batch selects a plugin without `batch_physics`.
 
@@ -26,9 +26,9 @@ batch selects a plugin without `batch_physics`.
 | `__init__(config, grid)` | Factory, after grid and reservoir setup | Validate method constraints; retain grid data | Required |
 | `step(potential, pump, reservoir, boundary_condition, state)` | Default `advance`, once per step | Update canonical `state.field` and reservoir; returns `None` | Abstract |
 | `advance(potential, pump, reservoir, boundary_condition, state, start_step, n_steps)` | Controller, once per output chunk | Advance exactly `n_steps`; maintain stage times | Inherited; override only for chunking |
-| `pump(t)` | Called by `step` at its stage times | Shared `(ny, nx)` or member-stacked `(B, 1, ny, nx)` array | Input callable |
+| `pump(t)` | Called by `step` at its stage times | Shared `grid.shape` or member-stacked `(B, 1, *S)` array | Input callable |
 | `state.t` | Read by `step` | Start time; inherited `advance` updates it afterward | Input state |
-| `state.field` / `state.field_k` | Read or written by `step` | Canonical real-space field / optional spectral cache, both `(B, 1, ny, nx)` | State contract |
+| `state.field` / `state.field_k` | Read or written by `step` | Canonical real-space field / optional spectral cache, both `(B, 1, *S)` | State contract |
 
 The solver decides when to sample `pump` and when to call
 `reservoir.get_derivatives`, `reservoir.step`, or `set_state`. A real-space
@@ -36,11 +36,13 @@ method should pass the final field through
 `boundary_condition.after_step_action(field)`. Assigning `state.field` clears its
 `field_k` cache. A spectral method that keeps Fourier state must maintain
 `state.field_k` and real-space materialization consistently.
+Here `S` is the spatial shape `(nx,)` or `(ny, nx)`. FFT methods transform over
+`tuple(range(-grid.ndim, 0))`; shared potential and pump arrays use `grid.shape`.
 
 !!! warning "Plugin compatibility is your responsibility"
     `solver_compatibility.py` stores capabilities for built-in method names.
-    An unknown plugin name bypasses those grid, reservoir, potential, and
-    kinetic-relaxation checks. Validate unsupported settings in your own
+    An unknown plugin name defaults to 2D support and bypasses the other grid,
+    reservoir, potential, and kinetic-relaxation checks. Validate unsupported settings in your own
     constructor and test the configurations you advertise.
 
 ## Step-by-step

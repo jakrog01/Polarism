@@ -27,7 +27,8 @@ def evaluate_pump(pump, t):
                 xp = compute_engine.xp
                 vector = xp.asarray(value)
                 if vector.ndim:
-                    vector = vector[:, None, None, None]
+                    ndim = getattr(getattr(pump, "grid", None), "ndim", 2)
+                    vector = vector.reshape((-1, 1, *(1,) * ndim))
                 result = result + envelope * vector
             return result
     return pump(t)
@@ -44,7 +45,8 @@ class PumpField:
 
     def __call__(self, t: float):
         lasers = self.lasers
-        X, Y = self.grid.X, self.grid.Y
+        X = self.grid.X
+        Y = self.xp.zeros_like(X) if self.grid.ndim == 1 else self.grid.Y
         terms = self.separable_terms()
         if terms:
             coefficients = [coefficient(t) for _, coefficient in terms]
@@ -53,7 +55,7 @@ class PumpField:
                 for (envelope, _), value in zip(terms, coefficients):
                     vector = self.xp.asarray(value)
                     if vector.ndim:
-                        vector = vector[:, None, None, None]
+                        vector = vector.reshape((-1, 1, *(1,) * self.grid.ndim))
                     total = total + envelope * vector
                 return total
         if not lasers:
@@ -138,7 +140,7 @@ class BatchedPumpField:
             for envelope, coefficient in self._terms:
                 value = self.xp.asarray(coefficient(t))
                 if value.ndim:
-                    value = value[:, None, None, None]
+                    value = value.reshape((-1, 1, *(1,) * self.grid.ndim))
                 component = envelope * value
                 if components is not None:
                     components.append(component)

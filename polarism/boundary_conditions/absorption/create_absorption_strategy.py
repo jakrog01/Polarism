@@ -15,11 +15,11 @@ if TYPE_CHECKING:
         BoundaryConditionParameters,
         PhysicsConstants,
     )
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
 
 
 def create_absorption_strategy(
-    grid: SimulationGrid2D,
+    grid: SimulationGrid,
     boundary_conditions_config: BoundaryConditionParameters,
     physics_constants: PhysicsConstants,
 ) -> AbsorptionStrategy:

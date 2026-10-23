@@ -42,13 +42,15 @@ def validate_config(cfg: Config) -> None:
 
 def _validate_grid(cfg: Config) -> None:
     g = cfg.grid
+    if type(g.ndim) is not int or g.ndim not in (1, 2):
+        raise ConfigValidationError(f"grid.ndim must be 1 or 2, got {g.ndim!r}")
     if g.nx < 1:
         raise ConfigValidationError(f"grid.nx must be >= 1, got {g.nx}")
-    if g.ny < 1:
+    if g.ndim == 2 and g.ny < 1:
         raise ConfigValidationError(f"grid.ny must be >= 1, got {g.ny}")
     if g.lx <= 0.0:
         raise ConfigValidationError(f"grid.lx must be > 0, got {g.lx}")
-    if g.ly <= 0.0:
+    if g.ndim == 2 and g.ly <= 0.0:
         raise ConfigValidationError(f"grid.ly must be > 0, got {g.ly}")
 
 
@@ -97,6 +99,11 @@ def _validate_physics(cfg: Config) -> None:
 
 def _validate_solver(cfg: Config) -> None:
     s = cfg.solver
+    from polarism.solver.solver_compatibility import _SOLVER_CAPABILITIES
+    if cfg.grid.ndim not in _SOLVER_CAPABILITIES.get(s.method, {}).get("ndim", {2}):
+        raise ConfigValidationError(f"solver.method={s.method!r} does not support grid.ndim={cfg.grid.ndim}")
+    if cfg.grid.ndim == 1 and s.laplacian == "isotropic-9pt":
+        raise ConfigValidationError("solver.laplacian='isotropic-9pt' is not supported in 1D")
     if s.tableau not in {"rk4", "dp5", "dop853", "vern7", "vern9"}:
         raise ConfigValidationError(
             "solver.tableau must be one of rk4, dp5, dop853, vern7, vern9"
@@ -115,6 +122,8 @@ def _validate_solver(cfg: Config) -> None:
 
 def _validate_result(cfg: Config) -> None:
     r = cfg.result
+    if cfg.grid.ndim == 1 and (r.real_time_view or r.animate):
+        raise ConfigValidationError("visualization of 1D runs is not supported yet")
     if type(r.view_member) is not int or r.view_member < 0:
         raise ConfigValidationError("result.view_member must be a nonnegative integer")
     for field, names, registry in (("formats", r.formats, available_storages),
@@ -216,6 +225,8 @@ def _validate_laser(cfg: Config) -> None:
 
 def _dx_min(cfg: Config) -> float:
     g = cfg.grid
+    if g.ndim == 1:
+        return g.lx / (g.nx if grid_boundary(g.grid_type) == "periodic" else max(g.nx - 1, 1))
     if grid_boundary(g.grid_type) == "periodic":
         dx = g.lx / g.nx
         dy = g.ly / g.ny

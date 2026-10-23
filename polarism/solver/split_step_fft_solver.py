@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
 
 
@@ -24,10 +24,12 @@ class SplitStepFFTSolver(AbstractSolver):
     """Solve the model with split-step FFT."""
     _kinetic_propagator_half: Union[np.ndarray, cp.ndarray]
 
-    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None):
+    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None):
         """Set up the split step fft solver."""
         super().__init__(config)
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
+        self._fft = self.xp.fft.fft if grid.ndim == 1 else self.xp.fft.fft2
+        self._ifft = self.xp.fft.ifft if grid.ndim == 1 else self.xp.fft.ifft2
+        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
 
         self._kinetic_propagator_half = self.xp.exp(
             -1j
@@ -41,9 +43,9 @@ class SplitStepFFTSolver(AbstractSolver):
         self, psi: Union[np.ndarray, cp.ndarray]
     ) -> Union[np.ndarray, cp.ndarray]:
         """Apply the FFT half-step of the kinetic term."""
-        psi_k = self.xp.fft.fft2(psi)
+        psi_k = self._fft(psi)
         psi_k *= self._kinetic_propagator_half
-        return self.xp.fft.ifft2(psi_k)
+        return self._ifft(psi_k)
 
     def step(
         self,

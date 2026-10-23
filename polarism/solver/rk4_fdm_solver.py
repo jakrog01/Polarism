@@ -15,21 +15,21 @@ if TYPE_CHECKING:
 
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
 
 
 @register_solver("rk4-fdm")
 class RK4FDMSolver(AbstractSolver):
     """Solve the model with finite-difference RK4."""
-    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None):
+    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None):
         """Set up the rk 4 fdm solver."""
         super().__init__(config)
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
+        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
         self.dx = grid.dx
-        self.dy = grid.dy
+        self.dy = grid.dy if grid.ndim == 2 else None
         self.nx = grid.nx
-        self.ny = grid.ny
+        self.ny = grid.ny if grid.ndim == 2 else None
         self.grid_type = grid.boundary
         self._laplacian_buf = None
 
@@ -49,6 +49,10 @@ class RK4FDMSolver(AbstractSolver):
 
     def _laplacian_periodic(self, psi, out) -> None:
         """Apply the periodic Laplacian stencil."""
+        if self.dy is None:
+            out[:] = (self.xp.roll(psi, -1, axis=-1) - 2 * psi
+                      + self.xp.roll(psi, 1, axis=-1)) / (self.dx**2)
+            return
         out[:] = (
             self.xp.roll(psi, -1, axis=-2) - 2 * psi + self.xp.roll(psi, 1, axis=-2)
         ) / (self.dy**2) + (
@@ -59,6 +63,12 @@ class RK4FDMSolver(AbstractSolver):
 
     def _laplacian_closed_interval_neumann(self, psi, out) -> None:
         """Apply the closed-interval Neumann Laplacian stencil."""
+        if self.dy is None:
+            out[..., 1:-1] = (psi[..., 2:] - 2 * psi[..., 1:-1]
+                              + psi[..., :-2]) / (self.dx**2)
+            out[..., 0] = 2 * (psi[..., 1] - psi[..., 0]) / (self.dx**2)
+            out[..., -1] = 2 * (psi[..., -2] - psi[..., -1]) / (self.dx**2)
+            return
         out.fill(0)
 
         if self.ny > 2 and self.nx > 2:

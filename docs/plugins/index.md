@@ -27,7 +27,7 @@ component-specific contracts below.
 | Component | Decorator import | Selection field | Factory call |
 | --- | --- | --- | --- |
 | [Laser](lasers.md) | `polarism.laser.register_laser` | `cfg.laser.laser_type` | `LaserClass(laser_config, X, Y, precision)` |
-| [Potential](potentials.md) | `polarism.potential.register_potential` | `cfg.potential.potential_type` | `potential_fn(grid.X, grid.Y, potential_config)` |
+| [Potential](potentials.md) | `polarism.potential.register_potential` | `cfg.potential.potential_type` | `potential_fn(X, Y, potential_config)` |
 | [Reservoir](reservoirs.md) | `polarism.reservoir.register_reservoir` | `cfg.reservoir.reservoir_type` | `ReservoirClass(reservoir_config, physics, grid, precision)` |
 | [Solver](solvers.md) | `polarism.solver.register_solver` | `cfg.solver.method` | `SolverClass(config, grid)` |
 | [Grid](grids.md) | `polarism.grid.register_grid` | `cfg.grid.grid_type` | `GridClass(grid_config)` |
@@ -59,7 +59,7 @@ In `multiple` laser mode, the factory calls the same laser constructor once per 
 
 ## Array and parameter rules
 
-Use `compute_engine.xp` or an initialized `self.xp` so arrays stay on NumPy or CuPy as selected. `real_dtype(xp, precision)` and `complex_dtype(xp, precision)` in `polarism.config.dtype_utils` map `single` to float32/complex64 and `double` to float64/complex128. Fields use `(grid.ny, grid.nx)`; use that shape for pump, potential, reservoir, and wavefunction arrays. Avoid CPU transfers inside per-step methods on GPU runs.
+Use `compute_engine.xp` or an initialized `self.xp` so arrays stay on NumPy or CuPy as selected. `real_dtype(xp, precision)` and `complex_dtype(xp, precision)` in `polarism.config.dtype_utils` map `single` to float32/complex64 and `double` to float64/complex128. Spatial fields use `grid.shape`: `(nx,)` in 1D and `(ny, nx)` in 2D. Solvers and reservoirs use canonical `(B, 1, *grid.shape)` arrays. Potential and laser factories pass `Y = zeros_like(X)` in 1D. Avoid CPU transfers inside per-step methods on GPU runs.
 
 `LaserParameters`, `GridParameters`, and `ReservoirParameters` have an `extra` dictionary. In multiple-laser YAML, unknown keys are merged into each laser's `extra`, alongside top-level `laser.extra` and an explicit entry-level `extra` mapping. These free-form keys are not individual CLI flags. Other configuration blocks do not have `extra`; use their existing fields or a component's own Python setup.
 

@@ -180,8 +180,8 @@ class GpuAsyncHDF5Writer(AppendableHDF5Writer):
     field_specs : dict[str, np.dtype]
         Mapping of field name to dtype.  Complex dtypes allocate complex128
         device buffers; all others allocate float64 device buffers.
-    spatial_shape : tuple[int, int]
-        ``(ny, nx)`` — the 2-D shape of each field frame.
+    spatial_shape : tuple[int, ...]
+        ``grid.shape`` — the spatial shape of each field frame.
     flush_every : int
         Number of batch writes between explicit ``h5py`` file flushes.
     """
@@ -199,7 +199,6 @@ class GpuAsyncHDF5Writer(AppendableHDF5Writer):
         self._spatial_shape = spatial_shape
         self._flush_every = flush_every
 
-        ny, nx = spatial_shape
         self._h5 = h5py.File(filepath, "w")
         self._datasets: dict[str, h5py.Dataset] = {}
         self._total = 0
@@ -217,7 +216,7 @@ class GpuAsyncHDF5Writer(AppendableHDF5Writer):
         self._gpu: list[dict[str, Any]] = [{}, {}]
         for i in range(2):
             for nm, dtype in self._field_dtypes.items():
-                self._gpu[i][nm] = self.xp.zeros((batch_size, ny, nx), dtype=dtype)
+                self._gpu[i][nm] = self.xp.zeros((batch_size, *spatial_shape), dtype=dtype)
 
         self._host: dict[str, np.ndarray] = {}
         self._pinned = False
@@ -225,7 +224,7 @@ class GpuAsyncHDF5Writer(AppendableHDF5Writer):
             import cupy as cp
 
             for nm, dtype in self._host_dtypes.items():
-                buf = np.empty((batch_size, ny, nx), dtype=dtype)
+                buf = np.empty((batch_size, *spatial_shape), dtype=dtype)
                 cp.cuda.runtime.hostRegister(buf.ctypes.data, buf.nbytes, 0)
                 self._host[nm] = buf
             self._transfer_stream = cp.cuda.Stream(non_blocking=True)
@@ -237,7 +236,7 @@ class GpuAsyncHDF5Writer(AppendableHDF5Writer):
 
         if not self._pinned:
             for nm, dtype in self._host_dtypes.items():
-                self._host[nm] = np.empty((batch_size, ny, nx), dtype=dtype)
+                self._host[nm] = np.empty((batch_size, *spatial_shape), dtype=dtype)
 
         self._active = 0
         self._count = 0
@@ -387,8 +386,8 @@ def compute_batch_size(
     field_specs : dict[str, np.dtype]
         Mapping of field name to dtype — the same dict passed to
         :func:`create_hdf5_writer`.
-    spatial_shape : tuple[int, int]
-        ``(ny, nx)`` spatial grid dimensions.
+    spatial_shape : tuple[int, ...]
+        ``grid.shape`` spatial grid dimensions.
     reserved_gpu_gb : float
         GPU memory (in GiB) to leave untouched for the solver.
 
@@ -401,10 +400,9 @@ def compute_batch_size(
     if not hasattr(xp, "cuda"):
         return 500
 
-    ny, nx = spatial_shape
     free = xp.cuda.Device().mem_info[0]
     usable = max(0, free - int(reserved_gpu_gb * 1024**3))
-    frame_bytes = sum(np.dtype(dt).itemsize * ny * nx for dt in field_specs.values())
+    frame_bytes = sum(np.dtype(dt).itemsize * np.prod(spatial_shape) for dt in field_specs.values())
     if frame_bytes == 0:
         return 500
     batch = int(usable * 0.75) // (2 * frame_bytes)
@@ -432,8 +430,8 @@ def create_hdf5_writer(
     field_specs : dict[str, np.dtype]
         Mapping of field name to dtype.  Used by the GPU backend for device
         buffer pre-allocation; the CPU backend infers types on the fly.
-    spatial_shape : tuple[int, int]
-        ``(ny, nx)`` — used by the GPU backend for buffer pre-allocation.
+    spatial_shape : tuple[int, ...]
+        ``grid.shape`` — used by the GPU backend for buffer pre-allocation.
     flush_every : int
         Batches between explicit ``h5py`` file flushes.
 

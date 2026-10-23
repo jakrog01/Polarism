@@ -9,12 +9,13 @@ controller combines all selected lasers through `PumpField`.
 ## Contract
 
 `LaserFactory` calls `LaserClass(laser_config, X, Y, precision)` and expects an
-`AbstractLaser` subclass. `X` and `Y` are backend arrays of shape `(ny, nx)`.
+`AbstractLaser` subclass. `X` and `Y` are backend arrays of shape `grid.shape`.
+In 1D, `Y` is a zero array, so a 2D spatial profile is sampled at y = 0.
 
 | Name and signature | Caller and timing | Return or state | Status |
 | --- | --- | --- | --- |
-| `__init__(laser_config, X, Y, precision="double")` | Factory, once per laser | Call base init; cache a real `(ny, nx)` envelope | Required |
-| `_P_space(X, Y)` | `_finalize_spatial_envelope`, during init | Real spatial array of shape `(ny, nx)` | Abstract |
+| `__init__(laser_config, X, Y, precision="double")` | Factory, once per laser | Call base init; cache a real `grid.shape` envelope | Required |
+| `_P_space(X, Y)` | `_finalize_spatial_envelope`, during init | Real spatial array of shape `grid.shape` | Abstract |
 | `_amplitude(t)` | `power_coefficient`, on each pump sample | Scalar amplitude | Abstract |
 | `_P_time(t)` | `power_coefficient`, on each pump sample | Scalar time factor | Abstract |
 | `_finalize_spatial_envelope(X, Y)` | Subclass init, after parameters | Sets dtype-aware `_spatial_envelope` | Required call |
@@ -71,7 +72,7 @@ converting the field to NumPy inside `_P_space` or a per-step hook.
 
 - Call `_finalize_spatial_envelope` only after setting radius, width, or other
   fields used by `_P_space`.
-- Return `(ny, nx)`, not `(nx, ny)`, when the grid is rectangular.
+- Return `(nx,)` in 1D and `(ny, nx)` in 2D.
 - A custom `get_power` must update `self.P` if you want per-laser scalar output.
 - `extra` keys are Python fields or YAML entry keys, not individual CLI flags.
 
@@ -81,7 +82,7 @@ converting the field to NumPy inside `_P_space` or a per-step hook.
 cfg.laser.laser_type = "example-ring"
 cfg.laser.extra = {"ring_radius": 4.0}
 run = SimulationController(cfg)
-assert run.pump_field(0).shape == (cfg.grid.ny, cfg.grid.nx)
+assert run.pump_field(0).shape == run.grid.shape
 assert np.isfinite(run.pump_field(0)).all()
 ```
 

@@ -21,8 +21,9 @@ The controller is the right abstraction for running a simulation end-to-end. If 
 `set_initial_state(psi, reservoir_state=None, t=0.0)` starts from a supplied
 real-space field at a solver step boundary. A leading batch axis is accepted;
 the reservoir is reset to matching zero arrays if densities are omitted.
-Inputs use public `(ny, nx)` or `(B, ny, nx)` shapes; the controller converts
-them to canonical `(B, 1, ny, nx)` solver and reservoir fields.
+Inputs use public `grid.shape` or `(B, *S)` shapes; the controller converts
+them to canonical `(B, 1, *S)` solver and reservoir fields.
+`S` is `(nx,)` in 1D or `(ny, nx)` in 2D.
 
 `save_checkpoint(path)` writes the current step, time, full-precision field,
 authoritative spectral field when present, and reservoir arrays atomically to

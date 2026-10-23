@@ -4,13 +4,25 @@ from __future__ import annotations
 from typing import Any
 
 
-def real_laplacian(field: Any, xp: Any, dx: float, dy: float, grid_type: str) -> Any:
+def real_laplacian(field: Any, xp: Any, dx: float, dy: float | None, grid_type: str) -> Any:
     """Return the finite-difference Laplacian of a real reservoir field.
 
     Periodic grids wrap at the boundary.  Closed-interval grids use the same
     mirrored Neumann boundary convention as the finite-difference psi solvers.
     """
     inv_dx2 = 1.0 / (dx * dx)
+    if dy is None:
+        if grid_type == "periodic":
+            return (xp.roll(field, -1, axis=-1) - 2 * field
+                    + xp.roll(field, 1, axis=-1)) * inv_dx2
+        if grid_type != "closed-interval":
+            raise ValueError(f"Unknown grid_type for reservoir diffusion: {grid_type}")
+        out = xp.empty_like(field)
+        out[..., 1:-1] = (field[..., 2:] - 2 * field[..., 1:-1]
+                          + field[..., :-2]) * inv_dx2
+        out[..., 0] = 2 * (field[..., 1] - field[..., 0]) * inv_dx2
+        out[..., -1] = 2 * (field[..., -2] - field[..., -1]) * inv_dx2
+        return out
     inv_dy2 = 1.0 / (dy * dy)
 
     if grid_type == "periodic":

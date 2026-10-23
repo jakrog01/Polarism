@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
 
 
@@ -23,14 +23,14 @@ if TYPE_CHECKING:
 class RK4FDMFusedSolver(AbstractSolver):
 
     """Solve the model with fused finite-difference RK4."""
-    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None):
+    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None):
         """Set up the fused RK4 solver."""
         super().__init__(config)
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
+        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
         self.dx = grid.dx
-        self.dy = grid.dy
+        self.dy = grid.dy if grid.ndim == 2 else None
         self.nx = grid.nx
-        self.ny = grid.ny
+        self.ny = grid.ny if grid.ndim == 2 else None
         self.grid_type = grid.boundary
 
         self._hbar = self.batch_physics.get("hbar")
@@ -43,7 +43,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         self._dt = config.solver.dt
 
         self._inv_dx2 = 1.0 / (self.dx**2)
-        self._inv_dy2 = 1.0 / (self.dy**2)
+        self._inv_dy2 = 1.0 / (self.dy**2) if self.dy is not None else None
         self._kinetic_coeff = -(self._hbar**2) / (2.0 * self._m_eff)
         self._minus_i_over_hbar = -1j / self._hbar
         self._kinetic_relaxation_eta = self.batch_physics.get("kinetic_relaxation_eta")
@@ -119,6 +119,10 @@ class RK4FDMFusedSolver(AbstractSolver):
 
     def _laplacian_periodic(self, psi, out) -> None:
         """Apply the periodic Laplacian stencil."""
+        if self.dy is None:
+            out[:] = (self.xp.roll(psi, -1, axis=-1) - 2 * psi
+                      + self.xp.roll(psi, 1, axis=-1)) * self._inv_dx2
+            return
         inv_dx2 = self._inv_dx2
         inv_dy2 = self._inv_dy2
         xp = self.xp
@@ -130,6 +134,12 @@ class RK4FDMFusedSolver(AbstractSolver):
 
     def _laplacian_closed_interval_neumann(self, psi, out) -> None:
         """Apply the closed-interval Neumann Laplacian stencil."""
+        if self.dy is None:
+            out[..., 1:-1] = (psi[..., 2:] - 2 * psi[..., 1:-1]
+                              + psi[..., :-2]) * self._inv_dx2
+            out[..., 0] = 2 * (psi[..., 1] - psi[..., 0]) * self._inv_dx2
+            out[..., -1] = 2 * (psi[..., -2] - psi[..., -1]) * self._inv_dx2
+            return
         inv_dx2 = self._inv_dx2
         inv_dy2 = self._inv_dy2
         out.fill(0)

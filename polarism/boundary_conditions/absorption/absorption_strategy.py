@@ -40,10 +40,29 @@ class AbsorptionStrategy(ABC):
 
 
 def create_absorption_profile(
-    ny: int, nx: int, cfg_absorption: BoundaryConditionParameters
+    shape: tuple[int, ...], cfg_absorption: BoundaryConditionParameters
 ) -> Union[np.ndarray, cp.ndarray]:
     """Create absorption profile."""
     xp = compute_engine.xp
+    nx = shape[-1]
+    if len(shape) == 1:
+        if cfg_absorption.mask_width_percent <= 0:
+            return xp.zeros(shape)
+        width_x = min(int(nx / 2), max(1, int(nx * cfg_absorption.mask_width_percent)))
+        if width_x == 0:
+            return xp.zeros(shape)
+        ramp_base = xp.linspace(0, xp.pi / 2, width_x)
+        if cfg_absorption.profile_type == "sin2":
+            ramp = xp.sin(ramp_base) ** 2
+        elif cfg_absorption.profile_type == "parabolic":
+            ramp = (ramp_base * (2 / xp.pi)) ** 2
+        else:
+            raise ValueError("Unsupported profile type")
+        profile = xp.zeros(nx)
+        profile[:width_x] = ramp[::-1]
+        profile[-width_x:] = ramp
+        return profile
+    ny = shape[0]
 
     if cfg_absorption.mask_width_percent <= 0:
         return xp.zeros((ny, nx))

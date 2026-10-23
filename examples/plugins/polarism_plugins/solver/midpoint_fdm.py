@@ -17,8 +17,8 @@ class MidpointFDMSolver(AbstractSolver):
     def _laplacian(self, psi):
         xp = self.xp
         return (
-            (xp.roll(psi, 1, 0) - 2 * psi + xp.roll(psi, -1, 0)) / self.dy2
-            + (xp.roll(psi, 1, 1) - 2 * psi + xp.roll(psi, -1, 1)) / self.dx2
+            (xp.roll(psi, 1, -2) - 2 * psi + xp.roll(psi, -1, -2)) / self.dy2
+            + (xp.roll(psi, 1, -1) - 2 * psi + xp.roll(psi, -1, -1)) / self.dx2
         )
 
     def _rhs(self, psi, fields, potential, pump_field, reservoir):
@@ -36,10 +36,9 @@ class MidpointFDMSolver(AbstractSolver):
 
     def step(self, potential, pump, reservoir, boundary_condition, state):
         dt = self.config.solver.dt
-        psi0 = state.psi
+        psi0 = state.field
         fields0 = reservoir.get_state()
 
-        # Explicit midpoint: evaluate both coupled equations at t and t + dt/2.
         k1_psi, k1_fields = self._rhs(
             psi0, fields0, potential, pump(state.t), reservoir
         )
@@ -53,7 +52,7 @@ class MidpointFDMSolver(AbstractSolver):
         )
 
         psi_new = boundary_condition.after_step_action(psi0 + dt * k2_psi)
-        state.psi = psi_new.astype(psi0.dtype, copy=False)
+        state.field = psi_new.astype(psi0.dtype, copy=False)
         reservoir.set_state(tuple(
             field + dt * rate for field, rate in zip(fields0, k2_fields)
         ))

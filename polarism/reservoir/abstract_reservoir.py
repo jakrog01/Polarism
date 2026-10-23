@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Union
 
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
-from polarism.grid.simulation_grid_2d import SimulationGrid2D
+from polarism.grid.simulation_grid import SimulationGrid
 from polarism.results.result_node import ResultNode
 
 if TYPE_CHECKING:
@@ -30,7 +30,7 @@ class AbstractReservoir(ABC):
         self,
         reservoir_config: ReservoirParameters,
         physics: PhysicsConstants,
-        grid: SimulationGrid2D,
+        grid: SimulationGrid,
     ):
         """Set up the abstract reservoir."""
         raise NotImplementedError
@@ -57,12 +57,12 @@ class AbstractReservoir(ABC):
 
     @abstractmethod
     def get_state(self) -> tuple:
-        """Return canonical ``(B, C_res, ny, nx)`` state arrays."""
+        """Return canonical ``(B, C_res, *S)`` state arrays."""
         raise NotImplementedError
 
     @abstractmethod
     def set_state(self, state: tuple) -> None:
-        """Set canonical ``(B, C_res, ny, nx)`` state arrays."""
+        """Set canonical ``(B, C_res, *S)`` state arrays."""
         raise NotImplementedError
 
     @abstractmethod

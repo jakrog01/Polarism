@@ -36,8 +36,8 @@ class AbstractSolver(ABC):
         """Advance the fields from ``state.t`` to ``state.t + dt``.
 
         ``state.field``, ``state.field_k``, and reservoir state tuples use
-        ``(B, 1, ny, nx)``. Shared pump and potential arrays use ``(ny, nx)``;
-        member-stacked arrays use ``(B, 1, ny, nx)``. Evaluate ``pump(t)``
+        ``(B, 1, *S)``, where ``S`` is the spatial grid shape. Shared pump and potential arrays use ``grid.shape``;
+        member-stacked arrays use ``(B, 1, *S)``. Evaluate ``pump(t)``
         at integration stage times; the caller updates ``state.t`` afterward.
         """
         pass

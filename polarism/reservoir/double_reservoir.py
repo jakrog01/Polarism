@@ -7,7 +7,7 @@ from polarism.config.batch_physics import BatchPhysics
 from polarism.compute_engine import compute_engine
 from polarism.config.dtype_utils import real_dtype
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
-from polarism.grid.simulation_grid_2d import SimulationGrid2D
+from polarism.grid.simulation_grid import SimulationGrid
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
 from polarism.reservoir.laplacian import real_laplacian
 from polarism.reservoir.reservoir_registry import register_reservoir
@@ -40,14 +40,14 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         self,
         reservoir_config: ReservoirParameters,
         physics: PhysicsConstants,
-        grid: SimulationGrid2D,
+        grid: SimulationGrid,
         precision: str = "double",
         batch_physics=None,
     ):
         """Set up the double reservoir."""
         self.xp = compute_engine.xp
         self.config = reservoir_config
-        self.batch_physics = BatchPhysics(physics, batch_physics, self.xp, precision)
+        self.batch_physics = BatchPhysics(physics, batch_physics, self.xp, precision, ndim=grid.ndim)
         self.R = self.batch_physics.get("R")
         self.gamma_I = self.batch_physics.get("gamma_I")
         self.gamma_A = self.batch_physics.get("gamma_A")
@@ -56,13 +56,13 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         self.reservoir_diffusion_I = self.batch_physics.get("reservoir_diffusion_I")
         self.reservoir_diffusion_A = self.batch_physics.get("reservoir_diffusion_A")
         self.dx = grid.dx
-        self.dy = grid.dy
+        self.dy = grid.dy if grid.ndim == 2 else None
         self.grid_type = grid.boundary
-        self._spatial_shape = (grid.ny, grid.nx)
+        self._spatial_shape = grid.shape
         self._batched = False
         rdtype = real_dtype(self.xp, precision)
-        self.nI = self.xp.zeros((1, 1, grid.ny, grid.nx), dtype=rdtype)
-        self.nA = self.xp.zeros((1, 1, grid.ny, grid.nx), dtype=rdtype)
+        self.nI = self.xp.zeros((1, 1, *grid.shape), dtype=rdtype)
+        self.nA = self.xp.zeros((1, 1, *grid.shape), dtype=rdtype)
 
     def reset(self, batch_size: int | None = None) -> None:
         """Reset zero density fields, optionally with a leading batch axis."""

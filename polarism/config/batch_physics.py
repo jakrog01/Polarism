@@ -17,10 +17,11 @@ _FLOAT_FIELDS = frozenset(
 class BatchPhysics:
     """Hold one-dimensional host values and broadcast backend values."""
 
-    def __init__(self, physics, values, xp, precision="double"):
+    def __init__(self, physics, values, xp, precision="double", ndim=2):
         if isinstance(values, BatchPhysics):
             self.host = values.host
             self.size = values.size
+            ndim = values.ndim
         else:
             self.host = {}
             self.size = None
@@ -39,8 +40,9 @@ class BatchPhysics:
                 self.host[name] = array
         self.physics = physics
         self.xp = xp
+        self.ndim = ndim
         dtype = np.float32 if precision == "single" else np.float64
-        self.arrays = {name: xp.asarray(value, dtype=dtype).reshape(-1, 1, 1, 1)
+        self.arrays = {name: xp.asarray(value, dtype=dtype).reshape((-1, 1, *(1,) * ndim))
                        for name, value in self.host.items()}
 
     def get(self, name):
@@ -53,7 +55,7 @@ class BatchPhysics:
 
     def check(self, field):
         """Require a canonical scalar field with the matching batch axis."""
-        if field.ndim != 4 or field.shape[1] != 1:
+        if field.ndim != self.ndim + 2 or field.shape[1] != 1:
             raise ValueError(f"batch_physics requires canonical field shape; got {field.shape}")
         if self.size is None:
             return

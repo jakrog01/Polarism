@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from polarism.config.simulation_parameters import BoundaryConditionParameters
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
 
 
 class BoundaryCondition:
@@ -25,7 +25,7 @@ class BoundaryCondition:
 
     def __init__(
         self,
-        grid: SimulationGrid2D,
+        grid: SimulationGrid,
         boundary_conditions_config: BoundaryConditionParameters,
         physics_constants: PhysicsConstants,
         dt: float,
@@ -37,7 +37,7 @@ class BoundaryCondition:
         )
         self.absorption.set_time_step(dt)
         if batch_physics:
-            physics = BatchPhysics(physics_constants, batch_physics, compute_engine.xp)
+            physics = BatchPhysics(physics_constants, batch_physics, compute_engine.xp, ndim=grid.ndim)
             if boundary_conditions_config.absorption == "cap" and "hbar" in physics.host:
                 self.absorption.potential_dist = (
                     -0.5j * physics.get("hbar") * boundary_conditions_config.strength

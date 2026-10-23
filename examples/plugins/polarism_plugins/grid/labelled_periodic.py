@@ -1,9 +1,9 @@
 from polarism.grid import register_grid
-from polarism.grid.periodic_simulation_grid_2d import PeriodicSimulationGrid2D
+from polarism.grid.periodic_grid import PeriodicGrid
 
 
 @register_grid("example-labelled-periodic")
-class LabelledPeriodicGrid(PeriodicSimulationGrid2D):
+class LabelledPeriodicGrid(PeriodicGrid):
     boundary = "periodic"
 
     def __init__(self, cfg):

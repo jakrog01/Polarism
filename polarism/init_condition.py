@@ -8,12 +8,10 @@ import numpy as np
 
 def make_initial_psi(
     xp,
-    ny: int,
-    nx: int,
+    shape: tuple[int, ...],
+    spacing: tuple[float, ...],
     eps: float,
     mode: str = "legacy_positive_uniform",
-    dx: float = 1.0,
-    dy: float = 1.0,
     k_cutoff_um: Optional[float] = None,
     seed: Optional[int] = None,
     cdtype=None,
@@ -25,8 +23,8 @@ def make_initial_psi(
     ----------
     xp : module
         Compute backend (numpy or cupy).
-    ny, nx : int
-        Grid dimensions (rows, columns).
+    shape : tuple[int, ...]
+        Spatial shape in array axis order.
     eps : float
         Target RMS amplitude of the initial wavefunction.
     mode : str
@@ -43,8 +41,8 @@ def make_initial_psi(
             Zero-mean complex Gaussian low-pass filtered in k-space to
             ``|k| <= k_cutoff_um``, then mean-subtracted and RMS-renormalised
             to *eps*.  Requires *k_cutoff_um*.
-    dx, dy : float
-        Grid spacings in micrometres (used for the k-space filter).
+    spacing : tuple[float, ...]
+        Spatial spacing in array axis order.
     k_cutoff_um : float or None
         Low-pass cutoff ``|k|`` in rad/um.  Required when
         ``mode='filtered_complex_gaussian'``; ignored otherwise.
@@ -59,7 +57,7 @@ def make_initial_psi(
 
     Returns
     -------
-    psi : array, shape (ny, nx), dtype cdtype
+    psi : array, shape ``shape``, dtype cdtype
     """
     if cdtype is None:
         cdtype = xp.complex128
@@ -70,14 +68,14 @@ def make_initial_psi(
 
     if mode == "legacy_positive_uniform":
         psi = eps * (
-            xp.asarray(rng.random((ny, nx), dtype=rdtype))
-            + 1j * xp.asarray(rng.random((ny, nx), dtype=rdtype))
+            xp.asarray(rng.random(shape, dtype=rdtype))
+            + 1j * xp.asarray(rng.random(shape, dtype=rdtype))
         )
         return psi.astype(cdtype)
 
     if mode == "complex_gaussian_zero_mean":
-        re = xp.asarray(rng.standard_normal((ny, nx)).astype(rdtype))
-        im = xp.asarray(rng.standard_normal((ny, nx)).astype(rdtype))
+        re = xp.asarray(rng.standard_normal(shape).astype(rdtype))
+        im = xp.asarray(rng.standard_normal(shape).astype(rdtype))
         psi = re + 1j * im
         psi -= xp.mean(psi)
         rms = float(xp.sqrt(xp.mean(xp.abs(psi) ** 2)))
@@ -90,24 +88,28 @@ def make_initial_psi(
             raise ValueError(
                 "init_mode='filtered_complex_gaussian' requires init_k_cutoff_um to be set."
             )
-        re = xp.asarray(rng.standard_normal((ny, nx)).astype(rdtype))
-        im = xp.asarray(rng.standard_normal((ny, nx)).astype(rdtype))
+        re = xp.asarray(rng.standard_normal(shape).astype(rdtype))
+        im = xp.asarray(rng.standard_normal(shape).astype(rdtype))
         psi = (re + 1j * im).astype(xp.complex128)
 
-        kx = 2.0 * xp.pi * xp.fft.fftfreq(nx, d=dx)
-        ky = 2.0 * xp.pi * xp.fft.fftfreq(ny, d=dy)
-        KX, KY = xp.meshgrid(kx, ky)
-        k_r = xp.sqrt(KX ** 2 + KY ** 2)
+        frequencies = [2.0 * xp.pi * xp.fft.fftfreq(n, d=d)
+                       for n, d in zip(shape, spacing)]
+        if len(shape) == 2:
+            ky, kx = frequencies
+            KX, KY = xp.meshgrid(kx, ky)
+            k_r = xp.sqrt(KX ** 2 + KY ** 2)
+        else:
+            k_r = xp.abs(frequencies[0])
 
-        psi_k = xp.fft.fft2(psi)
+        psi_k = xp.fft.fft2(psi) if len(shape) == 2 else xp.fft.fft(psi)
         n_modes_inside = int(xp.sum(k_r <= k_cutoff_um))
         if n_modes_inside <= 1:
             raise ValueError(
                 f"init_k_cutoff_um={k_cutoff_um} admits only the DC bin on this grid "
-                f"(dx={dx}, dy={dy}). Increase init_k_cutoff_um or use a finer grid."
+                f"(spacing={spacing}). Increase init_k_cutoff_um or use a finer grid."
             )
         psi_k = psi_k * (k_r <= k_cutoff_um)
-        psi = xp.fft.ifft2(psi_k)
+        psi = xp.fft.ifft2(psi_k) if len(shape) == 2 else xp.fft.ifft(psi_k)
 
         psi -= xp.mean(psi)
         rms = float(xp.sqrt(xp.mean(xp.abs(psi) ** 2)))

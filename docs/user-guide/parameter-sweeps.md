@@ -97,7 +97,8 @@ A saved sweep gets one timestamped directory under `result.output_directory`.
 Its `sweep.json` records member parameters, group and batch assignments, and
 configuration. Each `batch_NNN/` directory holds normal result files and, when
 enabled, its own `checkpoint.h5`. Dynamic field datasets have shape
-`(frames, members, ny, nx)` and scalar datasets `(frames, members)`. Identical
+`(frames, members, *S)` and scalar datasets `(frames, members)`, where `S` is
+`(nx,)` in 1D or `(ny, nx)` in 2D. Identical
 static fields may be stored once without a member axis.
 
 ```python

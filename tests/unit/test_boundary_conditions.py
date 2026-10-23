@@ -16,9 +16,9 @@ TOL_MACHINE_F64 = 1e-12  # Exact algebraic identity in float64.
 def test_absorption_profiles_are_bounded_and_distinct() -> None:
     compute_engine.xp = np
     base = BoundaryConditionParameters(absorption="mask", mask_width_percent=0.2, profile_type="sin2")
-    sin2 = create_absorption_profile(20, 20, base)
-    parabolic = create_absorption_profile(20, 20, BoundaryConditionParameters(absorption="mask", mask_width_percent=0.2, profile_type="parabolic"))
-    wider = create_absorption_profile(20, 20, BoundaryConditionParameters(absorption="mask", mask_width_percent=0.4, profile_type="sin2"))
+    sin2 = create_absorption_profile((20, 20), base)
+    parabolic = create_absorption_profile((20, 20), BoundaryConditionParameters(absorption="mask", mask_width_percent=0.2, profile_type="parabolic"))
+    wider = create_absorption_profile((20, 20), BoundaryConditionParameters(absorption="mask", mask_width_percent=0.4, profile_type="sin2"))
     assert np.all((0 <= sin2) & (sin2 <= 1))
     assert sin2[10, 10] == 0.0 and sin2[0, 0] == 1.0
     assert np.count_nonzero(wider) >= np.count_nonzero(sin2)
@@ -93,7 +93,7 @@ def test_mask_requires_time_step_and_keeps_field_dtype() -> None:
 def test_unknown_absorption_configuration_errors() -> None:
     compute_engine.xp = np
     with pytest.raises(ValueError, match="Unsupported profile type"):
-        create_absorption_profile(8, 8, BoundaryConditionParameters(absorption="mask", profile_type="bad"))
+        create_absorption_profile((8, 8), BoundaryConditionParameters(absorption="mask", profile_type="bad"))
     with pytest.raises(ValueError, match="Available") as exc:
         create_absorption_strategy(grid(), BoundaryConditionParameters(absorption="bad"), PhysicsConstants())
     assert str(sorted(available_absorptions)) in str(exc.value)

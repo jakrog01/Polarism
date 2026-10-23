@@ -25,7 +25,7 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - SimulationController
         - Sweep
         - SweepResults
-        - SimulationGrid2D
+        - SimulationGrid
         - SimulationState
         - Results2D
         - ResultScalar

@@ -1,4 +1,4 @@
-"""Closed-interval 2D simulation grids."""
+"""Closed-interval simulation grids."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -14,8 +14,8 @@ if TYPE_CHECKING:
 
 
 @register_grid("closed-interval")
-class ClosedIntervalSimulationGrid2D:
-    """Store a closed-interval 2D simulation grid."""
+class ClosedIntervalGrid:
+    """Store a closed-interval one- or two-dimensional simulation grid."""
     boundary = "closed-interval"
     nx: int
     ny: int
@@ -34,21 +34,36 @@ class ClosedIntervalSimulationGrid2D:
 
     def __init__(self, cfg: GridParameters):
         """Set up the closed interval simulation grid 2 d."""
-        if cfg.nx < 2 or cfg.ny < 2:
+        if cfg.nx < 2 or (cfg.ndim == 2 and cfg.ny < 2):
             raise ValueError(
-                "ClosedIntervalSimulationGrid2D requires nx >= 2 and ny >= 2"
+                "ClosedIntervalGrid requires nx >= 2" if cfg.ndim == 1
+                else "ClosedIntervalGrid requires nx >= 2 and ny >= 2 in 2D"
             )
 
         xp = compute_engine.xp
 
+        self.ndim = cfg.ndim
         self.nx = cfg.nx
-        self.ny = cfg.ny
         self.lx = cfg.lx
-        self.ly = cfg.ly
         self.grid_type = "closed-interval"
 
         self.dx = self.lx / (self.nx - 1)
+        if self.ndim == 1:
+            self.shape = (self.nx,)
+            self.spacing = (self.dx,)
+            self.lengths = (self.lx,)
+            self.X = xp.linspace(-self.lx / 2, self.lx / 2, self.nx, dtype=xp.float64)
+            self.kx = 2 * xp.pi * xp.fft.fftfreq(self.nx, d=self.dx)
+            self.KX = self.kx
+            self.k_squared = self.KX**2
+            return
+
+        self.ny = cfg.ny
+        self.ly = cfg.ly
         self.dy = self.ly / (self.ny - 1)
+        self.shape = (self.ny, self.nx)
+        self.spacing = (self.dy, self.dx)
+        self.lengths = (self.ly, self.lx)
 
         x = xp.linspace(-self.lx / 2, self.lx / 2, self.nx, dtype=xp.float64)
         y = xp.linspace(-self.ly / 2, self.ly / 2, self.ny, dtype=xp.float64)

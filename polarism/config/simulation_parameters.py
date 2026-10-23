@@ -14,6 +14,7 @@ class GridParameters:
     lx: float = 100.0
     ly: float = 100.0
     grid_type: str = "periodic"
+    ndim: int = 2
     extra: dict[str, Any] = field(default_factory=dict)
 
 

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
 
 # The direct phi formulas lose about eps/|z|**2 to cancellation, so small |z|
@@ -29,10 +29,12 @@ _PHI_TAYLOR_TERMS = 10
 @register_solver("etd-rk2")
 class ETDRK2Solver(AbstractSolver):
     """Solve the model with ETD-RK2."""
-    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None):
+    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None):
         """Set up the etdrk 2 solver."""
         super().__init__(config)
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
+        self._fft = self.xp.fft.fft if grid.ndim == 1 else self.xp.fft.fft2
+        self._ifft = self.xp.fft.ifft if grid.ndim == 1 else self.xp.fft.ifft2
+        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
         dt = self.config.solver.dt
         hbar = self.batch_physics.get("hbar")
         m_eff = self.batch_physics.get("m_eff")
@@ -114,13 +116,13 @@ class ETDRK2Solver(AbstractSolver):
         nR = reservoir.get_active_density(res_state)
         nI = reservoir.get_inactive_density(res_state)
 
-        psi_k = self.xp.fft.fft2(state.field)
+        psi_k = self._fft(state.field)
 
         N_n = self._nonlinear_rhs(state.field, nR, nI, potential)
-        N_n_k = self.xp.fft.fft2(N_n)
+        N_n_k = self._fft(N_n)
 
         a_k = self._exp_L * psi_k + self._phi1 * N_n_k * dt
-        a = self.xp.fft.ifft2(a_k)
+        a = self._ifft(a_k)
 
         psi_mid = (state.field + a) / 2
         reservoir.step(dt, psi_mid, evaluate_pump(pump, state.t + 0.5 * dt))
@@ -129,9 +131,9 @@ class ETDRK2Solver(AbstractSolver):
         nI_new = reservoir.get_inactive_density(res_new)
 
         N_a = self._nonlinear_rhs(a, nR_new, nI_new, potential)
-        N_a_k = self.xp.fft.fft2(N_a)
+        N_a_k = self._fft(N_a)
 
         psi_new_k = a_k + self._phi2 * (N_a_k - N_n_k) * dt
-        state.field = self.xp.fft.ifft2(psi_new_k)
+        state.field = self._ifft(psi_new_k)
 
         state.field = boundary_condition.after_step_action(state.field)

@@ -18,11 +18,12 @@ The full runtime configuration is held in `polarism.config.simulation_parameters
 
 ## Grid configuration
 
-The solver currently targets 2-D grids. The main controls are:
+The solver supports 1D and 2D grids. The main controls for a 2D run are:
 
 ```python
 cfg.grid.nx = 256
 cfg.grid.ny = 256
+cfg.grid.ndim = 2
 cfg.grid.lx = 100.0
 cfg.grid.ly = 100.0
 cfg.grid.grid_type = "periodic"
@@ -34,6 +35,19 @@ Supported `grid_type` values:
 - `closed-interval`
 
 Use `periodic` for FFT-based solvers and clean spectral behavior. Use `closed-interval` when you need finite-domain behavior, but prefer FDM-family solvers for the best agreement on that grid type.
+
+### One-dimensional runs
+
+Set `cfg.grid.ndim = 1`, then choose `nx` and `lx`. The `ny` and `ly` settings are ignored. The resulting grid has `shape == (nx,)`, `spacing == (dx,)`, and no y-axis attributes. Public fields have shape `(nx,)` or `(B, nx)` for a batch; solvers and reservoirs use `(B, 1, nx)` internally.
+
+```python
+cfg.grid.ndim = 1
+cfg.grid.nx = 512
+cfg.grid.lx = 80.0
+cfg.grid.grid_type = "periodic"
+```
+
+Every built-in solver supports 1D on its supported boundary type. The `isotropic-9pt` CUDA Laplacian is invalid in 1D. Live visualization and animation currently require 2D; saved HDF5 and NPY fields can be used to plot a 1D line. Potential and laser functions still receive `(X, Y)`; in 1D, `Y` is a zero array, so a 2D profile is sampled at y = 0.
 
 ## Physics constants
 

@@ -10,10 +10,10 @@ TOL_MACHINE_F64 = 1e-12  # Exact algebraic identity in float64.
 
 def test_gaussian_initialisation_invariants_and_filter() -> None:
     eps = 1e-3
-    psi = make_initial_psi(np, 64, 64, eps, mode="complex_gaussian_zero_mean", seed=3)
+    psi = make_initial_psi(np, (64, 64), (1.0, 1.0), eps, mode="complex_gaussian_zero_mean", seed=3)
     assert np.isclose(np.sqrt(np.mean(np.abs(psi) ** 2)), eps, rtol=TOL_MACHINE_F64)
     assert abs(np.mean(psi)) < TOL_MACHINE_F64
-    filtered = make_initial_psi(np, 64, 64, eps, mode="filtered_complex_gaussian", dx=0.5, dy=0.5, k_cutoff_um=1.0, seed=3)
+    filtered = make_initial_psi(np, (64, 64), (0.5, 0.5), eps, mode="filtered_complex_gaussian", k_cutoff_um=1.0, seed=3)
     k = 2 * np.pi * np.fft.fftfreq(64, d=0.5)
     mask = np.sqrt(np.meshgrid(k, k)[0] ** 2 + np.meshgrid(k, k)[1] ** 2) > 1.0
     assert np.isclose(np.sqrt(np.mean(np.abs(filtered) ** 2)), eps, rtol=TOL_MACHINE_F64)
@@ -23,27 +23,29 @@ def test_gaussian_initialisation_invariants_and_filter() -> None:
 
 def test_legacy_and_seed_contracts() -> None:
     eps = 1e-3
-    legacy = make_initial_psi(np, 256, 256, eps, seed=7)
+    legacy = make_initial_psi(np, (256, 256), (1.0, 1.0), eps, seed=7)
     assert abs(legacy.real.mean() - eps / 2) < eps / 50
     assert abs(legacy.imag.mean() - eps / 2) < eps / 50
     assert abs(legacy.mean()) > eps / 10 and not np.isclose(np.sqrt(np.mean(np.abs(legacy) ** 2)), eps)
-    first = make_initial_psi(np, 16, 16, eps, mode="complex_gaussian_zero_mean", seed=9)
-    assert np.array_equal(first, make_initial_psi(np, 16, 16, eps, mode="complex_gaussian_zero_mean", seed=9))
-    assert not np.array_equal(first, make_initial_psi(np, 16, 16, eps, mode="complex_gaussian_zero_mean", seed=10))
+    first = make_initial_psi(np, (16, 16), (1.0, 1.0), eps, mode="complex_gaussian_zero_mean", seed=9)
+    assert np.array_equal(first, make_initial_psi(np, (16, 16), (1.0, 1.0), eps, mode="complex_gaussian_zero_mean", seed=9))
+    assert not np.array_equal(first, make_initial_psi(np, (16, 16), (1.0, 1.0), eps, mode="complex_gaussian_zero_mean", seed=10))
 
 
 def test_invalid_initialisation_modes() -> None:
     with pytest.raises(ValueError, match="DC bin"):
-        make_initial_psi(np, 16, 16, 1e-3, mode="filtered_complex_gaussian", dx=1.0, dy=1.0, k_cutoff_um=0.1, seed=1)
+        make_initial_psi(np, (16, 16), (1.0, 1.0), 1e-3, mode="filtered_complex_gaussian", k_cutoff_um=0.1, seed=1)
     with pytest.raises(ValueError, match="legacy_positive_uniform"):
-        make_initial_psi(np, 8, 8, 1e-3, mode="bad", seed=1)
+        make_initial_psi(np, (8, 8), (1.0, 1.0), 1e-3, mode="bad", seed=1)
 
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("mode", ["legacy_positive_uniform", "complex_gaussian_zero_mean", "filtered_complex_gaussian"])
-def test_same_seed_gives_same_noise_on_cpu_and_gpu(mode) -> None:
+def test_same_seed_gives_same_noise_on_cpu_and_gpu(mode, use_gpu) -> None:
+    if not use_gpu:
+        pytest.skip("requires --use-gpu")
     cp = pytest.importorskip("cupy")
-    kwargs = dict(mode=mode, dx=0.5, dy=0.5, k_cutoff_um=2.0, seed=42)
-    cpu = make_initial_psi(np, 64, 48, 1e-3, **kwargs)
-    gpu = cp.asnumpy(make_initial_psi(cp, 64, 48, 1e-3, **kwargs))
+    kwargs = dict(mode=mode, k_cutoff_um=2.0, seed=42)
+    cpu = make_initial_psi(np, (64, 48), (1.0, 1.0), 1e-3, **kwargs)
+    gpu = cp.asnumpy(make_initial_psi(cp, (64, 48), (1.0, 1.0), 1e-3, **kwargs))
     np.testing.assert_allclose(gpu, cpu, rtol=0, atol=1e-15)

@@ -24,7 +24,7 @@ from polarism.results import (
 )
 from polarism.simulation_controller import SimulationController
 from polarism.sweep import Sweep
-from polarism.grid.simulation_grid_2d import SimulationGrid2D
+from polarism.grid.simulation_grid import SimulationGrid
 from polarism.simulation_state import SimulationState
 from polarism.solver import AbstractSolver, create_solver
 
@@ -48,7 +48,7 @@ __all__ = [
     "ResultProvider",
     "SimulationController",
     "Sweep",
-    "SimulationGrid2D",
+    "SimulationGrid",
     "SimulationState",
     "Results2D",
     "ResultScalar",

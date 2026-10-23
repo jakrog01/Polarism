@@ -14,8 +14,10 @@ class SlowSingleReservoir(AbstractReservoir):
         self.gamma_r = physics.gamma_R * reservoir_config.extra.get("decay_factor", 1.0)
         self.R = physics.R
         self.diffusion = physics.reservoir_diffusion_R
-        self.dx, self.dy, self.boundary = grid.dx, grid.dy, grid.boundary
-        self.nR = self.xp.zeros((grid.ny, grid.nx), dtype=real_dtype(self.xp, precision))
+        self.dx = grid.dx
+        self.dy = grid.dy if grid.ndim == 2 else None
+        self.boundary = grid.boundary
+        self.nR = self.xp.zeros((1, 1, *grid.shape), dtype=real_dtype(self.xp, precision))
 
     def get_state(self):
         return (self.nR,)
@@ -24,7 +26,7 @@ class SlowSingleReservoir(AbstractReservoir):
         self.nR = self.xp.maximum(state[0], 0).astype(self.nR.dtype, copy=False)
 
     def get_reservoir_density(self):
-        return self.nR
+        return self.nR[0, 0]
 
     def get_derivatives(self, psi, pump, state, rho=None):
         density = state[0]
@@ -45,5 +47,4 @@ class SlowSingleReservoir(AbstractReservoir):
         self.set_state((fields0[0] + dt * k2,))
 
     def make_result_nodes(self):
-        # An empty list is valid when this example needs no reservoir outputs.
         return []

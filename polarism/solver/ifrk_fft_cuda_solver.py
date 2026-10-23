@@ -16,7 +16,7 @@ from polarism.solver.tableaus import TABLEAUS
 if TYPE_CHECKING:
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
 
 
@@ -24,9 +24,12 @@ if TYPE_CHECKING:
 class IFRKFFTCudaSolver(AbstractSolver):
     """Stage-coupled spectral Lawson RK with a CPU and plugin-compatible path."""
 
-    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None) -> None:
+    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None) -> None:
         super().__init__(config)
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
+        self._ndim = grid.ndim
+        self._fft = self.xp.fft.fft if grid.ndim == 1 else self.xp.fft.fft2
+        self._ifft = self.xp.fft.ifft if grid.ndim == 1 else self.xp.fft.ifft2
+        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
         if grid.boundary != "periodic":
             raise ValueError(
                 f"{config.solver.method} requires grid_type='periodic', got '{grid.boundary}'. "
@@ -78,8 +81,8 @@ class IFRKFFTCudaSolver(AbstractSolver):
         rhs = (-1j / self._hbar) * eff_energy * psi + gain_loss * psi
         if self.batch_physics.any_nonzero("kinetic_relaxation_eta"):
             if psi_k is None:
-                psi_k = xp.fft.fft2(psi, axes=(-2, -1))
-            lap_psi = xp.fft.ifft2(self._minus_k_squared * psi_k, axes=(-2, -1))
+                psi_k = self._fft(psi, **({"axis": -1} if self._ndim == 1 else {"axes": (-2, -1)}))
+            lap_psi = self._ifft(self._minus_k_squared * psi_k, **({"axis": -1} if self._ndim == 1 else {"axes": (-2, -1)}))
             rhs = rhs + self._eta * n_active * self._hbar_over_2m * lap_psi
         return rhs.astype(self._complex_dtype, copy=False)
 
@@ -94,7 +97,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
         psi0_k = state.field_k
         psi0 = state.field if psi0_k is None else None
         if psi0_k is None:
-            psi0_k = xp.fft.fft2(psi0, axes=(-2, -1)).astype(self._complex_dtype, copy=False)
+            psi0_k = self._fft(psi0, **({"axis": -1} if self._ndim == 1 else {"axes": (-2, -1)})).astype(self._complex_dtype, copy=False)
         res0 = reservoir.get_state()
         pump_at = {}
         f = []
@@ -110,7 +113,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
                     if aij:
                         psi_i_k += self._scalar(h * aij) * self._phase(ci - self._c[j], h) * f[j]
                 psi_i_k = psi_i_k.astype(self._complex_dtype, copy=False)
-                psi_i = xp.fft.ifft2(psi_i_k, axes=(-2, -1)).astype(self._complex_dtype, copy=False)
+                psi_i = self._ifft(psi_i_k, **({"axis": -1} if self._ndim == 1 else {"axes": (-2, -1)})).astype(self._complex_dtype, copy=False)
             res_i = []
             for field, r0 in enumerate(res0):
                 value = r0.copy()
@@ -124,7 +127,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
             if ci not in pump_at:
                 pump_at[ci] = evaluate_pump(pump, state.t + ci * h)
             rhs = self._rhs_psi(psi_i, res_i, potential, reservoir, rho, psi_i_k)
-            f.append(xp.fft.fft2(rhs, axes=(-2, -1)).astype(self._complex_dtype, copy=False))
+            f.append(self._fft(rhs, **({"axis": -1} if self._ndim == 1 else {"axes": (-2, -1)})).astype(self._complex_dtype, copy=False))
             derivatives.append(reservoir.get_derivatives(psi_i, pump_at[ci], res_i, rho))
         psi_new_k = self._phase(1.0, h) * psi0_k
         for j, bj in enumerate(self._b):
@@ -136,9 +139,9 @@ class IFRKFFTCudaSolver(AbstractSolver):
             state.field_k = psi_new_k
         else:
             state.field = boundary_condition.after_step_action(
-                xp.fft.ifft2(psi_new_k, axes=(-2, -1)).astype(self._complex_dtype, copy=False)
+                self._ifft(psi_new_k, **({"axis": -1} if self._ndim == 1 else {"axes": (-2, -1)})).astype(self._complex_dtype, copy=False)
             )
-            state.field_k = xp.fft.fft2(state.field, axes=(-2, -1)).astype(self._complex_dtype, copy=False)
+            state.field_k = self._fft(state.field, **({"axis": -1} if self._ndim == 1 else {"axes": (-2, -1)})).astype(self._complex_dtype, copy=False)
         res_new = []
         for field, r0 in enumerate(res0):
             value = r0.copy()

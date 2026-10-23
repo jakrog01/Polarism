@@ -1,4 +1,4 @@
-"""Periodic 2D simulation grids."""
+"""Periodic simulation grids."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
@@ -14,8 +14,8 @@ if TYPE_CHECKING:
 
 
 @register_grid("periodic")
-class PeriodicSimulationGrid2D:
-    """Store a periodic 2D simulation grid."""
+class PeriodicGrid:
+    """Store a periodic one- or two-dimensional simulation grid."""
     boundary = "periodic"
     nx: int
     ny: int
@@ -33,17 +33,31 @@ class PeriodicSimulationGrid2D:
     k_squared: Union["np.ndarray", "cp.ndarray"]
 
     def __init__(self, cfg: GridParameters):
-        """Set up the periodic simulation grid 2 d."""
+        """Set up coordinates and Fourier frequencies."""
         xp = compute_engine.xp
 
+        self.ndim = cfg.ndim
         self.nx = cfg.nx
-        self.ny = cfg.ny
         self.lx = cfg.lx
-        self.ly = cfg.ly
         self.grid_type = "periodic"
 
         self.dx = self.lx / self.nx
+        if self.ndim == 1:
+            self.shape = (self.nx,)
+            self.spacing = (self.dx,)
+            self.lengths = (self.lx,)
+            self.X = (xp.arange(self.nx, dtype=xp.float64) - (self.nx - 1) * 0.5) * self.dx
+            self.kx = 2 * xp.pi * xp.fft.fftfreq(self.nx, d=self.dx)
+            self.KX = self.kx
+            self.k_squared = self.KX**2
+            return
+
+        self.ny = cfg.ny
+        self.ly = cfg.ly
         self.dy = self.ly / self.ny
+        self.shape = (self.ny, self.nx)
+        self.spacing = (self.dy, self.dx)
+        self.lengths = (self.ly, self.lx)
 
         x = (xp.arange(self.nx, dtype=xp.float64) - (self.nx - 1) * 0.5) * self.dx
         y = (xp.arange(self.ny, dtype=xp.float64) - (self.ny - 1) * 0.5) * self.dy

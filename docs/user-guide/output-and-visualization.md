@@ -108,14 +108,16 @@ The HDF5 layout (`format_version = 2`) is:
 | Path | Content |
 | --- | --- |
 | `time` | frame times in ps |
-| `fields/<name>` | field frames, shape `(frames, ny, nx)` |
+| `fields/<name>` | field frames, shape `(frames, *S)` |
 | `scalars/<name>` | scalar series |
 | `scalar_groups/<group>/<label>` | grouped scalar series |
 | `static/<name>` | time-independent fields |
-| `grid/x`, `grid/y` | 1-D grid coordinates in µm |
+| `grid/x` and, in 2D, `grid/y` | spatial grid coordinates in µm |
 | `config` | attribute `json` with the full configuration |
 
 Datasets carry `label` and, where known, `units` attributes.
+In 1D, spatial fields have shape `(frames, nx)` and HDF5 stores `grid/x` without
+`grid/y`. Live visualization and animation are currently available only in 2D.
 
 ## Online animation
 

@@ -5,6 +5,7 @@ from itertools import product
 from dataclasses import asdict
 from copy import deepcopy
 import json
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -161,7 +162,7 @@ class Sweep:
         else:
             bytes_per_member = max(measured, sum(_array_bytes(item) for item in
                                    (probe.solver, probe.state, probe.reservoir)))
-            bytes_per_member += probe.grid.nx * probe.grid.ny * (32 if cfg.solver.precision == "double" else 16)
+            bytes_per_member += math.prod(probe.grid.shape) * (32 if cfg.solver.precision == "double" else 16)
         del probe
         limit = min(count, max(1, int(free * settings.memory_fraction // max(1, bytes_per_member))))
         if settings.max_batch is not None:
@@ -173,7 +174,7 @@ class Sweep:
                        if key.startswith("physics.") and key not in
                        {"physics.init_seed", "physics.init_mode", "physics.init_k_cutoff_um", "physics.init_eps"})
         pump_kind = cfg.laser.laser_type if cfg.laser.mode == "single" else "multiple"
-        cache_key = json.dumps([device, cfg.solver.method, [cfg.grid.ny, cfg.grid.nx],
+        cache_key = json.dumps([device, cfg.solver.method, [cfg.grid.nx] if cfg.grid.ndim == 1 else [cfg.grid.ny, cfg.grid.nx],
                                 cfg.solver.precision, cfg.reservoir.reservoir_type,
                                 sorted(set(names)), pump_kind])
         cache_file = _cache_file()

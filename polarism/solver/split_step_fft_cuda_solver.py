@@ -17,7 +17,7 @@ from polarism.solver.solver_registry import register_solver
 if TYPE_CHECKING:
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
 
 
@@ -146,9 +146,9 @@ def kernel_source(precision: str, model: str, batched: bool = False,
 class SplitStepFFTCudaSolver(AbstractSolver):
     """K-outer Strang split with two planned cuFFT transforms per step."""
 
-    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None) -> None:
+    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None) -> None:
         super().__init__(config)
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
+        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
         if not compute_engine.use_gpu or getattr(self.xp, "__name__", "") != "cupy":
             raise RuntimeError("split-step-fft-cuda requires CuPy and an active CUDA GPU; use split-step-fft on CPU")
         if grid.boundary != "periodic":
@@ -159,6 +159,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         import cupyx.scipy.fft as fft
 
         self._fft = fft
+        self._ndim = grid.ndim
+        self._fft_forward = fft.fft if grid.ndim == 1 else fft.fft2
+        self._fft_inverse = fft.ifft if grid.ndim == 1 else fft.ifft2
         self._precision = config.solver.precision
         self._real_dtype = real_dtype(self.xp, self._precision)
         self._complex_dtype = complex_dtype(self.xp, self._precision)
@@ -173,9 +176,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                 values = self.batch_physics.host[name]
                 columns.append(1.0 / values if name == "hbar" else values)
             self._physics_device = self.xp.asarray(np.stack(columns), dtype=self._real_dtype).ravel()
-        self._shape = (1, 1, grid.ny, grid.nx)
+        self._shape = (1, 1, *grid.shape)
         self._batched = False
-        self._spatial_n = grid.nx * grid.ny
+        self._spatial_n = int(np.prod(grid.shape))
         self._n = self._spatial_n
         self._plan_cache = {}
         self._kernel_cache = {}
@@ -217,7 +220,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         if key not in self._plan_cache:
             # Plan from a C-contiguous template: callers may pass strided views.
             template = self.xp.empty(array.shape, dtype=array.dtype)
-            self._plan_cache[key] = self._fft.get_fft_plan(template, axes=(-2, -1))
+            self._plan_cache[key] = self._fft.get_fft_plan(template, axes=tuple(range(-self._ndim, 0)))
         return self._plan_cache[key]
 
     def _flat_gpu_input(self, array, dtype):
@@ -483,7 +486,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
 
         spectrum_in = getattr(state, "field_k", None)
         if spectrum_in is None:
-            spectrum_in = self._fft.fft2(
+            spectrum_in = self._fft_forward(
                 xp.ascontiguousarray(state.field), plan=self._plan(state.field)
             )
         spectrum_in = spectrum_in.astype(self._complex_dtype, copy=False)
@@ -593,9 +596,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
 
         psi_k = getattr(state, "field_k", None)
         if psi_k is None:
-            psi_k = self._fft.fft2(self.xp.ascontiguousarray(state.field), plan=self._plan(state.field))
+            psi_k = self._fft_forward(self.xp.ascontiguousarray(state.field), plan=self._plan(state.field))
         psi_k = psi_k.astype(self._complex_dtype, copy=False)
-        psi = self._fft.ifft2(psi_k * self._half_normalized, norm="forward",
+        psi = self._fft_inverse(psi_k * self._half_normalized, norm="forward",
                               plan=self._plan(psi_k))
         reservoir_state = reservoir.get_state()
         cls = type(reservoir)
@@ -622,13 +625,13 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             psi, _ = self._launch("nonlinear", psi, densities, potential,
                                   (dummy, dummy), (self._scalar(1), self._scalar(1)))
             reservoir.step(dt / 2, psi, p2)
-        psi_k = self._fft.fft2(psi, plan=self._plan(psi)) * self._half
+        psi_k = self._fft_forward(psi, plan=self._plan(psi)) * self._half
         absorption = getattr(boundary_condition, "absorption", None)
         if getattr(absorption, "after_step_is_noop", False):
             state.field = None
             state.field_k = psi_k
         else:
-            materialized = self._fft.ifft2(psi_k, plan=self._plan(psi_k))
+            materialized = self._fft_inverse(psi_k, plan=self._plan(psi_k))
             state.field = boundary_condition.after_step_action(materialized)
             psi = self.xp.ascontiguousarray(state.field)
-            state.field_k = self._fft.fft2(psi, plan=self._plan(psi))
+            state.field_k = self._fft_forward(psi, plan=self._plan(psi))

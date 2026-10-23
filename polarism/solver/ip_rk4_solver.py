@@ -16,17 +16,19 @@ if TYPE_CHECKING:
 
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
 
 
 @register_solver("ip-rk4")
 class IPRK4Solver(AbstractSolver):
     """Solve the model with interaction-picture RK4."""
-    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None):
+    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None):
         """Set up the iprk 4 solver."""
         super().__init__(config)
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
+        self._fft = self.xp.fft.fft if grid.ndim == 1 else self.xp.fft.fft2
+        self._ifft = self.xp.fft.ifft if grid.ndim == 1 else self.xp.fft.ifft2
+        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
         dt = self.config.solver.dt
         hbar = self.batch_physics.get("hbar")
         m_eff = self.batch_physics.get("m_eff")
@@ -47,11 +49,11 @@ class IPRK4Solver(AbstractSolver):
 
     def _forward(self, psi):
         """Transform psi to spectral space."""
-        return self.xp.fft.fft2(psi)
+        return self._fft(psi)
 
     def _inverse(self, psi_k):
         """Transform from spectral space back to real space."""
-        return self.xp.fft.ifft2(psi_k)
+        return self._ifft(psi_k)
 
     def _nonlinear_rhs(self, psi, nR, nI, potential, psi_k=None):
         """Compute the nonlinear right-hand side."""

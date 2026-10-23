@@ -69,15 +69,15 @@ reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid,
                              precision="double", batch_size=3)
 ```
 
-`state.psi` has shape `(3, ny, nx)`; solvers work on the canonical
-`state.field` and reservoir fields of shape `(3, 1, ny, nx)`. The seed
+`S` is `(nx,)` in 1D or `(ny, nx)` in 2D. `state.psi` has shape `(3, *S)`; solvers work on the canonical
+`state.field` and reservoir fields of shape `(3, 1, *S)`. The seed
 produces the same initial wavefunction in every member as a single unbatched
 state with that seed; assign `state.psi` to customize members. Pass one shared
-`(ny, nx)` potential and a callable `pump(t)` returning either a shared
-`(ny, nx)` pump or individual `(3, 1, ny, nx)` pump fields. The boundary profile
+`grid.shape` potential and a callable `pump(t)` returning either a shared
+`grid.shape` pump or individual `(3, 1, *S)` pump fields. The boundary profile
 and mask are shared across the batch. `reservoir.reset(batch_size=3)` restores
 batched zero fields; `reservoir.reset()` restores unbatched zero fields.
 
 All built-in solvers accept batched states. Spatial derivatives and FFTs use the
-last two axes, so batch members do not interact. See the [solver batch
+last `grid.ndim` axes, so batch members do not interact. See the [solver batch
 capability table](../api/solvers.md#batched-solver-capabilities) for CUDA paths.

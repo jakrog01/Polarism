@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Union
 from dataclasses import asdict
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -21,7 +22,7 @@ from polarism.compute_engine import compute_engine, has_full_rate_fp64
 from polarism.config.dtype_utils import complex_dtype, real_dtype
 from polarism.config.validation import validate_config
 from polarism.grid.create_grid import create_grid
-from polarism.grid.simulation_grid_2d import SimulationGrid2D
+from polarism.grid.simulation_grid import SimulationGrid
 from polarism.laser.laser_factory import LaserFactory
 from polarism.laser.pump_field import BatchedPumpField, PumpField
 from polarism.plugins import load_plugins
@@ -60,9 +61,10 @@ def _compute_total_norm(**ctx):
     xp = compute_engine.xp
     grid = ctx["grid"]
     psi = ctx["state"].psi
-    if psi.ndim == 3:
-        return (xp.abs(psi) ** 2).sum(axis=(-2, -1)) * grid.dx * grid.dy
-    return (xp.abs(psi) ** 2).sum() * grid.dx * grid.dy
+    cell = math.prod(grid.spacing)
+    if ctx["state"].batched:
+        return (xp.abs(psi) ** 2).sum(axis=tuple(range(-grid.ndim, 0))) * cell
+    return (xp.abs(psi) ** 2).sum() * cell
 
 
 def _compute_psi(**ctx):
@@ -81,7 +83,7 @@ _fp64_notice_shown = False
 class SimulationController:
     """Set up and run a full simulation."""
     cfg: Config
-    grid: SimulationGrid2D
+    grid: SimulationGrid
     boundary_condition: BoundaryCondition
     potential: Union["np.ndarray", "cp.ndarray"]
     lasers: list
@@ -141,6 +143,7 @@ class SimulationController:
         check_solver_compatibility(cfg)
 
         self.grid = create_grid(cfg.grid)
+        self._profile_y = self.xp.zeros_like(self.grid.X) if self.grid.ndim == 1 else self.grid.Y
         batch_physics = None
         if batched:
             from polarism.config.batch_physics import _FLOAT_FIELDS
@@ -160,7 +163,7 @@ class SimulationController:
             self.potential = (potentials[0] if all(bool(self.xp.array_equal(potentials[0], item))
                               for item in potentials[1:]) else self.xp.stack(potentials)[:, None])
             member_lasers = [LaserFactory.create_laser(
-                member.laser, self.grid.X, self.grid.Y, cfg.solver.precision,
+                member.laser, self.grid.X, self._profile_y, cfg.solver.precision,
                 getattr(member, "_laser_entry_overrides", None)) for member in member_configs]
             self.lasers = member_lasers[0]
             self.pump_field = BatchedPumpField(member_lasers, self.grid, cfg.solver.precision)
@@ -180,7 +183,7 @@ class SimulationController:
             self.state.psi = initial_fields
         else:
             self.potential = create_potential(cfg.potential, self.grid)
-            self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self.grid.Y, cfg.solver.precision,
+            self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self._profile_y, cfg.solver.precision,
                                                     getattr(cfg, "_laser_entry_overrides", None))
             self.pump_field = PumpField(self.lasers, self.grid, cfg.solver.precision)
             self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid, cfg.solver.precision)
@@ -308,7 +311,8 @@ class SimulationController:
         self.cfg._storage_resume = self.cfg.checkpoint.resume_from is not None
         self.cfg._storage_resume_time = self.state.t if self._resumed else None
         self.storage_visitor = StorageVisitor(
-            self.cfg, x=compute_engine.to_cpu(self.grid.X[0, :]), y=compute_engine.to_cpu(self.grid.Y[:, 0]),
+            self.cfg, x=compute_engine.to_cpu(self.grid.X if self.grid.ndim == 1 else self.grid.X[0, :]),
+            y=None if self.grid.ndim == 1 else compute_engine.to_cpu(self.grid.Y[:, 0]),
             output_dir=self._output_dir,
         )
         self.add_visitor(self.storage_visitor)
@@ -405,7 +409,8 @@ class SimulationController:
                 if not node.is_field and node.name.endswith("_max"):
                     field_node = field_nodes.get(node.name[:-4])
                     if field_node is not None:
-                        node.compute_fn = lambda field_node=field_node, **ctx: field_node.compute_fn(**ctx).max(axis=(-2, -1))
+                        axes = tuple(range(-self.grid.ndim, 0))
+                        node.compute_fn = lambda field_node=field_node, axes=axes, **ctx: field_node.compute_fn(**ctx).max(axis=axes)
                         node.reduce_dim_fn = lambda value: value
 
         if self.cfg.result.save_psi:
@@ -453,10 +458,10 @@ class SimulationController:
     def set_initial_state(self, psi, reservoir_state=None, t: float = 0.0) -> None:
         """Set a real-space initial field and optional reservoir densities."""
         shape = tuple(psi.shape)
-        spatial = (self.grid.ny, self.grid.nx)
-        if shape[-2:] != spatial or len(shape) not in (2, 3):
+        spatial = self.grid.shape
+        if shape[-self.grid.ndim:] != spatial or len(shape) not in (self.grid.ndim, self.grid.ndim + 1):
             raise ValueError(f"psi grid shape must end in {spatial}, got {shape}")
-        if len(shape) == 3 and shape[0] < 1:
+        if len(shape) == self.grid.ndim + 1 and shape[0] < 1:
             raise ValueError("psi batch shape must have at least one member")
         if not np.isfinite(t) or t < 0:
             raise ValueError("t must be finite and nonnegative")
@@ -464,8 +469,8 @@ class SimulationController:
         if not np.isclose(t, step * self.cfg.solver.dt, rtol=0, atol=1e-12):
             raise ValueError("t must lie on a solver step boundary")
         dtype = complex_dtype(self.xp, self.cfg.solver.precision)
-        self.state.batch_size = shape[0] if len(shape) == 3 else 1
-        self.state.batched = len(shape) == 3
+        self.state.batch_size = shape[0] if len(shape) == self.grid.ndim + 1 else 1
+        self.state.batched = len(shape) == self.grid.ndim + 1
         self.state.psi = self.xp.asarray(psi, dtype=dtype).copy()
         self.state.t = step * self.cfg.solver.dt
         self._step = step
@@ -481,7 +486,7 @@ class SimulationController:
         else:
             reset = getattr(self.reservoir, "reset", None)
             if callable(reset):
-                if len(shape) == 3:
+                if self.state.batched:
                     reset(shape[0])
                 else:
                     reset()
@@ -574,7 +579,7 @@ class SimulationController:
                     raise ValueError("checkpoint member physics, pump or potential mismatch")
             psi = h5["psi"][:]
             shape = psi.shape
-            if shape[-2:] != (self.grid.ny, self.grid.nx) or len(shape) not in (2, 3):
+            if shape[-self.grid.ndim:] != self.grid.shape or len(shape) not in (self.grid.ndim, self.grid.ndim + 1):
                 raise ValueError("checkpoint grid shape mismatch")
             if self._state_shape_explicit and shape != self.state.psi.shape:
                 raise ValueError("checkpoint batch shape mismatch")
@@ -593,8 +598,8 @@ class SimulationController:
             if precision_changed:
                 warnings.warn("checkpoint precision differs; casting state", UserWarning, stacklevel=2)
         dtype = complex_dtype(self.xp, self.cfg.solver.precision) if precision_changed else None
-        self.state.batch_size = shape[0] if len(shape) == 3 else 1
-        self.state.batched = len(shape) == 3
+        self.state.batch_size = shape[0] if len(shape) == self.grid.ndim + 1 else 1
+        self.state.batched = len(shape) == self.grid.ndim + 1
         self.state.psi = self.xp.asarray(psi, dtype=dtype).copy()
         self.state.t = t
         self._step = step
@@ -752,10 +757,10 @@ class SimulationController:
                     if field.ndim == 2:
                         values[f"L{i}"] = self.xp.broadcast_to(field.max(), (len(self._member_configs),))
                     else:
-                        values[f"L{i}"] = field.max(axis=(-2, -1))[:, 0]
+                        values[f"L{i}"] = field.max(axis=tuple(range(-self.grid.ndim, 0)))[:, 0]
                 return {"P_lasers": values}
             return {"P_lasers": {
-                f"L{i}": self.xp.stack([self.xp.max(lasers[i].get_power(self.grid.X, self.grid.Y, self.state.t))
+                f"L{i}": self.xp.stack([self.xp.max(lasers[i].get_power(self.grid.X, self._profile_y, self.state.t))
                                            for lasers in self.pump_field.member_lasers])
                 for i in range(len(self.lasers))
             }}
