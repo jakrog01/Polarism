@@ -6,6 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
+MAX_BATCH_BYTES = 256 * 1024**2
+
 
 class BaseStorage(ABC):
     """Store result batches in a common format."""
@@ -25,6 +27,7 @@ class BaseStorage(ABC):
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.batch_size = batch_size
         self.batch_count = 0
+        self.batch_bytes = 0
         self.total_saved = 0
 
         self.time_buffer = []
@@ -81,6 +84,7 @@ class BaseStorage(ABC):
                 if node.name not in self.field_buffers:
                     self.field_buffers[node.name] = []
                 self.field_buffers[node.name].append(field)
+                self.batch_bytes += field.nbytes
             else:
                 if node.name not in self.scalar_buffers:
                     self.scalar_buffers[node.name] = []
@@ -106,7 +110,7 @@ class BaseStorage(ABC):
 
         self.batch_count += 1
 
-        if self.batch_count >= self.batch_size:
+        if self.batch_count >= self.batch_size or self.batch_bytes >= MAX_BATCH_BYTES:
             self.dump_batch()
 
     @abstractmethod
@@ -136,3 +140,4 @@ class BaseStorage(ABC):
         self.scalar_buffers.clear()
         self.scalar_group_buffers.clear()
         self.batch_count = 0
+        self.batch_bytes = 0

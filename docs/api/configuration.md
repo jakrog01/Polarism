@@ -152,7 +152,7 @@ with reduced grid-direction anisotropy.
 | `formats` | additional registered storage formats, combined with enabled `save_*` options | tuple of names, default `()` |
 | `observables` | registered observable factories that add result nodes | tuple of names, default `()` |
 | `save_every` | time in ps between writes after the initial state; defaults to one `solver.dt` | positive multiple of `solver.dt` |
-| `batch_size` | buffered result chunk size | positive integer |
+| `batch_size` | maximum frames buffered before a write; a batch is also written once its fields reach 256 MiB | positive integer |
 | `compression` | compression for every HDF5 dataset | `none` (default), `lzf`, `gzip` |
 | `compression_level` | gzip level, used only when `compression="gzip"` | integer from 0 to 9; default `4` |
 | `save_psi` | store the complex condensate field as `psi` | boolean, default `False` |

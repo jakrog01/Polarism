@@ -90,3 +90,19 @@ def test_cpu_buffered_writer_memory_is_bounded_by_batch_size(tmp_path) -> None:
     assert short_buffered <= batch_size - 1
     assert long_buffered <= batch_size - 1
     assert long_peak - short_peak < 2 * batch_size * frame_bytes
+
+
+def test_field_batches_flush_by_size(tmp_path, monkeypatch):
+    from polarism import SimulationController, load_results
+    from polarism.results.storage import base_storage
+    from tests.unit.conftest import small_config
+
+    monkeypatch.setattr(base_storage, "MAX_BATCH_BYTES", 1)
+    cfg = small_config(result__save_results=True, result__save_npy=True, result__save_psi=True,
+                       result__output_directory=str(tmp_path), solver__total_time=0.05)
+    controller = SimulationController(cfg)
+    controller.run()
+    batches = sorted(controller.run_directory.glob("batch_*.npz"))
+    with load_results(controller.run_directory) as result:
+        assert len(batches) == len(result.time) == 6
+        assert result.fields["psi"].shape == (6, 16, 16)
