@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Union
 from dataclasses import asdict
 import json
-import math
 import os
 from pathlib import Path
 import signal
@@ -61,10 +60,11 @@ def _compute_total_norm(**ctx):
     xp = compute_engine.xp
     grid = ctx["grid"]
     psi = ctx["state"].psi
-    cell = math.prod(grid.spacing)
-    if ctx["state"].batched:
-        return (xp.abs(psi) ** 2).sum(axis=tuple(range(-grid.ndim, 0))) * cell
-    return (xp.abs(psi) ** 2).sum() * cell
+    total = ((xp.abs(psi) ** 2).sum(axis=tuple(range(-grid.ndim, 0)))
+             if ctx["state"].batched else (xp.abs(psi) ** 2).sum())
+    for spacing in reversed(grid.spacing):
+        total = total * spacing
+    return total
 
 
 def _compute_psi(**ctx):
