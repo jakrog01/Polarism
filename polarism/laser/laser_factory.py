@@ -96,12 +96,3 @@ class LaserFactory:
             })
             lasers.append(laser_class(individual_config, X, Y, precision))
         return lasers
-
-
-def normalize_config(cfg: LaserParameters | dict) -> dict:
-    """Return the laser config as a plain dict."""
-    if isinstance(cfg, dict):
-        return cfg
-    if hasattr(cfg, "__dict__"):
-        return vars(cfg)
-    raise TypeError("Unsupported laser config format")

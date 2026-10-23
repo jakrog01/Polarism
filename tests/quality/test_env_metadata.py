@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from polarism.env_metadata import write_hardware_tex
+from tests.quality.env_metadata import write_hardware_tex
 
 
 def test_hardware_tex_written(tmp_path) -> None:

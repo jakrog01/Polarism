@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import h5py
 import numpy as np
-import pytest
 
 from polarism.compute_engine import compute_engine
-from polarism.env_metadata import attach_environment
+from tests.quality.env_metadata import attach_environment
 from polarism.simulation_controller import SimulationController
 from tests.unit.conftest import small_config
 

@@ -384,7 +384,6 @@ class FusedIFRK:
 
     def _run_into(self, spectrum_in, res_in, spectrum_out, res_out,
                   pumps, scales, scale_base):
-        xp = self.xp
         from cupy.cuda import cufft
 
         _, _, f, dr, stage_k, stage_psi, lap_k, lap_psi, rhs = self._buffers

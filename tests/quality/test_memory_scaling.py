@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from polarism.compute_engine import compute_engine
-from polarism.env_metadata import collect_env_metadata
+from tests.quality.env_metadata import collect_env_metadata
 from polarism.simulation_controller import SimulationController
 from tests._helpers import PeakMemoryMonitor
 from tests.unit.conftest import small_config

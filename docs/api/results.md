@@ -109,18 +109,6 @@ The user-facing result configuration exposes these main storage choices:
 | `real_time_view` | interactive visualization during a run |
 | `animate` | stream an online animation during the run |
 
-The reusable storage module also exports append-only HDF5 helpers used by batch pipelines:
-
-| Symbol | Role |
-| --- | --- |
-| `AppendableHDF5Writer` | abstract append-only writer contract |
-| `CpuBufferedHDF5Writer` | CPU-oriented batched HDF5 writer |
-| `GpuAsyncHDF5Writer` | GPU-oriented double-buffered HDF5 writer |
-| `compute_batch_size` | GPU-memory-aware batch-depth heuristic |
-| `create_hdf5_writer` | backend-selection factory for CPU vs GPU runs |
-
-These helpers are separate from the visitor-based `cfg.result` path.
-
 See [storage plugins](../plugins/storage.md) and [observable plugins](../plugins/observables.md)
 for the result extension contracts, including custom visitors.
 

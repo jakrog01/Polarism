@@ -50,7 +50,7 @@ def _cuda_runtime_version() -> str | None:
 
 def _git_commit() -> str | None:
     try:
-        root = Path(__file__).resolve().parent.parent
+        root = Path(__file__).resolve().parents[2]
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             check=False,

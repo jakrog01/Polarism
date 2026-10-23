@@ -28,13 +28,10 @@ def test_reservoir_state_order_derivatives_and_decay(kind, arity: int) -> None:
     rho = np.abs(psi) ** 2
     if kind is SingleReservoir:
         expected = (pump - (physics.gamma_R + physics.R * rho) * state[0],)
-        rates = (physics.gamma_R,)
     elif kind is DoubleReservoir:
         expected = (physics.R_IA * state[1] - (physics.gamma_A + physics.R_AI + physics.R * rho) * state[0], pump - (physics.gamma_I + physics.R_IA) * state[1] + physics.R_AI * state[0])
-        rates = (physics.gamma_A + physics.R_AI + physics.R_IA, physics.gamma_I + physics.R_IA - physics.R_AI)
     else:
         expected = (physics.kappa * state[1] ** 2 - physics.gamma_R * state[0] - physics.R * state[0] * rho, pump - physics.kappa * state[1] ** 2 - physics.gamma_I * state[1])
-        rates = (physics.gamma_R, physics.gamma_I)
     assert all(np.max(np.abs(a - b)) < TOL_MACHINE_F64 for a, b in zip(got, expected))
     reservoir.set_state(tuple(np.full((1, 1, 8, 8), 2.0) for _ in range(arity)))
     old = reservoir.get_state()

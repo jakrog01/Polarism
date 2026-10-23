@@ -9,7 +9,7 @@ import pytest
 
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import ComputeEngineParameters
-from polarism.env_metadata import collect_env_metadata, write_hardware_tex
+from tests.quality.env_metadata import collect_env_metadata, write_hardware_tex
 from polarism.simulation_controller import SimulationController
 from tests.unit.conftest import small_config
 

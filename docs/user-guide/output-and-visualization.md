@@ -170,16 +170,3 @@ This is useful for interactive debugging, not for unattended cluster runs.
 `SimulationController.add_visitor(visitor)` adds any
 [`ResultVisitor`](../plugins/observables.md); it receives every
 recorded frame, and its `finalize()` is called when the run ends.
-
-## Appendable HDF5 writers
-
-Batch pipelines that stream their own field snapshots, outside
-`SimulationController`, can use the append-only writers exported from
-`polarism.results.storage`:
-
-- `create_hdf5_writer(...)` selects a CPU-buffered writer on CPU runs and a
-  GPU-async writer on CuPy runs.
-- The GPU writer uses double buffering and pinned host memory so device-to-host
-  copies overlap with simulation work.
-- `compute_batch_size(...)` derives the batch depth from the field set, spatial
-  shape and free GPU memory; on CPU it uses a fixed depth of `500`.

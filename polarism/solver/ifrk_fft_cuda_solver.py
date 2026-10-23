@@ -72,7 +72,6 @@ class IFRKFFTCudaSolver(AbstractSolver):
         return self.xp.exp(1j * angle).astype(self._complex_dtype, copy=False)
 
     def _rhs_psi(self, psi, res_state, potential, reservoir, rho=None, psi_k=None):
-        xp = self.xp
         n_active = reservoir.get_active_density(res_state)
         n_inactive = reservoir.get_inactive_density(res_state)
         density = rho if rho is not None else psi.real * psi.real + psi.imag * psi.imag
