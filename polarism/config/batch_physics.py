@@ -40,7 +40,7 @@ class BatchPhysics:
         self.physics = physics
         self.xp = xp
         dtype = np.float32 if precision == "single" else np.float64
-        self.arrays = {name: xp.asarray(value, dtype=dtype).reshape(-1, 1, 1)
+        self.arrays = {name: xp.asarray(value, dtype=dtype).reshape(-1, 1, 1, 1)
                        for name, value in self.host.items()}
 
     def get(self, name):
@@ -52,9 +52,11 @@ class BatchPhysics:
         return bool(np.any(self.host[name])) if name in self.host else getattr(self.physics, name, 0.0) != 0.0
 
     def check(self, field):
-        """Require the leading state axis to agree with the physics batch."""
+        """Require a canonical scalar field with the matching batch axis."""
+        if field.ndim != 4 or field.shape[1] != 1:
+            raise ValueError(f"batch_physics requires canonical field shape; got {field.shape}")
         if self.size is None:
             return
-        actual = field.shape[0] if field.ndim == 3 else None
+        actual = field.shape[0]
         if actual != self.size:
             raise ValueError(f"batch_physics length {self.size} requires state batch size {self.size}; got {actual}")

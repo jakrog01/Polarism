@@ -69,11 +69,12 @@ reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid,
                              precision="double", batch_size=3)
 ```
 
-`state.psi` and every reservoir field have shape `(3, ny, nx)`. The seed
+`state.psi` has shape `(3, ny, nx)`; solvers work on the canonical
+`state.field` and reservoir fields of shape `(3, 1, ny, nx)`. The seed
 produces the same initial wavefunction in every member as a single unbatched
 state with that seed; assign `state.psi` to customize members. Pass one shared
 `(ny, nx)` potential and a callable `pump(t)` returning either a shared
-`(ny, nx)` pump or individual `(3, ny, nx)` pump fields. The boundary profile
+`(ny, nx)` pump or individual `(3, 1, ny, nx)` pump fields. The boundary profile
 and mask are shared across the batch. `reservoir.reset(batch_size=3)` restores
 batched zero fields; `reservoir.reset()` restores unbatched zero fields.
 

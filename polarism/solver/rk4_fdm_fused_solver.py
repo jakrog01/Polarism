@@ -216,17 +216,17 @@ class RK4FDMFusedSolver(AbstractSolver):
     ) -> None:
         """Advance the solver by one time step.
 
-        Note: ``state.psi`` is rebound to an internal buffer that is overwritten
+        Note: ``state.field`` is rebound to an internal buffer that is overwritten
         on the next call. Consumers that need to persist ``psi`` across steps
         must copy it.
         """
-        self.batch_physics.check(state.psi)
+        self.batch_physics.check(state.field)
         dt = self._dt
         t = state.t
         p0 = evaluate_pump(pump, t)
         p_half = evaluate_pump(pump, t + 0.5 * dt)
         p1 = evaluate_pump(pump, t + dt)
-        psi0 = state.psi
+        psi0 = state.field
         self._ensure_buffers(psi0)
 
         res0 = reservoir.get_state()
@@ -262,9 +262,9 @@ class RK4FDMFusedSolver(AbstractSolver):
 
         dt6 = dt / 6.0
         self._combine_rk4_into(psi0, dt6)
-        state.psi = self._psi_next
+        state.field = self._psi_next
 
-        state.psi = boundary_condition.after_step_action(state.psi)
+        state.field = boundary_condition.after_step_action(state.field)
 
         res_new = tuple(
             r0 + dt6 * (k1 + 2 * k2 + 2 * k3 + k4)

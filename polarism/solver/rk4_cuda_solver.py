@@ -1154,8 +1154,7 @@ class RK4CudaSolver(AbstractSolver):
             self._graph_signature = None
             self._graphs_failed = False
 
-    def _activate_batch(self, shape):
-        batched = len(shape) == 3
+    def _activate_batch(self, shape, batched):
         members = shape[0] if batched else 1
         if batched == self._batched and members == self._members and self._batch_ready:
             return
@@ -1514,11 +1513,11 @@ class RK4CudaSolver(AbstractSolver):
         """Run CUDA chunks; custom reservoirs or boundary actions need individual steps."""
         if n_steps <= 0:
             return
-        self.batch_physics.check(state.psi)
+        self.batch_physics.check(state.field)
         if not self._use_gpu:
             return super().advance(potential, pump, reservoir, boundary_condition,
                                    state, start_step, n_steps)
-        self._activate_batch(state.psi.shape)
+        self._activate_batch(state.field.shape, state.batched)
         from polarism.reservoir.single_reservoir import SingleReservoir
         from polarism.reservoir.double_reservoir import DoubleReservoir
         from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
@@ -1531,14 +1530,14 @@ class RK4CudaSolver(AbstractSolver):
                                    state, start_step, n_steps)
 
         xp = self.xp
-        shape = state.psi.shape
+        shape = state.field.shape
         terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
         term = (terms[0] if terms is not None and len(terms) == 1 else
                 pump.separable_term() if terms is None and hasattr(pump, "separable_term") else None)
         if terms is None and term is not None:
             terms = (term,)
         multi = terms is not None and (len(terms) > 1 or
-                    (len(shape) == 3 and len(terms) == 1 and
+                    (state.batched and len(terms) == 1 and
                      self.xp.ndim(terms[0][1](state.t)) != 0))
         no_lasers = not getattr(pump, "lasers", [True])
         if term is not None:
@@ -1561,7 +1560,7 @@ class RK4CudaSolver(AbstractSolver):
         )
         vr, vi = self._prepare_potential_buffers(potential)
         vi_scale = self._np_real(1 if xp.iscomplexobj(potential) else 0)
-        current_psi = self._flat_gpu_input(state.psi, self._complex_dtype)
+        current_psi = self._flat_gpu_input(state.field, self._complex_dtype)
         current_res = tuple(self._flat_gpu_input(x, self._real_dtype)
                             for x in reservoir.get_state())
         xp.cuda.get_current_stream().synchronize()
@@ -1572,7 +1571,7 @@ class RK4CudaSolver(AbstractSolver):
                 self._pump_combiner = CudaPumpCombiner(xp, self._real_dtype,
                                                        self.N * self._members)
             combiner = self._pump_combiner
-            combiner.prepare(terms, 3, 2 * 64 + 1, shape=shape)
+            combiner.prepare(terms, 3, 2 * 64 + 1, shape=shape if state.batched else None)
             xp.cuda.get_current_stream().synchronize()
         else:
             combiner = None
@@ -1653,7 +1652,7 @@ class RK4CudaSolver(AbstractSolver):
                     stream.synchronize()
                     pending_hosts.clear()
             final_index = (n_steps - done) % 2
-            state.psi = boundary_condition.after_step_action(
+            state.field = boundary_condition.after_step_action(
                 work_psi[final_index].reshape(shape).copy()
             )
             reservoir.set_state(tuple(field.reshape(shape).copy()
@@ -1690,11 +1689,11 @@ class RK4CudaSolver(AbstractSolver):
     def _cpu_laplacian(self, psi, out):
         """Apply the CPU Laplacian stencil."""
         if self._laplacian_type == "isotropic-9pt":
-            if psi.ndim == 3:
-                for member in range(psi.shape[0]):
-                    self._cpu_laplacian_9pt(psi[member], out[member])
-            else:
+            if psi.ndim == 2:
                 self._cpu_laplacian_9pt(psi, out)
+            else:
+                for member in range(psi.shape[0]):
+                    self._cpu_laplacian_9pt(psi[member, 0], out[member, 0])
             return
         xp = self.xp
         inv_dx2 = self._inv_dx2
@@ -1767,7 +1766,7 @@ class RK4CudaSolver(AbstractSolver):
         p0 = evaluate_pump(pump, t)
         p_half = evaluate_pump(pump, t + 0.5 * dt)
         p1 = evaluate_pump(pump, t + dt)
-        psi0 = state.psi.copy()
+        psi0 = state.field.copy()
         res0 = tuple(field.copy() for field in reservoir.get_state())
 
         def rhs(psi, res_state, pump_t):
@@ -1792,7 +1791,7 @@ class RK4CudaSolver(AbstractSolver):
         k4p, k4r = rhs(psi0 + dt * k3p, staged_reservoir(k3r, dt), p1)
 
         dt6 = dt / 6.0
-        state.psi = boundary_condition.after_step_action(
+        state.field = boundary_condition.after_step_action(
             psi0 + dt6 * (k1p + 2 * k2p + 2 * k3p + k4p)
         )
         reservoir.set_state(tuple(
@@ -1809,7 +1808,7 @@ class RK4CudaSolver(AbstractSolver):
         state: SimulationState,
     ) -> None:
         """Advance with CUDA kernels or CuPy stages for a custom reservoir model."""
-        self.batch_physics.check(state.psi)
+        self.batch_physics.check(state.field)
         if not self._use_gpu:
             self._step_cpu(potential, pump, reservoir, boundary_condition, state)
             return
@@ -1822,9 +1821,9 @@ class RK4CudaSolver(AbstractSolver):
         if type(reservoir) is not supported[self._reservoir_type]:
             self._step_cpu(potential, pump, reservoir, boundary_condition, state)
             return
-        self._activate_batch(state.psi.shape)
+        self._activate_batch(state.field.shape, state.batched)
 
-        shape = state.psi.shape
+        shape = state.field.shape
         V_re_flat, V_im_flat = self._prepare_potential_buffers(potential)
         t = state.t
         dt = self._dt
@@ -1836,7 +1835,7 @@ class RK4CudaSolver(AbstractSolver):
         if terms is None and separable is not None:
             terms = (separable,)
         combined = terms is not None and (len(terms) > 1 or
-                   (len(terms) == 1 and len(shape) == 3 and
+                   (len(terms) == 1 and state.batched and
                     self.xp.ndim(terms[0][1](t)) != 0))
         if combined:
             from polarism.solver.cuda_pump import CudaPumpCombiner
@@ -1844,7 +1843,7 @@ class RK4CudaSolver(AbstractSolver):
                 self._pump_combiner = CudaPumpCombiner(self.xp, self._real_dtype,
                                                        self.N * self._members)
             combiner = self._pump_combiner
-            combiner.prepare(terms, 3, 3, shape=shape)
+            combiner.prepare(terms, 3, 3, shape=shape if state.batched else None)
             stream = self.xp.cuda.get_current_stream()
             combiner.coefficients(terms, stage_times, stream)
             stream.synchronize()
@@ -1864,7 +1863,7 @@ class RK4CudaSolver(AbstractSolver):
                                 for stage_time in stage_times)
         v_im_scale = self._np_real(1 if self.xp.iscomplexobj(potential) else 0)
 
-        psi0 = self._flat_gpu_input(state.psi, self._complex_dtype)
+        psi0 = self._flat_gpu_input(state.field, self._complex_dtype)
         reservoir_state = reservoir.get_state()
         reservoir0 = tuple(
             self._flat_gpu_input(field, self._real_dtype)
@@ -1881,5 +1880,5 @@ class RK4CudaSolver(AbstractSolver):
             psi0, reservoir0, V_re_flat, V_im_flat, pumps, pump_scales,
             v_im_scale, psi_out, reservoir_out
         )
-        state.psi = boundary_condition.after_step_action(psi_out.reshape(shape))
+        state.field = boundary_condition.after_step_action(psi_out.reshape(shape))
         reservoir.set_state(tuple(field.reshape(shape) for field in reservoir_out))

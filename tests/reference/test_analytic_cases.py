@@ -70,12 +70,12 @@ def test_quadratic_double_zero_dimensional_stationary_state() -> None:
     compute_engine.xp = np
     physics = PhysicsConstants(gamma_R=0.005, gamma_I=0.001, kappa=0.05, R=0.0)
     reservoir = QuadraticDoubleReservoir(ReservoirParameters(expose_results=False), physics, grid(1, 1))
-    pump = np.full((1, 1), 0.03); psi = np.zeros((1, 1), complex)
+    pump = np.full((1, 1, 1, 1), 0.03); psi = np.zeros((1, 1, 1, 1), complex)
     for _ in range(20_000):
         reservoir.step(0.1, psi, pump)
     n_i = (-physics.gamma_I + np.sqrt(physics.gamma_I**2 + 4 * physics.kappa * 0.03)) / (2 * physics.kappa)
-    assert np.isclose(reservoir.nI[0, 0], n_i, rtol=1e-3)
-    assert np.isclose(reservoir.nR[0, 0], physics.kappa * n_i**2 / physics.gamma_R, rtol=1e-3)
+    assert np.isclose(reservoir.nI[0, 0, 0, 0], n_i, rtol=1e-3)
+    assert np.isclose(reservoir.nR[0, 0, 0, 0], physics.kappa * n_i**2 / physics.gamma_R, rtol=1e-3)
 
 
 @pytest.mark.compliance
@@ -233,14 +233,14 @@ def test_double_reservoir_zero_dimensional_closed_form() -> None:
     stationary = -np.linalg.solve(matrix, source)
     stationary_reservoir = DoubleReservoir(reservoir_cfg, physics, spatial_grid)
     stationary_reservoir.set_state(
-        (np.array([[stationary[0]]]), np.array([[stationary[1]]]))
+        (np.full((1, 1, 1, 1), stationary[0]), np.full((1, 1, 1, 1), stationary[1]))
     )
-    zero_psi = np.zeros((1, 1), dtype=np.complex128)
-    pump = np.full((1, 1), pump_value)
+    zero_psi = np.zeros((1, 1, 1, 1), dtype=np.complex128)
+    pump = np.full((1, 1, 1, 1), pump_value)
     for _ in range(100):
         stationary_reservoir.step(0.01, zero_psi, pump)
     stationary_actual = np.array(
-        [stationary_reservoir.nA[0, 0], stationary_reservoir.nI[0, 0]]
+        [stationary_reservoir.nA[0, 0, 0, 0], stationary_reservoir.nI[0, 0, 0, 0]]
     )
     stationary_error = float(
         np.linalg.norm(stationary_actual - stationary) / np.linalg.norm(stationary)
@@ -248,7 +248,7 @@ def test_double_reservoir_zero_dimensional_closed_form() -> None:
 
     transient = DoubleReservoir(reservoir_cfg, physics, spatial_grid)
     initial = np.array([0.04, 0.01], dtype=np.float64)
-    transient.set_state((np.array([[initial[0]]]), np.array([[initial[1]]])))
+    transient.set_state((np.full((1, 1, 1, 1), initial[0]), np.full((1, 1, 1, 1), initial[1])))
     dt = 0.002
     n_steps = 500
     for _ in range(n_steps):
@@ -256,7 +256,7 @@ def test_double_reservoir_zero_dimensional_closed_form() -> None:
     eigenvalues, eigenvectors = np.linalg.eig(matrix * (dt * n_steps))
     propagator = (eigenvectors * np.exp(eigenvalues)) @ np.linalg.inv(eigenvectors)
     expected = stationary + propagator.real @ (initial - stationary)
-    actual = np.array([transient.nA[0, 0], transient.nI[0, 0]])
+    actual = np.array([transient.nA[0, 0, 0, 0], transient.nI[0, 0, 0, 0]])
     transient_error = float(np.linalg.norm(actual - expected) / np.linalg.norm(expected))
     measured = max(stationary_error, transient_error)
     threshold = 1e-7

@@ -158,7 +158,7 @@ class SimulationController:
             potentials = [create_potential(member.potential, self.grid)
                           for member in member_configs]
             self.potential = (potentials[0] if all(bool(self.xp.array_equal(potentials[0], item))
-                              for item in potentials[1:]) else self.xp.stack(potentials))
+                              for item in potentials[1:]) else self.xp.stack(potentials)[:, None])
             member_lasers = [LaserFactory.create_laser(
                 member.laser, self.grid.X, self.grid.Y, cfg.solver.precision,
                 getattr(member, "_laser_entry_overrides", None)) for member in member_configs]
@@ -173,8 +173,11 @@ class SimulationController:
                 k_cutoff_um=member.physics.init_k_cutoff_um,
                 seed=member.physics.init_seed,
             ) for member in member_configs]
+            initial_fields = self.xp.stack([state.psi for state in states])
             self.state = states[0]
-            self.state.psi = self.xp.stack([state.psi for state in states])
+            self.state.batch_size = len(states)
+            self.state.batched = True
+            self.state.psi = initial_fields
         else:
             self.potential = create_potential(cfg.potential, self.grid)
             self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self.grid.Y, cfg.solver.precision,
@@ -461,6 +464,8 @@ class SimulationController:
         if not np.isclose(t, step * self.cfg.solver.dt, rtol=0, atol=1e-12):
             raise ValueError("t must lie on a solver step boundary")
         dtype = complex_dtype(self.xp, self.cfg.solver.precision)
+        self.state.batch_size = shape[0] if len(shape) == 3 else 1
+        self.state.batched = len(shape) == 3
         self.state.psi = self.xp.asarray(psi, dtype=dtype).copy()
         self.state.t = step * self.cfg.solver.dt
         self._step = step
@@ -481,7 +486,7 @@ class SimulationController:
                 else:
                     reset()
             else:
-                zeros = tuple(self.xp.zeros(shape, dtype=field.dtype)
+                zeros = tuple(self.xp.zeros(self.state.field.shape, dtype=field.dtype)
                               for field in self.reservoir.get_state())
                 self.reservoir.set_state(zeros)
 
@@ -492,7 +497,10 @@ class SimulationController:
         from polarism.reservoir.single_reservoir import SingleReservoir
 
         dtype = real_dtype(self.xp, self.cfg.solver.precision) if cast else None
-        arrays = tuple(self.xp.asarray(field, dtype=dtype).copy() for field in fields)
+        shape = self.state.field.shape
+        arrays = tuple(self.xp.asarray(field, dtype=dtype).reshape(shape).copy() for field in fields)
+        if hasattr(self.reservoir, "_batched"):
+            self.reservoir._batched = self.state.batched
         if type(self.reservoir) is SingleReservoir:
             self.reservoir.nR = arrays[0]
         elif type(self.reservoir) is DoubleReservoir:
@@ -516,7 +524,8 @@ class SimulationController:
             self.storage_visitor.flush()
         psi = compute_engine.to_cpu(self.state.psi)
         psi_k = self.state.psi_k
-        fields = tuple(compute_engine.to_cpu(value) for value in self.reservoir.get_state())
+        fields = tuple(compute_engine.to_cpu(value[:, 0] if self.state.batched else value[0, 0])
+                       for value in self.reservoir.get_state())
         fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
         try:
             with os.fdopen(fd, "wb"):
@@ -584,6 +593,8 @@ class SimulationController:
             if precision_changed:
                 warnings.warn("checkpoint precision differs; casting state", UserWarning, stacklevel=2)
         dtype = complex_dtype(self.xp, self.cfg.solver.precision) if precision_changed else None
+        self.state.batch_size = shape[0] if len(shape) == 3 else 1
+        self.state.batched = len(shape) == 3
         self.state.psi = self.xp.asarray(psi, dtype=dtype).copy()
         self.state.t = t
         self._step = step
@@ -701,6 +712,8 @@ class SimulationController:
     def _record_results(self, t: float) -> None:
         """Evaluate the pump and send the current state to result visitors."""
         P_total = self._compute_total_pump(t)
+        if self._batched and P_total.ndim == 4:
+            P_total = P_total[:, 0]
         scalar_groups = self._get_scalar_groups()
         if self._batched:
             self.pump_field.last_components = []
@@ -739,7 +752,7 @@ class SimulationController:
                     if field.ndim == 2:
                         values[f"L{i}"] = self.xp.broadcast_to(field.max(), (len(self._member_configs),))
                     else:
-                        values[f"L{i}"] = field.max(axis=(-2, -1))
+                        values[f"L{i}"] = field.max(axis=(-2, -1))[:, 0]
                 return {"P_lasers": values}
             return {"P_lasers": {
                 f"L{i}": self.xp.stack([self.xp.max(lasers[i].get_power(self.grid.X, self.grid.Y, self.state.t))

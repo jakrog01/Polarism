@@ -21,7 +21,7 @@ def test_single_reservoir_0d_stationary_with_plot(output_dir):
 
     P0 = 0.02
     psi_amp = 1e-3
-    psi = (psi_amp + 0j) * np.ones((grid.nx, grid.ny), dtype=np.complex128)
+    psi = (psi_amp + 0j) * np.ones((1, 1, grid.nx, grid.ny), dtype=np.complex128)
     P = pump_uniform(P0, grid.X)
 
     nR_expected = P0 / (physics.gamma_R + physics.R * (psi_amp**2))

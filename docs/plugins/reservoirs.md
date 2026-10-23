@@ -17,18 +17,18 @@ For per-member physics, the factory calls
 `ReservoirClass(reservoir_config, physics, grid, precision,
 batch_physics=values)`. `values` maps a `PhysicsConstants` float field to a
 one-dimensional array of length `B`. A plugin that accepts it must apply each
-member's constants to its leading batch axis. Ordinary runs keep the existing
+member's constants to the leading axis of canonical `(B, 1, ny, nx)` arrays. Ordinary runs keep the existing
 four-argument call; the factory raises a named error when a physics batch
 selects a plugin without `batch_physics`.
 
 | Name and signature | Caller and timing | Return or state | Status |
 | --- | --- | --- | --- |
-| `__init__(reservoir_config, physics, grid, precision)` | Factory, once | Initialize real `(ny, nx)` fields and coefficients | Required |
-| `get_state()` | Stage-coupled solvers and `step` | Tuple of current field arrays | Abstract |
+| `__init__(reservoir_config, physics, grid, precision)` | Factory, once | Initialize real `(1, 1, ny, nx)` fields and coefficients | Required |
+| `get_state()` | Stage-coupled solvers and `step` | Tuple of canonical `(B, 1, ny, nx)` arrays | Abstract |
 | `set_state(state)` | Solvers after a step | Store a tuple matching `get_state()` | Abstract |
-| `get_derivatives(psi, pump, state, rho=None)` | RK4 stages and example `step` | Tuple of derivative arrays in state order | Abstract |
+| `get_derivatives(psi, pump, state, rho=None)` | RK4 stages and example `step` | Canonical `psi`, `state`, `rho`; derivatives match state shape | Abstract |
 | `step(dt, psi_mid, pump)` | Split-step and midpoint-style solvers | Update stored fields; returns `None` | Abstract |
-| `get_reservoir_density()` | Client code | Total reservoir array | Abstract |
+| `get_reservoir_density()` | Client code | Public `(ny, nx)` or `(B, ny, nx)` array | Abstract |
 | `make_result_nodes()` | Controller output setup | List of `ResultNode`; `[]` is valid | Abstract |
 | `get_active_density(state)` | Solvers at stage evaluations | Density coupled to condensate; defaults to `state[0]` | Optional override |
 | `get_inactive_density(state)` | Solvers at stage evaluations | Inactive density; defaults to zero array | Optional override |

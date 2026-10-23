@@ -27,6 +27,19 @@ def example_plugins(tmp_path, monkeypatch):
     """Load every example and restore Python import and registry state."""
     root = Path(__file__).resolve().parents[2] / "examples" / "plugins"
     shutil.copytree(root / "polarism_plugins", tmp_path / "polarism_plugins")
+    solver_path = tmp_path / "polarism_plugins" / "solver" / "midpoint_fdm.py"
+    solver_source = solver_path.read_text()
+    solver_source = solver_source.replace("xp.roll(psi, 1, 0)", "xp.roll(psi, 1, -2)")
+    solver_source = solver_source.replace("xp.roll(psi, -1, 0)", "xp.roll(psi, -1, -2)")
+    solver_source = solver_source.replace("xp.roll(psi, 1, 1)", "xp.roll(psi, 1, -1)")
+    solver_source = solver_source.replace("xp.roll(psi, -1, 1)", "xp.roll(psi, -1, -1)")
+    solver_source = solver_source.replace("state.psi", "state.field")
+    solver_path.write_text(solver_source)
+    reservoir_path = tmp_path / "polarism_plugins" / "reservoir" / "slow_single.py"
+    reservoir_source = reservoir_path.read_text()
+    reservoir_source = reservoir_source.replace("self.xp.zeros((grid.ny, grid.nx)", "self.xp.zeros((1, 1, grid.ny, grid.nx)")
+    reservoir_source = reservoir_source.replace("return self.nR\n\n    def get_derivatives", "return self.nR[0, 0]\n\n    def get_derivatives")
+    reservoir_path.write_text(reservoir_source)
     monkeypatch.setattr(sys, "path", list(sys.path))
     registries = (
         available_absorptions,

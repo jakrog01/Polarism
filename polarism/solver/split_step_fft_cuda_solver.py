@@ -173,7 +173,8 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                 values = self.batch_physics.host[name]
                 columns.append(1.0 / values if name == "hbar" else values)
             self._physics_device = self.xp.asarray(np.stack(columns), dtype=self._real_dtype).ravel()
-        self._shape = (grid.ny, grid.nx)
+        self._shape = (1, 1, grid.ny, grid.nx)
+        self._batched = False
         self._spatial_n = grid.nx * grid.ny
         self._n = self._spatial_n
         self._plan_cache = {}
@@ -237,7 +238,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         return self._potential_buffers
 
     def _kernel(self, model):
-        key = (model, len(self._shape) == 3)
+        key = (model, self._batched)
         if key not in self._kernel_cache:
             self._kernel_cache[key] = self.xp.RawKernel(
                 kernel_source(self._precision, model, key[1], self._physics_fields), "local_step",
@@ -250,7 +251,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
         term = pump.separable_term() if hasattr(pump, "separable_term") else None
         active_terms = terms if terms is not None else (term,) if term is not None else ()
-        if len(self._shape) == 3 and any(np.ndim(coefficient(t)) != 0
+        if self._batched and any(np.ndim(coefficient(t)) != 0
                                          for _, coefficient in active_terms):
             from polarism.solver.cuda_pump import CudaPumpCombiner
             if getattr(self, "_pump_combiner", None) is None:
@@ -322,7 +323,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
     def _graph_kernel(self, model):
         if not hasattr(self, "_graph_kernel_cache"):
             self._graph_kernel_cache = {}
-        key = (model, len(self._shape) == 3)
+        key = (model, self._batched)
         if key not in self._graph_kernel_cache:
             source = kernel_source(self._precision, model, key[1], self._physics_fields)
             source = source.replace(
@@ -423,9 +424,10 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         return graph
 
     def _activate_shape(self, state):
-        shape = (state.psi_k.shape if state.psi_k is not None else state.psi.shape)
-        if shape != self._shape:
+        shape = (state.field_k.shape if state.field_k is not None else state.field.shape)
+        if shape != self._shape or state.batched != self._batched:
             self._shape = shape
+            self._batched = state.batched
             self._n = int(np.prod(shape))
             self._graph_cache.clear()
             self._graph_signature = None
@@ -436,7 +438,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
     def advance(self, potential, pump, reservoir, boundary_condition, state,
                 start_step: int, n_steps: int) -> None:
         """Run supported periodic chunks with planned FFTs and optional graphs."""
-        self.batch_physics.check(state.psi_k if state._psi is None else state.psi)
+        self.batch_physics.check(state.field_k if state._field is None else state.field)
         if n_steps <= 0:
             return
         self._activate_shape(state)
@@ -462,7 +464,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         if terms is None and term is not None:
             terms = (term,)
         multi = terms is not None and (len(terms) > 1 or
-                (len(self._shape) == 3 and len(terms) == 1 and
+                (self._batched and len(terms) == 1 and
                  np.ndim(terms[0][1](state.t)) != 0))
         no_lasers = not getattr(pump, "lasers", [True])
         if term is not None:
@@ -479,10 +481,10 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             coefficient = None
             pump_flat = None
 
-        spectrum_in = getattr(state, "psi_k", None)
+        spectrum_in = getattr(state, "field_k", None)
         if spectrum_in is None:
             spectrum_in = self._fft.fft2(
-                xp.ascontiguousarray(state.psi), plan=self._plan(state.psi)
+                xp.ascontiguousarray(state.field), plan=self._plan(state.field)
             )
         spectrum_in = spectrum_in.astype(self._complex_dtype, copy=False)
         fields_in = reservoir.get_state()
@@ -493,7 +495,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             if getattr(self, "_pump_combiner", None) is None:
                 self._pump_combiner = CudaPumpCombiner(xp, self._real_dtype, self._n)
             combiner = self._pump_combiner
-            combiner.prepare(terms, 2, 2 * 64, shape=self._shape)
+            combiner.prepare(terms, 2, 2 * 64, shape=self._shape if self._batched else None)
             xp.cuda.get_current_stream().synchronize()
         else:
             combiner = None
@@ -574,8 +576,8 @@ class SplitStepFFTCudaSolver(AbstractSolver):
 
             final_index = (n_steps - done) % 2
             xp.multiply(spec[final_index], self._half, out=spec[final_index])
-            state.psi = None
-            state.psi_k = spec[final_index].copy()
+            state.field = None
+            state.field_k = spec[final_index].copy()
             reservoir.set_state(tuple(field.copy() for field in res[final_index]))
             stream.synchronize()
         state.t = (start_step + n_steps) * self.config.solver.dt
@@ -583,15 +585,15 @@ class SplitStepFFTCudaSolver(AbstractSolver):
     def step(self, potential, pump, reservoir: AbstractReservoir,
              boundary_condition: BoundaryCondition, state: SimulationState) -> None:
         """Advance K(dt/2) [R(dt/2) N(dt) R(dt/2)] K(dt/2)."""
-        self.batch_physics.check(state.psi_k if state._psi is None else state.psi)
+        self.batch_physics.check(state.field_k if state._field is None else state.field)
         self._activate_shape(state)
         from polarism.reservoir.single_reservoir import SingleReservoir
         from polarism.reservoir.double_reservoir import DoubleReservoir
         from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
 
-        psi_k = getattr(state, "psi_k", None)
+        psi_k = getattr(state, "field_k", None)
         if psi_k is None:
-            psi_k = self._fft.fft2(self.xp.ascontiguousarray(state.psi), plan=self._plan(state.psi))
+            psi_k = self._fft.fft2(self.xp.ascontiguousarray(state.field), plan=self._plan(state.field))
         psi_k = psi_k.astype(self._complex_dtype, copy=False)
         psi = self._fft.ifft2(psi_k * self._half_normalized, norm="forward",
                               plan=self._plan(psi_k))
@@ -623,10 +625,10 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         psi_k = self._fft.fft2(psi, plan=self._plan(psi)) * self._half
         absorption = getattr(boundary_condition, "absorption", None)
         if getattr(absorption, "after_step_is_noop", False):
-            state.psi = None
-            state.psi_k = psi_k
+            state.field = None
+            state.field_k = psi_k
         else:
             materialized = self._fft.ifft2(psi_k, plan=self._plan(psi_k))
-            state.psi = boundary_condition.after_step_action(materialized)
-            psi = self.xp.ascontiguousarray(state.psi)
-            state.psi_k = self._fft.fft2(psi, plan=self._plan(psi))
+            state.field = boundary_condition.after_step_action(materialized)
+            psi = self.xp.ascontiguousarray(state.field)
+            state.field_k = self._fft.fft2(psi, plan=self._plan(psi))

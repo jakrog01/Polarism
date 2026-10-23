@@ -107,22 +107,22 @@ class ETDRK2Solver(AbstractSolver):
         state: SimulationState,
     ) -> None:
         """Advance the solver by one time step."""
-        self.batch_physics.check(state.psi)
+        self.batch_physics.check(state.field)
         dt = self.config.solver.dt
 
         res_state = reservoir.get_state()
         nR = reservoir.get_active_density(res_state)
         nI = reservoir.get_inactive_density(res_state)
 
-        psi_k = self.xp.fft.fft2(state.psi)
+        psi_k = self.xp.fft.fft2(state.field)
 
-        N_n = self._nonlinear_rhs(state.psi, nR, nI, potential)
+        N_n = self._nonlinear_rhs(state.field, nR, nI, potential)
         N_n_k = self.xp.fft.fft2(N_n)
 
         a_k = self._exp_L * psi_k + self._phi1 * N_n_k * dt
         a = self.xp.fft.ifft2(a_k)
 
-        psi_mid = (state.psi + a) / 2
+        psi_mid = (state.field + a) / 2
         reservoir.step(dt, psi_mid, evaluate_pump(pump, state.t + 0.5 * dt))
         res_new = reservoir.get_state()
         nR_new = reservoir.get_active_density(res_new)
@@ -132,6 +132,6 @@ class ETDRK2Solver(AbstractSolver):
         N_a_k = self.xp.fft.fft2(N_a)
 
         psi_new_k = a_k + self._phi2 * (N_a_k - N_n_k) * dt
-        state.psi = self.xp.fft.ifft2(psi_new_k)
+        state.field = self.xp.fft.ifft2(psi_new_k)
 
-        state.psi = boundary_condition.after_step_action(state.psi)
+        state.field = boundary_condition.after_step_action(state.field)

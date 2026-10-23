@@ -36,8 +36,8 @@ def _case(tableau, reservoir_type, precision, eta, method="ifrk-fft-cuda",
         * cp.exp(1j * 0.2 * cp.sin(2 * cp.pi * y / cfg.grid.ly)), dtype=dtype)
     controller.reservoir.set_state(tuple(
         cp.asarray(0.2 + 0.02 * cp.cos(2 * cp.pi * x / cfg.grid.lx)
-                   + index * 0.04, dtype=real)
-        for index in range(len(controller.reservoir.get_state()))))
+                   + index * 0.04, dtype=real).reshape(field.shape)
+        for index, field in enumerate(controller.reservoir.get_state())))
     controller.potential = cp.asarray(
         0.01 * cp.cos(2 * cp.pi * x / cfg.grid.lx)
         - 0.003j * (1 + cp.sin(2 * cp.pi * y / cfg.grid.ly)), dtype=dtype)

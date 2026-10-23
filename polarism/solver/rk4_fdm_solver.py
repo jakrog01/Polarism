@@ -116,14 +116,14 @@ class RK4FDMSolver(AbstractSolver):
         state: SimulationState,
     ) -> None:
         """Advance the solver by one time step."""
-        self.batch_physics.check(state.psi)
+        self.batch_physics.check(state.field)
         dt = self.config.solver.dt
         t = state.t
         p0 = evaluate_pump(pump, t)
         p_half = evaluate_pump(pump, t + 0.5 * dt)
         p1 = evaluate_pump(pump, t + dt)
 
-        psi0 = state.psi
+        psi0 = state.field
         self._ensure_buffers(psi0)
 
         res0 = reservoir.get_state()
@@ -150,7 +150,7 @@ class RK4FDMSolver(AbstractSolver):
             for r0, k1, k2, k3, k4 in zip(res0, k1_res, k2_res, k3_res, k4_res)
         )
 
-        state.psi = psi_new.astype(psi0.dtype, copy=False)
+        state.field = psi_new.astype(psi0.dtype, copy=False)
         reservoir.set_state(res_new)
 
     def _rhs(

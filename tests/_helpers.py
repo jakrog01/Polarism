@@ -123,8 +123,15 @@ class State:
     """Small test state wrapper."""
     def __init__(self, psi: np.ndarray):
         """Store the test field."""
-        self.psi = psi
+        self.field = psi.reshape(1, 1, *psi.shape)
+        self.field_k = None
+        self.batched = False
         self.t = 0.0
+
+    @property
+    def psi(self):
+        """Return the public field view."""
+        return self.field[0, 0]
 
 
 class NullReservoir:

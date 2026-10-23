@@ -82,11 +82,14 @@ the 1/e radial decay length should use `continuous-exp-length`, which evaluates
 
 Reservoir models share the `AbstractReservoir` contract:
 
-- store the current reservoir state
+- store current state tuples as `(B, 1, ny, nx)` arrays
 - expose the active density that couples to the condensate
 - compute reservoir derivatives
 - advance the reservoir in time
 - optionally expose result nodes for storage and visualization
+
+`get_reservoir_density()` and result nodes expose public `(ny, nx)` or
+`(B, ny, nx)` arrays.
 
 ### Supported reservoir types
 

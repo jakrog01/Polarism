@@ -297,7 +297,8 @@ class Sweep:
                 (batch_dir / "complete").touch()
             if not output:
                 psi = controller.state.psi
-                fields = controller.reservoir.get_state()
+                fields = tuple(field[:, 0] if controller.state.batched else field[0, 0]
+                               for field in controller.reservoir.get_state())
                 for position, index in enumerate(indices):
                     member_psi = psi[position] if len(local) > 1 else psi
                     member_fields = tuple(field[position] if len(local) > 1 else field

@@ -24,8 +24,8 @@ def _trajectory(tableau, dt):
         0.35 * (1 + 0.12 * np.cos(2 * np.pi * x / cfg.grid.lx))
         * np.exp(0.3j * np.sin(2 * np.pi * y / cfg.grid.ly)), dtype=np.complex128)
     controller.reservoir.set_state((
-        np.asarray(0.7 + 0.04 * np.cos(2 * np.pi * x / cfg.grid.lx)),
-        np.asarray(0.6 + 0.04 * np.sin(2 * np.pi * y / cfg.grid.ly)),
+        np.asarray(0.7 + 0.04 * np.cos(2 * np.pi * x / cfg.grid.lx)).reshape(1, 1, 8, 8),
+        np.asarray(0.6 + 0.04 * np.sin(2 * np.pi * y / cfg.grid.ly)).reshape(1, 1, 8, 8),
     ))
     potential = 0.6 * np.cos(2 * np.pi * x / cfg.grid.lx) - 0.07j * (
         1 + 0.1 * np.sin(2 * np.pi * y / cfg.grid.ly))

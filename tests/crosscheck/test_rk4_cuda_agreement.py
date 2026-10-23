@@ -74,7 +74,7 @@ def _run(
         controller.xp.asarray(
             0.15 + 0.04 * index + 0.02 * np.sin(x / 5 + index) * np.cos(y / 6),
             dtype=field.dtype,
-        )
+        ).reshape(field.shape)
         for index, field in enumerate(controller.reservoir.get_state())
     )
     controller.reservoir.set_state(initial_reservoir)

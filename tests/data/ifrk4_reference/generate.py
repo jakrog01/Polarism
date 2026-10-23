@@ -42,7 +42,8 @@ def run_cases():
                 fields = tuple(np.asarray(0.2 + 0.02 * np.cos(2 * np.pi * x / cfg.grid.lx)
                                           + index * 0.04, dtype=real)
                                for index in range(len(controller.reservoir.get_state())))
-                controller.reservoir.set_state(fields)
+                controller.reservoir.set_state(tuple(field.reshape(1, 1, *field.shape)
+                                                     for field in fields))
                 controller.potential = np.asarray(
                     0.01 * np.cos(2 * np.pi * x / cfg.grid.lx)
                     - 0.003j * (1 + np.sin(2 * np.pi * y / cfg.grid.ly)), dtype=dtype
@@ -55,7 +56,7 @@ def run_cases():
                 key = f"{precision}_{reservoir_type}_eta{eta:g}"
                 output[key + "_psi"] = np.asarray(controller.state.psi)
                 for index, field in enumerate(controller.reservoir.get_state()):
-                    output[f"{key}_res{index}"] = np.asarray(field)
+                    output[f"{key}_res{index}"] = np.asarray(field[0, 0])
     return output
 
 

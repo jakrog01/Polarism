@@ -13,8 +13,8 @@ from polarism.solver.split_step_fft_cuda_solver import SplitStepFFTCudaSolver
 
 
 def _lap(field, dx, dy):
-    return ((np.roll(field, -1, 0) - 2 * field + np.roll(field, 1, 0)) / dy**2
-            + (np.roll(field, -1, 1) - 2 * field + np.roll(field, 1, 1)) / dx**2)
+    return ((np.roll(field, -1, -2) - 2 * field + np.roll(field, 1, -2)) / dy**2
+            + (np.roll(field, -1, -1) - 2 * field + np.roll(field, 1, -1)) / dx**2)
 
 
 def _derivatives(model, fields, rho, pump, p, dx, dy):

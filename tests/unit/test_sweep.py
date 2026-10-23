@@ -33,7 +33,7 @@ def assert_cpu_matches_separate(cfg, members, batched=None):
         separate.run()
         assert np.array_equal(batched.state.psi[index], separate.state.psi)
         for whole, single in zip(batched.reservoir.get_state(), separate.reservoir.get_state()):
-            assert np.array_equal(whole[index], single)
+            assert np.array_equal(whole[index], single[0])
 
 
 @pytest.mark.parametrize("precision", ["single", "double"])
@@ -59,7 +59,7 @@ def test_cap_with_batched_hbar_matches_separate(method):
     members = [{"physics.hbar": 0.55, "physics.g_C": 0.002},
                {"physics.hbar": 0.75, "physics.g_C": 0.003}]
     batched = SimulationController(cfg, members=members)
-    assert batched.boundary_condition.before_step_action().shape == (2, 8, 8)
+    assert batched.boundary_condition.before_step_action().shape == (2, 1, 8, 8)
     assert_cpu_matches_separate(cfg, members, batched)
 
 
@@ -170,7 +170,7 @@ def test_shared_laser_and_potential_arrays():
     assert shared.potential.ndim == 2
     varying = SimulationController(cfg, members=[{"potential.V1": -0.002},
                                                  {"potential.V1": -0.003}])
-    assert varying.potential.shape == (2, 8, 8)
+    assert varying.potential.shape == (2, 1, 8, 8)
     assert_cpu_matches_separate(cfg, [{}, {}], shared)
     assert_cpu_matches_separate(cfg, [{"potential.V1": -0.002},
                                       {"potential.V1": -0.003}], varying)
@@ -262,7 +262,7 @@ def test_gpu_controller_sweep_equals_separate(method):
         np.testing.assert_allclose(cp.asnumpy(batch.state.psi[index]),
                                    cp.asnumpy(separate.state.psi), rtol=2e-5, atol=2e-5)
         for whole, single in zip(batch.reservoir.get_state(), separate.reservoir.get_state()):
-            np.testing.assert_allclose(cp.asnumpy(whole[index]), cp.asnumpy(single),
+            np.testing.assert_allclose(cp.asnumpy(whole[index:index + 1]), cp.asnumpy(single),
                                        rtol=2e-5, atol=2e-5)
 
 
@@ -292,5 +292,5 @@ def test_gpu_pulse_member_coefficients_with_graphs(method):
         np.testing.assert_allclose(cp.asnumpy(batch.state.psi[index]),
                                    cp.asnumpy(separate.state.psi), rtol=2e-5, atol=2e-5)
         for whole, single in zip(batch.reservoir.get_state(), separate.reservoir.get_state()):
-            np.testing.assert_allclose(cp.asnumpy(whole[index]), cp.asnumpy(single),
+            np.testing.assert_allclose(cp.asnumpy(whole[index:index + 1]), cp.asnumpy(single),
                                        rtol=2e-5, atol=2e-5)

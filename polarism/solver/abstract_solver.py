@@ -35,8 +35,10 @@ class AbstractSolver(ABC):
     ) -> None:
         """Advance the fields from ``state.t`` to ``state.t + dt``.
 
-        ``pump(t)`` returns the pump array at time ``t``. Evaluate it at the
-        integration stage times; the caller updates ``state.t`` after the step.
+        ``state.field``, ``state.field_k``, and reservoir state tuples use
+        ``(B, 1, ny, nx)``. Shared pump and potential arrays use ``(ny, nx)``;
+        member-stacked arrays use ``(B, 1, ny, nx)``. Evaluate ``pump(t)``
+        at integration stage times; the caller updates ``state.t`` afterward.
         """
         pass
 
@@ -52,7 +54,7 @@ class AbstractSolver(ABC):
     ) -> None:
         """Advance several steps, preserving controller stage times."""
         if hasattr(self, "batch_physics"):
-            self.batch_physics.check(state.psi)
+            self.batch_physics.check(state.field)
         for k in range(n_steps):
             self.step(potential, pump, reservoir, boundary_condition, state)
             state.t = (start_step + k + 1) * self.config.solver.dt

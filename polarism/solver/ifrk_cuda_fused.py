@@ -210,7 +210,8 @@ class FusedIFRK:
         self.solver = solver
         self.xp = solver.xp
         self.fft = fft
-        self.shape = (grid.ny, grid.nx)
+        self.shape = (1, 1, grid.ny, grid.nx)
+        self._batched = False
         self.spatial_n = grid.nx * grid.ny
         self.n = self.spatial_n
         self.s = solver.tableau.stages
@@ -305,10 +306,10 @@ class FusedIFRK:
         self._buffers = None
         self._model_id = None
         self._buffer_shape = None
-        stage0_direct = (len(self.shape) == 3 and not self.eta
+        stage0_direct = (self._batched and not self.eta
                          and self.solver._c[0] == 0
                          and all(value == 0 for value in self.solver._a[0]))
-        finish_in_stage = len(self.shape) == 3
+        finish_in_stage = self._batched
         spec = tuple(xp.empty(self.shape, self.complex) for _ in range(2))
         res = tuple(xp.empty((fields, *self.shape), self.real) for _ in range(2))
         f = xp.empty((self.s, *self.shape), self.complex)
@@ -321,8 +322,8 @@ class FusedIFRK:
         source = fused_source(real="float" if self.real == xp.float32 else "double",
                               model=model_id, eta=int(self.eta), stages=self.s,
                               fields=fields,
-                              spatial_index="k" if len(self.shape) == 2 else "k % spatial_n",
-                              pump_index="k" if len(self.shape) == 2 else "k % pump_n",
+                              spatial_index="k" if not self._batched else "k % spatial_n",
+                              pump_index="k" if not self._batched else "k % pump_n",
                               sincos="sincosf" if self.real == xp.float32 else "sincos",
                               physics_fields=self._physics_fields,
                               stage0_direct=stage0_direct,
@@ -353,7 +354,7 @@ class FusedIFRK:
         terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
         active_terms = terms if terms is not None else (term,) if term is not None else ()
         no_lasers = not getattr(pump, "lasers", [True])
-        if len(self.shape) == 3 and any(np.ndim(coefficient(t)) != 0
+        if self._batched and any(np.ndim(coefficient(t)) != 0
                                         for _, coefficient in active_terms):
             from polarism.solver.cuda_pump import CudaPumpCombiner
             if getattr(self, "_pump_combiner", None) is None:
@@ -429,9 +430,9 @@ class FusedIFRK:
     def _copy_in(self, state, reservoir):
         xp = self.xp
         spec, res = self._buffers[:2]
-        spectrum = state.psi_k
+        spectrum = state.field_k
         if spectrum is None:
-            psi = self._array(state.psi, self.complex)
+            psi = self._array(state.field, self.complex)
             spectrum = self.fft.fft2(psi, plan=self._plan)
         xp.copyto(spec[0], spectrum)
         for target, source in zip(res[0], reservoir.get_state()):
@@ -439,14 +440,15 @@ class FusedIFRK:
 
     def _copy_out(self, index, reservoir, state):
         spec, res = self._buffers[:2]
-        state.psi = None
-        state.psi_k = spec[index].copy()
+        state.field = None
+        state.field_k = spec[index].copy()
         reservoir.set_state(tuple(field.copy() for field in res[index]))
 
     def _activate_shape(self, state):
-        shape = (state.psi_k.shape if state.psi_k is not None else state.psi.shape)
-        if shape != self.shape:
+        shape = (state.field_k.shape if state.field_k is not None else state.field.shape)
+        if shape != self.shape or state.batched != self._batched:
             self.shape = shape
+            self._batched = state.batched
             self.n = int(np.prod(shape))
             self._graph_cache.clear()
             self._graph_signature = None
@@ -473,10 +475,10 @@ class FusedIFRK:
         spec, res = self._buffers[:2]
         self._run_into(spec[0], res[0], spec[1], res[1], pumps, scales, 0)
         if not self.solver._can_skip_after_step(boundary_condition):
-            state.psi = None
-            state.psi_k = spec[1].copy()
-            state.psi = boundary_condition.after_step_action(state.psi)
-            state.psi_k = self.fft.fft2(state.psi, plan=self._plan)
+            state.field = None
+            state.field_k = spec[1].copy()
+            state.field = boundary_condition.after_step_action(state.field)
+            state.field_k = self.fft.fft2(state.field, plan=self._plan)
             reservoir.set_state(tuple(field.copy() for field in res[1]))
         else:
             self._copy_out(1, reservoir, state)
@@ -534,14 +536,15 @@ class FusedIFRK:
                 if term is not None:
                     terms = (term,)
             multi = terms is not None and (len(terms) > 1 or
-                    (len(self.shape) == 3 and len(terms) == 1 and
+                    (self._batched and len(terms) == 1 and
                      np.ndim(terms[0][1](state.t)) != 0))
             if multi:
                 from polarism.solver.cuda_pump import CudaPumpCombiner
                 if getattr(self, "_pump_combiner", None) is None:
                     self._pump_combiner = CudaPumpCombiner(xp, self.real, self.n)
                 combiner = self._pump_combiner
-                combiner.prepare(terms, len(self.unique_c), 64 * len(self.unique_c), shape=self.shape)
+                combiner.prepare(terms, len(self.unique_c), 64 * len(self.unique_c),
+                                 shape=self.shape if self._batched else None)
                 pump_flat = None
                 coefficient = None
             else:
@@ -607,10 +610,10 @@ class FusedIFRK:
             if self.solver._can_skip_after_step(boundary_condition):
                 self._copy_out(index, reservoir, state)
             else:
-                state.psi = None
-                state.psi_k = spec[index].copy()
-                state.psi = boundary_condition.after_step_action(state.psi)
-                state.psi_k = self.fft.fft2(state.psi, plan=self._plan)
+                state.field = None
+                state.field_k = spec[index].copy()
+                state.field = boundary_condition.after_step_action(state.field)
+                state.field_k = self.fft.fft2(state.field, plan=self._plan)
                 reservoir.set_state(tuple(field.copy() for field in res[index]))
             stream.synchronize()
         state.t = (start_step+n_steps)*self.host_dt

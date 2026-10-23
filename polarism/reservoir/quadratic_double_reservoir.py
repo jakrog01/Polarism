@@ -77,15 +77,17 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
         self.dy = grid.dy
         self.grid_type = grid.boundary
         self._spatial_shape = (grid.ny, grid.nx)
+        self._batched = False
         rdtype = real_dtype(self.xp, precision)
-        self.nR = self.xp.zeros((grid.ny, grid.nx), dtype=rdtype)
-        self.nI = self.xp.zeros((grid.ny, grid.nx), dtype=rdtype)
+        self.nR = self.xp.zeros((1, 1, grid.ny, grid.nx), dtype=rdtype)
+        self.nI = self.xp.zeros((1, 1, grid.ny, grid.nx), dtype=rdtype)
 
     def reset(self, batch_size: int | None = None) -> None:
         """Reset zero density fields, optionally with a leading batch axis."""
         if batch_size is not None and (isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1):
             raise ValueError("batch_size must be a positive integer")
-        shape = self._spatial_shape if batch_size is None else (batch_size, *self._spatial_shape)
+        self._batched = batch_size is not None
+        shape = (1 if batch_size is None else batch_size, 1, *self._spatial_shape)
         self.nR = self.xp.zeros(shape, dtype=self.nR.dtype)
         self.nI = self.xp.zeros(shape, dtype=self.nI.dtype)
 
@@ -102,6 +104,7 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
         ],
     ) -> None:
         """Set the reservoir state from ``(nR, nI)``."""
+        self._check_state_shape(state, self.nR.shape)
         self.nR = self.xp.maximum(state[0], 0).astype(self.nR.dtype, copy=False)
         self.nI = self.xp.maximum(state[1], 0).astype(self.nI.dtype, copy=False)
 
@@ -136,6 +139,7 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
     ]:
         """Return time derivatives ``(dnR, dnI)``."""
         self.batch_physics.check(psi)
+        self._check_state_shape(state, psi.shape)
         nR, nI = state
         abs_psi2 = rho if rho is not None else psi.real * psi.real + psi.imag * psi.imag
 
@@ -220,13 +224,13 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
 
     def get_reservoir_density(self) -> Union["np.ndarray", "cp.ndarray"]:
         """Return the active reservoir density ``nR``."""
-        return self.nR
+        return self._public_density(self.nR)
 
     def get_reservoir_densities(
         self,
     ) -> tuple[Union["np.ndarray", "cp.ndarray"], Union["np.ndarray", "cp.ndarray"]]:
         """Return ``(nR, nI)``."""
-        return self.nR, self.nI
+        return self._public_density(self.nR), self._public_density(self.nI)
 
     def make_result_nodes(self) -> list[ResultNode]:
         """Build result nodes exposed by this reservoir."""
@@ -235,7 +239,7 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
             nodes.append(
                 ResultNode(
                     "nR",
-                    compute_fn=lambda **ctx: self.nR,
+                    compute_fn=lambda **ctx: self._public_density(self.nR),
                     reduce_dim_fn=lambda f: float(f.max()),
                     cmap="viridis",
                     scaling=None,
@@ -249,7 +253,7 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
             nodes.append(
                 ResultNode(
                     "nI",
-                    compute_fn=lambda **ctx: self.nI,
+                    compute_fn=lambda **ctx: self._public_density(self.nI),
                     reduce_dim_fn=lambda f: float(f.max()),
                     cmap="plasma",
                     scaling=None,

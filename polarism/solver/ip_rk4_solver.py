@@ -84,14 +84,14 @@ class IPRK4Solver(AbstractSolver):
         state: SimulationState,
     ) -> None:
         """Advance the solver by one time step."""
-        self.batch_physics.check(state.psi)
+        self.batch_physics.check(state.field)
         dt = self.config.solver.dt
         t = state.t
         p0 = evaluate_pump(pump, t)
         p_half = evaluate_pump(pump, t + 0.5 * dt)
         p1 = evaluate_pump(pump, t + dt)
 
-        psi0 = state.psi
+        psi0 = state.field
         res0 = reservoir.get_state()
 
         psi0_k = self._forward(psi0)
@@ -137,9 +137,9 @@ class IPRK4Solver(AbstractSolver):
 
         u_new = psi0_k + (dt / 6.0) * (k1_u + 2 * k2_u + 2 * k3_u + k4_u)
         psi_new_k = self._exp_L_full * u_new
-        state.psi = self._inverse(psi_new_k)
+        state.field = self._inverse(psi_new_k)
 
-        state.psi = boundary_condition.after_step_action(state.psi)
+        state.field = boundary_condition.after_step_action(state.field)
 
         res_new = tuple(
             r0 + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)

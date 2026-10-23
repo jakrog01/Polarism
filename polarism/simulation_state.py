@@ -15,14 +15,9 @@ if TYPE_CHECKING:
 
 
 class SimulationState:
-    """Store the wavefunction and current time.
-
-    At most one of ``_psi`` and ``psi_k`` is authoritative between step
-    boundaries. Both may coexist after materialization and until the next
-    mutation. A leading batch axis is supported when ``batch_size`` is given.
-    """
-    _psi: Union[np.ndarray, cp.ndarray] | None
-    psi_k: Union[np.ndarray, cp.ndarray] | None
+    """Store canonical fields and expose scalar public wavefunction views."""
+    _field: Union[np.ndarray, cp.ndarray] | None
+    _field_k: Union[np.ndarray, cp.ndarray] | None
     t: float
 
     def __init__(
@@ -36,11 +31,19 @@ class SimulationState:
         seed: Optional[int] = None,
         batch_size: int | None = None,
     ):
-        """Initialize psi; each batch member copies the seeded 2-D initial field."""
+        """Initialize each member from the seeded two-dimensional field."""
+        if batch_size is not None and (
+            isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1
+        ):
+            raise ValueError("batch_size must be a positive integer")
+        self.batch_size = 1 if batch_size is None else batch_size
+        self.components = 1
+        self.batched = batch_size is not None
+        self._spatial_shape = (grid.ny, grid.nx)
         xp = compute_engine.xp
         rdtype = real_dtype(xp, precision)
         cdtype = complex_dtype(xp, precision)
-        self._psi = make_initial_psi(
+        psi = make_initial_psi(
             xp, grid.ny, grid.nx, eps,
             mode=mode,
             dx=grid.dx, dy=grid.dy,
@@ -49,39 +52,91 @@ class SimulationState:
             cdtype=cdtype,
             rdtype=rdtype,
         )
-        if batch_size is not None:
-            if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
-                raise ValueError("batch_size must be a positive integer")
-            self._psi = xp.broadcast_to(self._psi, (batch_size, grid.ny, grid.nx)).copy()
-        self.psi_k = None
+        if self.batched:
+            psi = xp.broadcast_to(psi, (self.batch_size, grid.ny, grid.nx)).copy()
+        self._field = psi.reshape(self.batch_size, self.components, grid.ny, grid.nx)
+        self._field_k = None
         self.t = 0.0
 
     @property
-    def psi(self) -> Union[np.ndarray, cp.ndarray]:
-        """Return the real-space wavefunction."""
-        if self._psi is None:
+    def field(self) -> Union[np.ndarray, cp.ndarray]:
+        """Return the canonical real-space field, materializing it if needed."""
+        if self._field is None:
             self.materialize_psi(compute_engine.xp)
-        if self._psi is None:
-            raise ValueError("SimulationState.psi is unavailable")
-        return self._psi
+        if self._field is None:
+            raise ValueError("SimulationState.field is unavailable")
+        return self._field
+
+    @field.setter
+    def field(self, value: Union[np.ndarray, cp.ndarray] | None) -> None:
+        if value is not None and value.shape != self._canonical_shape:
+            raise ValueError(f"field shape must be {self._canonical_shape}, got {value.shape}")
+        self._field = value
+        self._field_k = None
+
+    @property
+    def field_k(self) -> Union[np.ndarray, cp.ndarray] | None:
+        """Return the cached canonical spectral field."""
+        return self._field_k
+
+    @field_k.setter
+    def field_k(self, value: Union[np.ndarray, cp.ndarray] | None) -> None:
+        if value is not None and value.shape != self._canonical_shape:
+            raise ValueError(f"field_k shape must be {self._canonical_shape}, got {value.shape}")
+        self._field_k = value
+
+    @property
+    def _canonical_shape(self) -> tuple[int, int, int, int]:
+        return (self.batch_size, self.components, *self._spatial_shape)
+
+    @property
+    def _public_shape(self) -> tuple[int, ...]:
+        return ((self.batch_size, *self._spatial_shape) if self.batched
+                else self._spatial_shape)
+
+    @property
+    def psi(self) -> Union[np.ndarray, cp.ndarray]:
+        """Return a public-shape view of the real-space wavefunction."""
+        field = self.field
+        return field[:, 0] if self.batched else field[0, 0]
 
     @psi.setter
     def psi(self, value: Union[np.ndarray, cp.ndarray] | None) -> None:
-        self._psi = value
-        self.psi_k = None
+        if value is None:
+            self.field = None
+            return
+        if value.shape != self._public_shape:
+            raise ValueError(f"psi shape must be {self._public_shape}, got {value.shape}")
+        self.field = value.reshape(self._canonical_shape)
+
+    @property
+    def psi_k(self) -> Union[np.ndarray, cp.ndarray] | None:
+        """Return a public-shape view of the cached spectral field."""
+        field_k = self.field_k
+        if field_k is None:
+            return None
+        return field_k[:, 0] if self.batched else field_k[0, 0]
+
+    @psi_k.setter
+    def psi_k(self, value: Union[np.ndarray, cp.ndarray] | None) -> None:
+        if value is None:
+            self.field_k = None
+            return
+        if value.shape != self._public_shape:
+            raise ValueError(f"psi_k shape must be {self._public_shape}, got {value.shape}")
+        self.field_k = value.reshape(self._canonical_shape)
 
     def materialize_psi(self, xp) -> None:
-        """Materialize real-space psi from cached spectral state."""
-        if self._psi is None:
-            psi_k = getattr(self, "psi_k", None)
-            if psi_k is None:
+        """Materialize the canonical real-space field from its spectral cache."""
+        if self._field is None:
+            if self._field_k is None:
                 raise ValueError("Cannot materialize psi without psi_k")
-            self._psi = xp.fft.ifft2(psi_k, axes=(-2, -1))
+            self._field = xp.fft.ifft2(self._field_k, axes=(-2, -1))
 
     def invalidate_psi_k(self) -> None:
-        """Clear cached spectral state after external real-space mutation."""
-        self.psi_k = None
+        """Clear the spectral cache after external real-space mutation."""
+        self.field_k = None
 
     def get_simulation_state(self) -> tuple[Union[np.ndarray, cp.ndarray], float]:
-        """Return simulation state."""
+        """Return the public wavefunction and current time."""
         return self.psi, self.t

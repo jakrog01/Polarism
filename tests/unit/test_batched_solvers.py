@@ -52,10 +52,10 @@ def _run(cfg, amplitudes, batched, xp, *, advance=False, pump_style="array",
     bc = BoundaryCondition(grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt)
     potential = (0.03 * xp.cos(grid.X * 0.4) + bc.before_step_action())
     if potential_style == "batched":
-        scale = xp.asarray(amplitudes)[:, None, None] if batched else amplitudes[0]
+        scale = xp.asarray(amplitudes)[:, None, None, None] if batched else amplitudes[0]
         potential = scale * potential
     profile = 1 + 0.1 * xp.sin(grid.Y * 0.6)
-    amplitude = xp.asarray(amplitudes)[:, None, None] if batched else amplitudes[0]
+    amplitude = xp.asarray(amplitudes)[:, None, None, None] if batched else amplitudes[0]
 
     if pump_style == "array":
         def pump(t):
@@ -88,7 +88,7 @@ def _run(cfg, amplitudes, batched, xp, *, advance=False, pump_style="array",
                 for envelope, coefficient in self.terms:
                     value = coefficient(t)
                     if xp.ndim(value):
-                        value = value[:, None, None]
+                        value = value[:, None, None, None]
                     result = result + envelope * value
                 return result
 
@@ -139,8 +139,8 @@ def _compare(method, model, absorption, xp, *, advance=False, grid_type="periodi
                                          for r in references]), rtol=tolerance, atol=tolerance)
     for field_index, field in enumerate(actual_fields):
         np.testing.assert_allclose(xp.asnumpy(field) if xp is not np else field,
-                                   np.stack([xp.asnumpy(r[1][field_index]) if xp is not np
-                                             else r[1][field_index] for r in references]),
+                                   np.concatenate([xp.asnumpy(r[1][field_index]) if xp is not np
+                                                   else r[1][field_index] for r in references]),
                                    rtol=tolerance, atol=tolerance)
 
 
@@ -173,10 +173,10 @@ def test_batch_construction_and_seed():
         cfg.reservoir.reservoir_type = model
         reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid, batch_size=3)
         for field in reservoir.get_state():
-            assert field.shape == (3, grid.ny, grid.nx)
+            assert field.shape == (3, 1, grid.ny, grid.nx)
             assert np.count_nonzero(field) == 0
         reservoir.reset()
-        assert all(field.shape == (grid.ny, grid.nx) for field in reservoir.get_state())
+        assert all(field.shape == (1, 1, grid.ny, grid.nx) for field in reservoir.get_state())
     with pytest.raises(ValueError, match="batch_size"):
         SimulationState(grid, batch_size=0)
     with pytest.raises(ValueError, match="batch_size"):
@@ -249,7 +249,7 @@ def test_pump_field_separable_member_coefficient():
     envelope, coefficient = pump.separable_terms()[0]
     assert coefficient(0.2).shape == (2,)
     np.testing.assert_array_equal(pump(0.2),
-                                  envelope[None, :, :] * coefficient(0.2)[:, None, None])
+                                  envelope[None, None, :, :] * coefficient(0.2)[:, None, None, None])
 
 
 @pytest.mark.gpu
@@ -331,7 +331,7 @@ def test_cpu_member_pump_coefficient_is_bitwise_separate(method, pump_style):
     np.testing.assert_array_equal(actual[0], np.stack([item[0] for item in expected]))
     for index, field in enumerate(actual[1]):
         np.testing.assert_array_equal(field,
-                                      np.stack([item[1][index] for item in expected]))
+                                      np.concatenate([item[1][index] for item in expected]))
 
 
 @pytest.mark.gpu
@@ -497,7 +497,7 @@ def test_cpu_per_member_physics_matches_separate(method, model):
         expected.append(_run_physics(member_cfg, {}, np, False))
     np.testing.assert_array_equal(actual[0], np.stack([item[0] for item in expected]))
     for index, field in enumerate(actual[1]):
-        np.testing.assert_array_equal(field, np.stack([item[1][index] for item in expected]))
+        np.testing.assert_array_equal(field, np.concatenate([item[1][index] for item in expected]))
 
 
 def test_batch_physics_validation():
@@ -606,7 +606,7 @@ def test_gpu_ifrk_batched_stage_and_finish_match_separate(monkeypatch):
     used = []
 
     def checked(self, *args):
-        if len(self.shape) == 3:
+        if self._batched:
             assert self._stage0_direct
             assert self._finish_in_stage
             used.append(True)
@@ -647,4 +647,4 @@ def test_gpu_per_member_physics_matches_separate(method, model):
             np.stack([cp.asnumpy(item[0]) for item in expected]))
     for index, field in enumerate(actual[1]):
         compare(cp.asnumpy(field),
-                np.stack([cp.asnumpy(item[1][index]) for item in expected]))
+                np.concatenate([cp.asnumpy(item[1][index]) for item in expected]))

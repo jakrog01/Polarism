@@ -24,7 +24,7 @@ def create_reservoir(
     batch_size: int | None = None,
     batch_physics=None,
 ) -> AbstractReservoir:
-    """Create a reservoir with zero fields, optionally shaped ``(B, ny, nx)``."""
+    """Create a reservoir with canonical zero fields shaped ``(B, 1, ny, nx)``."""
     reservoir_type = reservoir_config.reservoir_type
 
     batched = BatchPhysics(physics, batch_physics, compute_engine.xp, precision)

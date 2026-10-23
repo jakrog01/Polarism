@@ -133,7 +133,7 @@ def test_tiled_matches_staged_to_rounding_level(
         fields = tuple(controller.xp.asarray(
             0.15 + 0.04 * index + 0.02 * np.sin(x / 5 + index) * np.cos(y / 6),
             dtype=field.dtype,
-        ) for index, field in enumerate(controller.reservoir.get_state()))
+        ).reshape(field.shape) for index, field in enumerate(controller.reservoir.get_state()))
         controller.reservoir.set_state(fields)
     potential = tiled.xp.real(tiled.potential)
     if complex_potential:

@@ -54,7 +54,7 @@ class SplitStepFFTSolver(AbstractSolver):
         state: SimulationState,
     ) -> None:
         """Advance the solver by one time step."""
-        self.batch_physics.check(state.psi)
+        self.batch_physics.check(state.field)
         dt = self.config.solver.dt
         hbar = self.batch_physics.get("hbar")
         g_C = self.batch_physics.get("g_C")
@@ -63,14 +63,14 @@ class SplitStepFFTSolver(AbstractSolver):
         R = self.batch_physics.get("R")
         gamma_C = self.batch_physics.get("gamma_C")
 
-        reservoir.step(dt / 2, state.psi, evaluate_pump(pump, state.t + dt / 4))
+        reservoir.step(dt / 2, state.field, evaluate_pump(pump, state.t + dt / 4))
         res_state = reservoir.get_state()
         nR = reservoir.get_active_density(res_state)
         nI = reservoir.get_inactive_density(res_state)
 
-        state.psi = self._kinetic_half_step_fft(state.psi)
+        state.field = self._kinetic_half_step_fft(state.field)
 
-        rho = self.xp.abs(state.psi) ** 2
+        rho = self.xp.abs(state.field) ** 2
         gain_loss = (R * nR - gamma_C) / 2.0 + self.xp.imag(potential) / hbar
         x = 2 * gain_loss * dt
         small = self.xp.abs(x) < 1e-6
@@ -83,9 +83,9 @@ class SplitStepFFTSolver(AbstractSolver):
             (self.xp.real(potential) + g_R * nR + g_I * nI) * dt
             + g_C * rho * phase_time
         ) / hbar
-        state.psi = state.psi * self.xp.exp(gain_loss * dt - 1j * phase)
+        state.field = state.field * self.xp.exp(gain_loss * dt - 1j * phase)
 
-        state.psi = self._kinetic_half_step_fft(state.psi)
+        state.field = self._kinetic_half_step_fft(state.field)
 
-        reservoir.step(dt / 2, state.psi, evaluate_pump(pump, state.t + 3 * dt / 4))
-        state.psi = boundary_condition.after_step_action(state.psi)
+        reservoir.step(dt / 2, state.field, evaluate_pump(pump, state.t + 3 * dt / 4))
+        state.field = boundary_condition.after_step_action(state.field)

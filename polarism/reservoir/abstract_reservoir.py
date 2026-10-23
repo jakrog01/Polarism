@@ -15,6 +15,16 @@ if TYPE_CHECKING:
 
 class AbstractReservoir(ABC):
     """Define the interface for reservoir models."""
+
+    def _public_density(self, field):
+        """Return a public-shape view of a canonical reservoir field."""
+        return field[:, 0] if self._batched else field[0, 0]
+
+    def _check_state_shape(self, state, shape):
+        """Require every reservoir field to share the canonical field shape."""
+        if any(field.shape != shape for field in state):
+            raise ValueError(f"reservoir state shape must be {shape}")
+
     @abstractmethod
     def __init__(
         self,
@@ -32,12 +42,12 @@ class AbstractReservoir(ABC):
         psi_mid: Union[np.ndarray, cp.ndarray],
         pump: Union[np.ndarray, cp.ndarray],
     ) -> None:
-        """Advance the reservoir by one time step."""
+        """Advance canonical reservoir fields using a canonical condensate field."""
         raise NotImplementedError
 
     @abstractmethod
     def get_reservoir_density(self) -> Union[np.ndarray, cp.ndarray]:
-        """Return the total reservoir density."""
+        """Return total density in the public scalar shape."""
         raise NotImplementedError
 
     @abstractmethod
@@ -47,17 +57,17 @@ class AbstractReservoir(ABC):
 
     @abstractmethod
     def get_state(self) -> tuple:
-        """Return the current state."""
+        """Return canonical ``(B, C_res, ny, nx)`` state arrays."""
         raise NotImplementedError
 
     @abstractmethod
     def set_state(self, state: tuple) -> None:
-        """Set the current state."""
+        """Set canonical ``(B, C_res, ny, nx)`` state arrays."""
         raise NotImplementedError
 
     @abstractmethod
     def get_derivatives(self, psi, pump, state: tuple, rho=None) -> tuple:
-        """Return the reservoir time derivatives."""
+        """Return canonical derivatives from canonical condensate and state arrays."""
         raise NotImplementedError
 
     def get_active_density(self, state: tuple):

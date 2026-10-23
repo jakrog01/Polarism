@@ -68,7 +68,7 @@ class CudaPumpCombiner:
 
     def prepare(self, terms, outputs, samples, shape=None):
         envelopes = tuple(term[0] for term in terms)
-        batched = shape is not None and len(shape) == 3
+        batched = shape is not None and len(shape) == 4
         member_coefficients = batched and any(np.ndim(term[1](0.0)) != 0 for term in terms)
         changed = (self._envelopes is None or len(envelopes) != len(self._envelopes)
                    or any(a is not b for a, b in zip(envelopes, self._envelopes))
@@ -84,7 +84,7 @@ class CudaPumpCombiner:
                 sizes = np.asarray([a.size for a in arrays], dtype=np.int32)
                 spatial_n = shape[-2] * shape[-1]
                 if any(size not in (spatial_n, self.n) for size in sizes):
-                    raise ValueError("pump envelope must be shared 2-D or batched 3-D")
+                    raise ValueError("pump envelope must be shared 2-D or batched 4-D")
                 offsets = np.zeros(len(arrays), dtype=np.int32)
                 offsets[1:] = np.cumsum(sizes[:-1])
                 self.env = self.xp.concatenate(arrays)

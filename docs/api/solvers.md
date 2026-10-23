@@ -13,6 +13,9 @@ At the abstraction level, every solver must:
 `pump` is a callable `pump(t) -> array`, returning the pump field at the
 requested time. The step starts at `state.t` and advances the fields by
 `config.solver.dt`; the caller updates `state.t` afterward.
+Solvers read and write `state.field` and `state.field_k` as
+`(B, 1, ny, nx)` arrays. Public `state.psi` and `state.psi_k` omit the
+component axis and also omit the member axis for unbatched runs.
 
 RK4 solvers evaluate the pump once at each of `t`, `t + dt/2`, and `t + dt`,
 using the midpoint value for both middle stages. `etd-rk2` passes
@@ -222,7 +225,9 @@ Use solver choice as a numerical decision, not just a performance switch:
 Use `SimulationState(grid, ..., batch_size: int | None = None)` and
 `create_reservoir(config, physics, grid, precision="double", *, batch_size: int | None = None)`.
 The built-in reservoir instances also expose `reset(batch_size: int | None = None)`.
-The leading batch axis is independent; potential and boundary fields stay 2-D.
+The leading batch axis is independent. Solver fields and reservoir tuples are
+`(B, 1, ny, nx)`; shared potential and boundary fields stay 2-D, while
+member-stacked fields use `(B, 1, ny, nx)`.
 
 | Solver | Batched execution |
 | --- | --- |
@@ -235,4 +240,4 @@ The leading batch axis is independent; potential and boundary fields stay 2-D.
 CUDA graph buffers and FFT plans are selected by the active field shape. A
 separable pump with scalar time coefficient uses its cached envelope. When the
 coefficient varies across batch members, the solver evaluates `pump(t)` at each
-stage and uses the returned 3-D field.
+stage and uses the returned `(B, 1, ny, nx)` field.

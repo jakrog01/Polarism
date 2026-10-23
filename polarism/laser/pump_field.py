@@ -27,7 +27,7 @@ def evaluate_pump(pump, t):
                 xp = compute_engine.xp
                 vector = xp.asarray(value)
                 if vector.ndim:
-                    vector = vector[:, None, None]
+                    vector = vector[:, None, None, None]
                 result = result + envelope * vector
             return result
     return pump(t)
@@ -53,7 +53,7 @@ class PumpField:
                 for (envelope, _), value in zip(terms, coefficients):
                     vector = self.xp.asarray(value)
                     if vector.ndim:
-                        vector = vector[:, None, None]
+                        vector = vector[:, None, None, None]
                     total = total + envelope * vector
                 return total
         if not lasers:
@@ -113,7 +113,7 @@ class BatchedPumpField:
                 return None
             envelopes = [laser._spatial_envelope for laser in slot]
             shared = all(bool(self.xp.array_equal(envelopes[0], item)) for item in envelopes[1:])
-            envelope = envelopes[0] if shared else self.xp.stack(envelopes)
+            envelope = envelopes[0] if shared else self.xp.stack(envelopes)[:, None]
             if all(type(laser) is type(slot[0]) and
                    _scalar_settings(laser) == _scalar_settings(slot[0])
                    for laser in slot[1:]):
@@ -138,7 +138,7 @@ class BatchedPumpField:
             for envelope, coefficient in self._terms:
                 value = self.xp.asarray(coefficient(t))
                 if value.ndim:
-                    value = value[:, None, None]
+                    value = value[:, None, None, None]
                 component = envelope * value
                 if components is not None:
                     components.append(component)
@@ -147,4 +147,4 @@ class BatchedPumpField:
                 self.last_components = components
             return total
         return self.xp.stack([PumpField(lasers, self.grid, self.precision)(t)
-                              for lasers in self.member_lasers])
+                              for lasers in self.member_lasers])[:, None]

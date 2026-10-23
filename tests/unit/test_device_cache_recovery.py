@@ -41,11 +41,11 @@ def test_pump_combiner_rebuilds_after_partial_failure():
     combiner = CudaPumpCombiner(xp, np.float32, 8)
     first = np.ones((2, 2), np.float32)
     second = np.full((2, 2), 2, np.float32)
-    combiner.prepare(((first, lambda t: 1),), 1, 1, shape=(2, 2, 2))
+    combiner.prepare(((first, lambda t: 1),), 1, 1, shape=(2, 1, 2, 2))
     xp.fail_offsets = True
     with pytest.raises(MemoryError, match="injected offsets allocation failure"):
-        combiner.prepare(((second, lambda t: 1),), 1, 1, shape=(2, 2, 2))
-    combiner.prepare(((first, lambda t: 1),), 1, 1, shape=(2, 2, 2))
+        combiner.prepare(((second, lambda t: 1),), 1, 1, shape=(2, 1, 2, 2))
+    combiner.prepare(((first, lambda t: 1),), 1, 1, shape=(2, 1, 2, 2))
     np.testing.assert_array_equal(combiner.env, first.ravel())
 
 
@@ -69,16 +69,18 @@ def test_ifrk_zero_pump_follows_batch_shape():
     fused = FusedIFRK.__new__(FusedIFRK)
     fused.xp = np
     fused.real = np.float64
-    fused.shape = (2, 2)
+    fused.shape = (1, 1, 2, 2)
+    fused._batched = False
     fused.n = 4
-    fused._zero_pump = np.zeros((2, 2))
+    fused._zero_pump = np.zeros((1, 1, 2, 2))
     fused._graph_cache = {}
     fused._graph_signature = None
     fused._pump_combiner = None
     fused._potential_cached = None
-    state = type("State", (), {"psi": np.zeros((3, 2, 2)), "psi_k": None})()
+    state = type("State", (), {"field": np.zeros((3, 1, 2, 2)), "field_k": None,
+                               "batched": True})()
     fused._activate_shape(state)
-    assert fused._zero_pump.shape == state.psi.shape
+    assert fused._zero_pump.shape == state.field.shape
 
 
 def test_rk4_advance_buffer_failure_does_not_mark_cache_valid():
@@ -131,8 +133,8 @@ def test_rk4_batch_retries_failed_stage_allocation():
     solver._compile_kernels = lambda: None
     solver._init_gpu_buffers = allocate
     with pytest.raises(MemoryError, match="injected stage allocation failure"):
-        solver._activate_batch((2, 2, 2))
-    solver._activate_batch((2, 2, 2))
+        solver._activate_batch((2, 1, 2, 2), True)
+    solver._activate_batch((2, 1, 2, 2), True)
     assert calls == 2
 
 
@@ -159,7 +161,7 @@ def test_rk4_batch_allocation_failure_retries():
     try:
         cp.empty = fail_once
         with pytest.raises(MemoryError, match="injected batch allocation failure"):
-            solver._activate_batch(small_args[-1].psi.shape)
+            solver._activate_batch(small_args[-1].field.shape, small_args[-1].batched)
     finally:
         cp.empty = original
     assert not solver._batch_ready

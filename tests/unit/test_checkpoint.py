@@ -279,7 +279,9 @@ def test_set_initial_state_continues_from_absolute_time(tmp_path):
     first = SimulationController(first_cfg)
     first.run()
     second = SimulationController(cfg)
-    second.set_initial_state(first.state.psi, first.reservoir.get_state(), first.state.t)
+    second.set_initial_state(first.state.psi,
+                             tuple(field[0, 0] for field in first.reservoir.get_state()),
+                             first.state.t)
     second.run()
     assert np.array_equal(second.state.psi, full.state.psi)
     assert np.array_equal(second.reservoir.get_state()[0], full.reservoir.get_state()[0])

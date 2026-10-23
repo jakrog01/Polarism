@@ -91,8 +91,8 @@ class IFRKFFTCudaSolver(AbstractSolver):
                       h: float | None = None) -> None:
         xp = self.xp
         h = self.config.solver.dt if h is None else h
-        psi0_k = state.psi_k
-        psi0 = state.psi if psi0_k is None else None
+        psi0_k = state.field_k
+        psi0 = state.field if psi0_k is None else None
         if psi0_k is None:
             psi0_k = xp.fft.fft2(psi0, axes=(-2, -1)).astype(self._complex_dtype, copy=False)
         res0 = reservoir.get_state()
@@ -132,13 +132,13 @@ class IFRKFFTCudaSolver(AbstractSolver):
                 psi_new_k += self._scalar(h * bj) * self._phase(1.0 - self._c[j], h) * f[j]
         psi_new_k = psi_new_k.astype(self._complex_dtype, copy=False)
         if self._can_skip_after_step(boundary_condition):
-            state.psi = None
-            state.psi_k = psi_new_k
+            state.field = None
+            state.field_k = psi_new_k
         else:
-            state.psi = boundary_condition.after_step_action(
+            state.field = boundary_condition.after_step_action(
                 xp.fft.ifft2(psi_new_k, axes=(-2, -1)).astype(self._complex_dtype, copy=False)
             )
-            state.psi_k = xp.fft.fft2(state.psi, axes=(-2, -1)).astype(self._complex_dtype, copy=False)
+            state.field_k = xp.fft.fft2(state.field, axes=(-2, -1)).astype(self._complex_dtype, copy=False)
         res_new = []
         for field, r0 in enumerate(res0):
             value = r0.copy()
@@ -150,7 +150,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
 
     def step(self, potential, pump, reservoir: AbstractReservoir,
              boundary_condition: BoundaryCondition, state: SimulationState) -> None:
-        self.batch_physics.check(state.psi_k if state._psi is None else state.psi)
+        self.batch_physics.check(state.field_k if state._field is None else state.field)
         fused = self._cuda(reservoir)
         if fused is None:
             self._generic_step(potential, pump, reservoir, boundary_condition, state)
@@ -159,7 +159,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
 
     def advance(self, potential, pump, reservoir, boundary_condition, state,
                 start_step: int, n_steps: int) -> None:
-        self.batch_physics.check(state.psi_k if state._psi is None else state.psi)
+        self.batch_physics.check(state.field_k if state._field is None else state.field)
         if n_steps <= 0:
             return
         fused = self._cuda(reservoir)
