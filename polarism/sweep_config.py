@@ -42,7 +42,7 @@ def override_kind(path):
     if section == "physics":
         from polarism.config.simulation_parameters import PhysicsConstants
         if field in {item.name for item in fields(PhysicsConstants)}:
-            return "group" if field == "dispersion" else "batch"
+            return "group" if field in {"dispersion", "spin"} else "batch"
     if section == "noise":
         from polarism.config.simulation_parameters import NoiseParameters
         if field in {item.name for item in fields(NoiseParameters)}:

@@ -82,7 +82,7 @@ class AbstractSolver(ABC):
 
     def advance(self, model, state, n_steps: int) -> None:
         """Advance several steps and apply noise after accepted steps."""
-        self.batch_physics.check(state.field_k if state._field is None else state.field)
+        self.batch_physics.check(state.field_k if state._field is None else state.field, getattr(state, "components", 1))
         for _ in range(n_steps):
             completed = state.step
             report = self.step(model, state, self.config.solver.dt)

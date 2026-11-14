@@ -29,6 +29,20 @@
 | `nx`, `ny` | number of grid points | positive integers |
 | `lx`, `ly` | physical box lengths | positive floats |
 
+## Spin and polarization
+
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `physics.spin` | `scalar` for one component or `spinor` for circular components σ+ and σ− | `scalar` |
+| `physics.alpha_2` | cross-spin condensate interaction, meV·µm² | `0.0` |
+| `physics.zeeman` | σ+ minus σ− energy splitting Δ_Z, meV | `0.0` |
+| `physics.te_tm` | TE–TM coefficient β, meV·µm² | `0.0` |
+| `reservoir.components` | `null` follows the condensate (one for scalar, two for spinor); `1` shares a reservoir across both spin components | `null` |
+| `laser.circular_polarization` | incoherent pump polarization ρ_c in `[−1, 1]`; with two reservoirs, weights are `(1 ± ρ_c)/2` | `0.0` |
+| `drive.polarization` | normalized Jones amplitudes `[ψ+, ψ−]` for the coherent drive; quote complex YAML entries such as `"1j"` | `[1, 0]` |
+
+The three new spin energy fields are ignored in scalar runs, with a warning for nonzero values. Step 8a supports `physics.spin: spinor` with `solver.method: rk4-fdm` and `compute_engine.use_gpu: false`; other solvers and the GPU backend reject spinor runs during validation. See [Spin and polarization](../user-guide/spin-and-polarization.md) for the equations and result shapes.
+
 ## Validation
 
 `validate_config(cfg)` raises `ConfigValidationError` for physically invalid

@@ -20,7 +20,10 @@ class _LazyDatasets(Mapping):
 
     def __getitem__(self, name):
         dataset = self._group[self._names[name]]
-        return _ScalarComponentDataset(dataset) if self._field else dataset
+        if self._field and "component" in dataset.attrs.get("dims", ()):
+            axis = tuple(dataset.attrs["dims"]).index("component")
+            return _ScalarComponentDataset(dataset) if dataset.shape[axis] == 1 else dataset
+        return dataset
 
     def __iter__(self):
         return iter(self._names)

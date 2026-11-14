@@ -53,9 +53,9 @@ class BatchPhysics:
         """Check whether an optional term is active in any member."""
         return bool(np.any(self.host[name])) if name in self.host else getattr(self.physics, name, 0.0) != 0.0
 
-    def check(self, field):
+    def check(self, field, components=1):
         """Require a canonical scalar field with the matching batch axis."""
-        if field.ndim != self.ndim + 2 or field.shape[1] != 1:
+        if field.ndim != self.ndim + 2 or field.shape[1] != components:
             raise ValueError(f"batch_physics requires canonical field shape; got {field.shape}")
         if self.size is None:
             return

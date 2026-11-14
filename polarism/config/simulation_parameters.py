@@ -40,6 +40,10 @@ class PhysicsConstants:
     reservoir_diffusion_A: float = 0.0
     reservoir_diffusion_R: float = 0.0
     dispersion: str = "parabolic"
+    spin: str = "scalar"
+    alpha_2: float = 0.0
+    zeeman: float = 0.0
+    te_tm: float = 0.0
 
 
 @dataclass
@@ -107,6 +111,7 @@ class LaserParameters:
     profile: dict[str, Any] = field(default_factory=dict)
     envelope: dict[str, Any] = field(default_factory=lambda: {"type": "constant"})
     P0: float = 0.4
+    circular_polarization: float = 0.0
     Pmax: float = 1.2
     x0: float = 0.0
     y0: float = 0.0
@@ -128,6 +133,7 @@ class DriveParameters:
     energy: float = 0.0
     kx: float = 0.0
     ky: float = 0.0
+    polarization: list[complex] = field(default_factory=lambda: [1, 0])
     profile: dict[str, Any] = field(default_factory=lambda: {"type": "uniform"})
     envelope: dict[str, Any] = field(default_factory=lambda: {"type": "constant"})
 
@@ -137,6 +143,7 @@ class ReservoirParameters:
     """Store reservoir settings."""
     expose_results: bool = True
     reservoir_type: str = "double"
+    components: int | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 

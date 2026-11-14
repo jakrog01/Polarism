@@ -57,6 +57,19 @@ class NoiseApplier:
         for member in range(field.shape[0]):
             if self.strength[member] == 0.0:
                 continue
+            if field.shape[1] == 2:
+                for component in range(2):
+                    words = philox4x32(counter_words(np.arange(self.spatial_n), step, 1 + component),
+                                       int(self.seeds[member]))
+                    re, im = normal_pair(words, self.precision)
+                    density = (0 if np.ndim(active_density) == 0 else
+                               np.asarray(active_density[member, component if active_density.shape[1] == 2 else 0]).reshape(-1))
+                    sigma = np.sqrt(real_dtype(self.strength[member]) *
+                                    (real_dtype(self.gamma[member])
+                                     + real_dtype(self.scattering[member]) * density)
+                                    * real_dtype(self.dt / (4.0 * self.volume)))
+                    field[member, component] += (sigma * (re + 1j * im)).reshape(field.shape[2:])
+                continue
             words = philox4x32(counter_words(np.arange(self.spatial_n), step),
                                int(self.seeds[member]))
             re, im = normal_pair(words, self.precision)

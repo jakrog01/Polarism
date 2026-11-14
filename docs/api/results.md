@@ -97,6 +97,16 @@ have a scalar component axis and each dataset has `dims` and `units` attributes.
 Time uses ps and coordinates use µm. NPY and JSON output keep public field
 shapes and record dimensions and units in `metadata.json`.
 
+For spinor runs, `psi` and `density` have shape `(time, component, *space)` or
+`(time, member, component, *space)`, with component order `(σ+, σ−)`. HDF5
+keeps this axis; `load_results` squeezes a singleton component axis only for
+scalar fields. `density_plus` and `density_minus` have no public component axis.
+`stokes` has an axis of length four ordered `(S0, S1, S2, S3)`, followed by
+space; `degree_of_polarization` is a spatial field. Per-component reservoirs
+and `momentum_density` also retain the component axis. With
+`reservoir.components: 1`, reservoir fields have one shared component, which
+the reader squeezes.
+
 The user-facing result configuration exposes these main storage choices:
 
 | Flag | Meaning |

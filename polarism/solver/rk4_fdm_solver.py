@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 class RK4FDMSolver(AbstractSolver):
     """Solve the model with finite-difference RK4."""
     capabilities = SolverCapabilities(
-        components=frozenset({1}), ndim=frozenset({1, 2}),
+        components=frozenset({1, 2}), ndim=frozenset({1, 2}),
         grid_types=frozenset({"periodic", "closed-interval"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         custom_reservoirs="quantitative", potential=True,
         kinetic_relaxation=True, dispersion=frozenset({"parabolic"}),
@@ -37,7 +37,7 @@ class RK4FDMSolver(AbstractSolver):
         """Advance the solver by one time step."""
         reservoir = model.reservoir
         boundary_condition = model.boundary
-        self.batch_physics.check(state.field)
+        self.batch_physics.check(state.field, getattr(state, "components", 1))
         dt = self.config.solver.dt
         t = state.t
 

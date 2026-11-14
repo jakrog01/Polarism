@@ -104,7 +104,17 @@ def angular_momentum(controller):
         return (psi.conj() * rotated).imag.sum(axis=axes) / xp.maximum(
             _density(psi).sum(axis=axes), _TINY)
 
-    return _node("angular_momentum", "Angular momentum <L_z>/N", "ħ", compute, field=False)
+    node = _node("angular_momentum", "Angular momentum <L_z>/N", "ħ", compute, field=False)
+    if controller.state.components == 1:
+        return node
+    def selected(component):
+        def value(**context):
+            full = compute(**context)
+            return full[:, component] if context["state"].batched else full[component]
+        return value
+    return [_node(f"angular_momentum_{suffix}", f"Angular momentum {suffix}", "ħ",
+                  selected(component), field=False)
+            for component, suffix in ((0, "plus"), (1, "minus"))]
 
 
 @register_observable("center-of-mass")
@@ -124,6 +134,24 @@ def center_of_mass(controller):
             return (density * weight).sum(axis=axes) / xp.maximum(density.sum(axis=axes), _TINY)
         return compute
 
+    if controller.state.components == 2:
+        def per_component(coordinate, component):
+            def compute(**context):
+                xp = compute_engine.xp
+                psi = context["state"].psi_plus if component == 0 else context["state"].psi_minus
+                density = _density(psi)
+                axes = _axes(context["grid"])
+                weight = getattr(context["grid"], coordinate).astype(density.dtype, copy=False)
+                return (density * weight).sum(axis=axes) / xp.maximum(density.sum(axis=axes), _TINY)
+            return compute
+        nodes = []
+        for coordinate, name in (("X", "center_x"), ("Y", "center_y")):
+            if coordinate == "Y" and controller.grid.ndim == 1:
+                continue
+            for component, suffix in ((0, "plus"), (1, "minus")):
+                nodes.append(_node(f"{name}_{suffix}", f"Centre of mass {coordinate.lower()} {suffix}",
+                                   "µm", per_component(coordinate, component), field=False))
+        return nodes
     nodes = [_node("center_x", "Centre of mass x", "µm", make("X"), field=False)]
     if controller.grid.ndim == 2:
         nodes.append(_node("center_y", "Centre of mass y", "µm", make("Y"), field=False))
@@ -146,6 +174,9 @@ def current(controller):
             psi = context["state"].psi
             spacing = context["grid"].spacing[axis]
             gradient = _derivative(xp, psi, axis, spacing, periodic)
+            if context["state"].components == 2 and context["state"].batched:
+                physics = controller.model.physics
+                return (physics.get("hbar") / physics.get("m_eff")) * (psi.conj() * gradient).imag
             return _hbar_over_m(controller) * (psi.conj() * gradient).imag
         return compute
 
@@ -173,8 +204,18 @@ def momentum_density(controller):
         scale = math.prod(grid.spacing) ** 2 / (2.0 * math.pi) ** grid.ndim
         return xp.fft.fftshift(_density(spectrum) * scale, axes=axes)
 
-    return _node("momentum_density", "Momentum density |ψ(k)|²",
+    node = _node("momentum_density", "Momentum density |ψ(k)|²",
                  f"µm^{controller.grid.ndim}", compute, field=True)
+    if controller.state.components == 1:
+        return node
+    def component_compute(component):
+        def selected(**context):
+            value = compute(**context)
+            return value[:, component] if context["state"].batched else value[component]
+        return selected
+    return [node, *(_node(f"momentum_density_{suffix}", f"Momentum density {suffix}",
+                          f"µm^{controller.grid.ndim}", component_compute(component), field=True)
+                    for component, suffix in ((0, "plus"), (1, "minus")))]
 
 
 @register_observable("vortices")
@@ -204,7 +245,17 @@ def vortices(controller):
         found = (_winding(xp, psi, periodic) != 0) & (corner > floor)
         return found.sum(axis=axes)
 
-    return [
+    nodes = [
         _node("vortex_charge", "Vortex winding", "", charge, field=True),
         _node("vortex_count", "Vortex count", "", count, field=False),
     ]
+    if controller.state.components == 1:
+        return nodes
+    def selected(component):
+        def value(**context):
+            full = count(**context)
+            return full[:, component] if context["state"].batched else full[component]
+        return value
+    return [nodes[0], *(_node(f"vortex_count_{suffix}", f"Vortex count {suffix}", "",
+                              selected(component), field=False)
+                        for component, suffix in ((0, "plus"), (1, "minus")))]

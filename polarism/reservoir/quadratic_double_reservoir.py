@@ -67,6 +67,7 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
         """Set up the quadratic double reservoir."""
         self.xp = compute_engine.xp
         self.config = reservoir_config
+        self.components = getattr(reservoir_config, "components", None) or (2 if getattr(physics, "spin", "scalar") == "spinor" else 1)
         self.batch_physics = BatchPhysics(physics, batch_physics, self.xp, precision, ndim=grid.ndim)
         self.R = self.batch_physics.get("R")
         self.gamma_R = self.batch_physics.get("gamma_R")
@@ -80,15 +81,15 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
         self._spatial_shape = grid.shape
         self._batched = False
         rdtype = real_dtype(self.xp, precision)
-        self.nR = self.xp.zeros((1, 1, *grid.shape), dtype=rdtype)
-        self.nI = self.xp.zeros((1, 1, *grid.shape), dtype=rdtype)
+        self.nR = self.xp.zeros((1, self.components, *grid.shape), dtype=rdtype)
+        self.nI = self.xp.zeros((1, self.components, *grid.shape), dtype=rdtype)
 
     def reset(self, batch_size: int | None = None) -> None:
         """Reset zero density fields, optionally with a leading batch axis."""
         if batch_size is not None and (isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1):
             raise ValueError("batch_size must be a positive integer")
         self._batched = batch_size is not None
-        shape = (1 if batch_size is None else batch_size, 1, *self._spatial_shape)
+        shape = (1 if batch_size is None else batch_size, self.components, *self._spatial_shape)
         self.nR = self.xp.zeros(shape, dtype=self.nR.dtype)
         self.nI = self.xp.zeros(shape, dtype=self.nI.dtype)
 
@@ -139,7 +140,7 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
         Union["np.ndarray", "cp.ndarray"], Union["np.ndarray", "cp.ndarray"]
     ]:
         """Return time derivatives ``(dnR, dnI)``."""
-        self.batch_physics.check(psi)
+        self.batch_physics.check(psi, self.components)
         self._check_state_shape(state, psi.shape)
         nR, nI = state
         abs_psi2 = rho if rho is not None else psi.real * psi.real + psi.imag * psi.imag

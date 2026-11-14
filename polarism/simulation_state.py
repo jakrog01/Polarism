@@ -36,6 +36,7 @@ class SimulationState:
         seed: Optional[int] = None,
         batch_size: int | None = None,
         initial_condition: InitialConditionParameters | None = None,
+        components: int = 1,
     ):
         """Initialize each member from a seeded spatial field.
 
@@ -46,7 +47,9 @@ class SimulationState:
         ):
             raise ValueError("batch_size must be a positive integer")
         self.batch_size = 1 if batch_size is None else batch_size
-        self.components = 1
+        if components not in (1, 2):
+            raise ValueError("components must be 1 or 2")
+        self.components = components
         self.batched = batch_size is not None
         self._spatial_shape = grid.shape
         self._fft_axes = tuple(range(-grid.ndim, 0))
@@ -61,12 +64,25 @@ class SimulationState:
             cdtype=cdtype,
             rdtype=rdtype,
         )
+        if components == 2:
+            other = make_initial_psi(
+                xp, grid.shape, grid.spacing, eps,
+                mode=mode, k_cutoff_um=k_cutoff_um,
+                seed=None if seed is None else seed + 1,
+                cdtype=cdtype, rdtype=rdtype,
+            )
+            psi = xp.stack((psi, other))
         if initial_condition is not None:
             deterministic = create_initial_condition(grid, initial_condition, xp, cdtype)
             if deterministic is not None:
-                psi = psi + deterministic
+                if components == 1 and deterministic.shape != grid.shape:
+                    raise ValueError("scalar state requires a scalar initial condition")
+                if components == 2 and deterministic.shape == grid.shape:
+                    psi[0] = psi[0] + deterministic
+                else:
+                    psi = psi + deterministic
         if self.batched:
-            psi = xp.broadcast_to(psi, (self.batch_size, *grid.shape)).copy()
+            psi = xp.broadcast_to(psi, (self.batch_size, *((components,) if components == 2 else ()), *grid.shape)).copy()
         self._field = psi.reshape(self.batch_size, self.components, *grid.shape)
         self._field_k = None
         self.t = 0.0
@@ -106,6 +122,9 @@ class SimulationState:
 
     @property
     def _public_shape(self) -> tuple[int, ...]:
+        if self.components == 2:
+            return ((self.batch_size, 2, *self._spatial_shape) if self.batched
+                    else (2, *self._spatial_shape))
         return ((self.batch_size, *self._spatial_shape) if self.batched
                 else self._spatial_shape)
 
@@ -113,7 +132,23 @@ class SimulationState:
     def psi(self) -> Union[np.ndarray, cp.ndarray]:
         """Return a public-shape view of the real-space wavefunction."""
         field = self.field
+        if self.components == 2:
+            return field if self.batched else field[0]
         return field[:, 0] if self.batched else field[0, 0]
+
+    @property
+    def psi_plus(self):
+        """Return the σ+ circular component."""
+        if self.components != 2:
+            raise AttributeError("psi_plus requires a spinor state")
+        return self.psi[:, 0] if self.batched else self.psi[0]
+
+    @property
+    def psi_minus(self):
+        """Return the σ− circular component."""
+        if self.components != 2:
+            raise AttributeError("psi_minus requires a spinor state")
+        return self.psi[:, 1] if self.batched else self.psi[1]
 
     @psi.setter
     def psi(self, value: Union[np.ndarray, cp.ndarray] | None) -> None:
@@ -130,6 +165,8 @@ class SimulationState:
         field_k = self.field_k
         if field_k is None:
             return None
+        if self.components == 2:
+            return field_k if self.batched else field_k[0]
         return field_k[:, 0] if self.batched else field_k[0, 0]
 
     @psi_k.setter
