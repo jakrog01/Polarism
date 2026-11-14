@@ -73,7 +73,7 @@ during evolution:
 noise:
   enabled: true
   seed: null
-  initial: legacy_positive_uniform
+  initial: complex_gaussian_zero_mean
   initial_amplitude: 1.0e-3
   initial_k_cutoff_um: null
   stochastic: none
@@ -84,13 +84,16 @@ noise:
 | --- | --- | --- |
 | `enabled` | `true` | Set to `false` for an exactly zero initial field and no stochastic increments |
 | `seed` | `null` | Non-negative int64 seed; `null` resolves from OS entropy and is recorded |
-| `initial` | `legacy_positive_uniform` | `none`, `legacy_positive_uniform`, `complex_gaussian_zero_mean`, or `filtered_complex_gaussian` |
+| `initial` | `complex_gaussian_zero_mean` | `none`, `legacy_positive_uniform`, `complex_gaussian_zero_mean`, or `filtered_complex_gaussian` |
 | `initial_amplitude` | `1.0e-3` | Amplitude of the initial field |
 | `initial_k_cutoff_um` | `null` | Required positive radial cutoff for filtered initial fields |
 | `stochastic` | `none` | `none` or `wigner` |
 | `stochastic_strength` | `1.0` | Non-negative multiplier of Wigner noise variance; zero disables increments |
 
-The default initial mode reproduces historical seeded starts. For a zero field
+The default `complex_gaussian_zero_mean` is unbiased white noise with RMS
+amplitude `initial_amplitude`. `legacy_positive_uniform`, the default before
+0.7, has a non-zero mean, so it also seeds a uniform k = 0 component; use it
+only to reproduce old runs. For a zero field
 with stochastic growth, set `initial: none` and `stochastic: wigner`. For a
 fully deterministic zero-field run, set `enabled: false`. The initial field
 uses NumPy's seeded generator on both devices.

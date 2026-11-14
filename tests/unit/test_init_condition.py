@@ -24,7 +24,7 @@ def test_gaussian_initialisation_invariants_and_filter() -> None:
 
 def test_legacy_and_seed_contracts() -> None:
     eps = 1e-3
-    legacy = make_initial_psi(np, (64, 64), (1.0, 1.0), eps, seed=7)
+    legacy = make_initial_psi(np, (64, 64), (1.0, 1.0), eps, mode="legacy_positive_uniform", seed=7)
     assert abs(legacy.real.mean() - eps / 2) < eps / 50
     assert abs(legacy.imag.mean() - eps / 2) < eps / 50
     assert abs(legacy.mean()) > eps / 10 and not np.isclose(np.sqrt(np.mean(np.abs(legacy) ** 2)), eps)

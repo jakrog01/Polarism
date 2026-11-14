@@ -28,7 +28,7 @@ class SimulationState:
         eps: float = 1e-3,
         precision: str = "double",
         *,
-        mode: str = "legacy_positive_uniform",
+        mode: str = "complex_gaussian_zero_mean",
         k_cutoff_um: Optional[float] = None,
         seed: Optional[int] = None,
         batch_size: int | None = None,

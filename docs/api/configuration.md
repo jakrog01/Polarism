@@ -226,8 +226,10 @@ The remaining fields belong to `physics`:
 | `reservoir_diffusion_A` | active-density diffusion coefficient for `double` | nonnegative float, default `0.0` |
 | `reservoir_diffusion_R` | active-density diffusion coefficient for `single` and `quadratic-double` | nonnegative float, default `0.0` |
 
-The legacy mode is kept for reproducibility.  For geometry-sensitive runs, prefer
-zero-mean or filtered seeds and record the cutoff in run metadata.
+The default `initial` is `complex_gaussian_zero_mean`. The legacy mode (the
+default before 0.7) is kept only to reproduce old runs: its non-zero mean seeds
+a uniform k = 0 component. For geometry-sensitive runs, prefer the filtered
+mode and record the cutoff in run metadata.
 
 Relaxation and diffusion are model terms, not visualization filters.  They are
 disabled by default and should be enabled only with a stated physical rationale

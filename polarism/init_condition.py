@@ -11,7 +11,7 @@ def make_initial_psi(
     shape: tuple[int, ...],
     spacing: tuple[float, ...],
     eps: float,
-    mode: str = "legacy_positive_uniform",
+    mode: str = "complex_gaussian_zero_mean",
     k_cutoff_um: Optional[float] = None,
     seed: Optional[int] = None,
     cdtype=None,

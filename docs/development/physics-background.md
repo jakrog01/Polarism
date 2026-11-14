@@ -59,9 +59,10 @@ The initial condensate field is not a measured density.  It is a seed for
 spontaneous symmetry breaking and stochastic growth.  The code exposes this
 choice explicitly:
 
-- `legacy_positive_uniform`: the historical seed, `eps*(Uniform[0,1)+i Uniform[0,1))`
+- `legacy_positive_uniform`: the historical seed (default before 0.7),
+  `eps*(Uniform[0,1)+i Uniform[0,1))`; its non-zero mean is a uniform k = 0 component
 - `none`: an exactly zero initial field
-- `complex_gaussian_zero_mean`: unbiased complex Gaussian seed
+- `complex_gaussian_zero_mean` (default): unbiased complex Gaussian seed
 - `filtered_complex_gaussian`: zero-mean complex Gaussian seed projected to a
   finite radial k band and RMS-normalized
 

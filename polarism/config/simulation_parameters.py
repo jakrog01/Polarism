@@ -46,7 +46,7 @@ class NoiseParameters:
     """Control initial and per-step condensate noise."""
     enabled: bool = True
     seed: int | None = None
-    initial: str = "legacy_positive_uniform"
+    initial: str = "complex_gaussian_zero_mean"
     initial_amplitude: float = 1e-3
     initial_k_cutoff_um: float | None = None
     stochastic: str = "none"
