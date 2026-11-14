@@ -10,6 +10,7 @@ from polarism.boundary_conditions.absorption.absorption_registry import (
 )
 from polarism.dispersion import available_dispersions
 from polarism.grid.create_grid import grid_boundary
+from polarism.initial_condition import available_initial_conditions
 from polarism.model_terms import available_terms
 from polarism.results.observable_registry import available_observables
 from polarism.results.storage import available_storages
@@ -51,6 +52,7 @@ def validate_config(cfg: Config) -> None:
     _validate_physics(cfg)
     _validate_terms(cfg)
     _validate_noise(cfg)
+    _validate_initial_condition(cfg)
     _validate_solver(cfg)
     _validate_result(cfg)
     _validate_checkpoint(cfg)
@@ -141,6 +143,35 @@ def _validate_noise(cfg: Config) -> None:
         raise ConfigValidationError(f"noise.stochastic must be 'none' or 'wigner', got {n.stochastic!r}")
     if not isinstance(n.stochastic_strength, (int, float)) or not math.isfinite(n.stochastic_strength) or n.stochastic_strength < 0:
         raise ConfigValidationError(f"noise.stochastic_strength must be finite and >= 0, got {n.stochastic_strength!r}")
+
+
+def _validate_initial_condition(cfg: Config) -> None:
+    ic = cfg.initial_condition
+    if not isinstance(ic.type, str):
+        raise ConfigValidationError(f"initial_condition.type must be a string, got {ic.type!r}")
+    try:
+        available_initial_conditions.lookup(ic.type)
+    except ValueError as exc:
+        raise ConfigValidationError(f"initial_condition.type: {exc}") from exc
+    for name in ("amplitude", "x0", "y0", "kx", "ky", "core_width"):
+        value = getattr(ic, name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ConfigValidationError(f"initial_condition.{name} must be a finite number, got {value!r}")
+    if ic.amplitude < 0:
+        raise ConfigValidationError(f"initial_condition.amplitude must be >= 0, got {ic.amplitude!r}")
+    if ic.core_width <= 0:
+        raise ConfigValidationError(f"initial_condition.core_width must be > 0, got {ic.core_width!r}")
+    for name in ("charge", "frame"):
+        if type(getattr(ic, name)) is not int:
+            raise ConfigValidationError(f"initial_condition.{name} must be an integer, got {getattr(ic, name)!r}")
+    if ic.path is not None and (not isinstance(ic.path, str) or not ic.path):
+        raise ConfigValidationError("initial_condition.path must be a nonempty path or None")
+    if not isinstance(ic.extra, dict):
+        raise ConfigValidationError("initial_condition.extra must be a mapping")
+    if ic.type == "file" and ic.path is None:
+        raise ConfigValidationError("initial_condition.path is required when initial_condition.type='file'")
+    if ic.type == "vortex" and cfg.grid.ndim != 2:
+        raise ConfigValidationError("initial_condition.type='vortex' requires a 2D grid")
 
 
 def _validate_solver(cfg: Config) -> None:

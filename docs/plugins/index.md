@@ -1,6 +1,6 @@
 # Plugins
 
-A plugin is a Python module that registers a laser, potential, reservoir,
+A plugin is a Python module that registers a laser, potential, initial condition, reservoir,
 solver, extra term, dispersion, grid, absorption strategy, storage format, or observable under a configuration name. Start with
 [Your first plugin](first-plugin.md) for a complete run before using the
 component-specific contracts below.
@@ -30,6 +30,7 @@ component-specific contracts below.
 | --- | --- | --- | --- |
 | [Laser](lasers.md) | `polarism.laser.register_laser` | `cfg.laser.laser_type` | `LaserClass(laser_config, X, Y, precision)` |
 | [Potential](potentials.md) | `polarism.potential.register_potential` | `cfg.potential.potential_type` | `potential_fn(X, Y, potential_config)` |
+| [Initial condition](initial-conditions.md) | `polarism.initial_condition.register_initial_condition` | `cfg.initial_condition.type` | `condition_fn(grid, initial_condition_config, xp, cdtype)` |
 | [Reservoir](reservoirs.md) | `polarism.reservoir.register_reservoir` | `cfg.reservoir.reservoir_type` | `ReservoirClass(reservoir_config, physics, grid, precision)` |
 | [Solver](solvers.md) | `polarism.solver.register_solver` | `cfg.solver.method` | `SolverClass(config, grid, model)` |
 | [Term](terms.md) | `polarism.model_terms.register_term` | keys of `cfg.terms` | `TermClass(params, grid, physics)` |

@@ -5,11 +5,14 @@ from typing import TYPE_CHECKING, Optional, Union
 
 from polarism.compute_engine import compute_engine
 from polarism.config.dtype_utils import complex_dtype, real_dtype
-from polarism.init_condition import make_initial_psi
+from polarism.noise.initial_field import make_initial_psi
+from polarism.initial_condition import create_initial_condition
 
 if TYPE_CHECKING:
     import cupy as cp
     import numpy as np
+
+    from polarism.config.simulation_parameters import InitialConditionParameters
 
     from polarism.grid.simulation_grid import SimulationGrid
 
@@ -32,8 +35,12 @@ class SimulationState:
         k_cutoff_um: Optional[float] = None,
         seed: Optional[int] = None,
         batch_size: int | None = None,
+        initial_condition: InitialConditionParameters | None = None,
     ):
-        """Initialize each member from a seeded spatial field."""
+        """Initialize each member from a seeded spatial field.
+
+        A non-``zero`` *initial_condition* is added to the noise field.
+        """
         if batch_size is not None and (
             isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1
         ):
@@ -54,6 +61,10 @@ class SimulationState:
             cdtype=cdtype,
             rdtype=rdtype,
         )
+        if initial_condition is not None:
+            deterministic = create_initial_condition(grid, initial_condition, xp, cdtype)
+            if deterministic is not None:
+                psi = psi + deterministic
         if self.batched:
             psi = xp.broadcast_to(psi, (self.batch_size, *grid.shape)).copy()
         self._field = psi.reshape(self.batch_size, self.components, *grid.shape)

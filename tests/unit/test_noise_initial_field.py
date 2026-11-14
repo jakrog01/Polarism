@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polarism.init_condition import make_initial_psi
+from polarism.noise.initial_field import make_initial_psi
 from polarism.compute_engine import has_cuda_device
 
 TOL_MACHINE_F64 = 1e-12  # Exact algebraic identity in float64.

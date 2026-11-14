@@ -55,6 +55,22 @@ class NoiseParameters:
 
 
 @dataclass
+class InitialConditionParameters:
+    """Select the deterministic part of the initial wavefunction."""
+    type: str = "zero"
+    amplitude: float = 1.0
+    x0: float = 0.0
+    y0: float = 0.0
+    kx: float = 0.0
+    ky: float = 0.0
+    charge: int = 1
+    core_width: float = 1.0
+    path: str | None = None
+    frame: int = -1
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class BoundaryConditionParameters:
     """Store boundary absorption settings."""
     profile_type: str = "sin2"
@@ -182,6 +198,9 @@ class Config:
     physics: PhysicsConstants = field(default_factory=PhysicsConstants)
     terms: dict[str, Any] = field(default_factory=dict)
     noise: NoiseParameters = field(default_factory=NoiseParameters)
+    initial_condition: InitialConditionParameters = field(
+        default_factory=InitialConditionParameters
+    )
     laser: LaserParameters = field(default_factory=LaserParameters)
     reservoir: ReservoirParameters = field(default_factory=ReservoirParameters)
     solver: SolverParameters = field(default_factory=SolverParameters)

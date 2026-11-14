@@ -32,6 +32,7 @@ nav:
           - Your first plugin: plugins/first-plugin.md
           - Lasers: plugins/lasers.md
           - Potentials: plugins/potentials.md
+          - Initial conditions: plugins/initial-conditions.md
           - Reservoirs: plugins/reservoirs.md
           - Solvers: plugins/solvers.md
           - Terms: plugins/terms.md

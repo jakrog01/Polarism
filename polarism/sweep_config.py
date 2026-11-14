@@ -36,6 +36,12 @@ def override_kind(path):
         from polarism.config.simulation_parameters import NoiseParameters
         if field in {item.name for item in fields(NoiseParameters)}:
             return "group" if field in {"enabled", "stochastic"} else "batch"
+    if section == "initial_condition":
+        from polarism.config.simulation_parameters import InitialConditionParameters
+        if field in {item.name for item in fields(InitialConditionParameters)}:
+            return "group" if field in {"type", "path"} else "batch"
+        if field.startswith("extra.") and len(field) > 6:
+            return "batch"
     if section in {"laser", "potential"}:
         from polarism.config.simulation_parameters import PotentialParameters
         known = LaserParameters if section == "laser" else PotentialParameters

@@ -10,6 +10,7 @@ The full runtime configuration is held in `polarism.config.simulation_parameters
 | `physics` | Material constants, interaction strengths, and decay rates |
 | `terms` | Optional extra terms added to the condensate equation |
 | `noise` | Initial field, seed, and stochastic Wigner increments |
+| `initial_condition` | Deterministic start field added to the initial noise |
 | `boundary_condition` | Absorption type, profile, and mask width |
 | `potential` | External potential family and parameters |
 | `laser` | Pump definition for single or multiple sources |
@@ -126,6 +127,53 @@ The reservoir diffusion coefficients also default to `0.0`.  They add physical
 transport to reservoir fields (`nI`, `nA`, or `nR`, depending on reservoir
 model), using periodic wrapping on periodic grids and mirrored Neumann behavior
 on `closed-interval` grids.
+
+## Initial conditions
+
+The start field is the deterministic `initial_condition` plus the random field
+from `noise.initial` (when `noise.enabled`). The default `type: zero` adds
+nothing, so the start field is exactly the noise field and existing configs
+are unchanged. With `noise.enabled: false` the start field is the
+deterministic part alone.
+
+```yaml
+initial_condition:
+  type: vortex
+  amplitude: 1.0
+  x0: 0.0
+  y0: 0.0
+  charge: 1
+  core_width: 1.0
+```
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `type` | `zero` | `zero`, `plane-wave`, `vortex`, `file`, or a registered [plugin](../plugins/initial-conditions.md) name |
+| `amplitude` | `1.0` | Field amplitude, √density (µm⁻¹ in 2D); non-negative |
+| `x0`, `y0` | `0.0` | Centre of the vortex in µm; the grid is centred on the origin |
+| `kx`, `ky` | `0.0` | Wave vector of the plane wave in rad/µm; 1D uses `kx` only |
+| `charge` | `1` | Integer winding number of the vortex; may be negative |
+| `core_width` | `1.0` | Vortex healing length in µm; positive |
+| `path` | `null` | Source file for `type: file` |
+| `frame` | `-1` | Saved frame read from a results file; `-1` is the last |
+| `extra` | `{}` | Free-form keys for plugin conditions |
+
+| `type` | Start field |
+| --- | --- |
+| `zero` | $0$ |
+| `plane-wave` | $A\,e^{i(k_x x + k_y y)}$ |
+| `vortex` | $A \tanh(r/w)\,e^{i m \theta}$ with $r,\theta$ measured from $(x_0, y_0)$; 2D only |
+| `file` | The field stored in `path`; `amplitude` is not applied |
+
+`type: file` reads a `.npy` array of the grid's shape, a Polarism `results.h5`
+that saved `psi` (`result.save_psi`, member 0 when it holds a batch, frame
+`frame`), or a checkpoint (member 0). Its shape must equal the grid's exactly;
+there is no interpolation, and a mismatch is an error.
+
+In a parameter sweep, `initial_condition.amplitude`, `x0`, `y0`, `kx`, `ky`,
+`charge`, `core_width`, and `frame` can vary inside a batch, while
+`initial_condition.type` and `initial_condition.path` form separate groups.
+Each member adds its own deterministic part to its own noise field.
 
 ## Solver controls
 

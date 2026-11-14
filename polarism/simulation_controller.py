@@ -212,6 +212,7 @@ class SimulationController:
                 mode=member.noise.initial if member.noise.enabled else "none",
                 k_cutoff_um=member.noise.initial_k_cutoff_um,
                 seed=member.noise.seed,
+                initial_condition=member.initial_condition,
             ) for member in member_configs]
             initial_fields = self.xp.stack([state.psi for state in states])
             self.state = states[0]
@@ -231,6 +232,7 @@ class SimulationController:
                 mode=cfg.noise.initial if cfg.noise.enabled else "none",
                 k_cutoff_um=cfg.noise.initial_k_cutoff_um,
                 seed=cfg.noise.seed,
+                initial_condition=cfg.initial_condition,
             )
         self._batch_physics = batch_physics
         self.max_laser_power = self._compute_max_laser_power()

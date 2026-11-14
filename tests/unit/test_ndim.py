@@ -11,7 +11,7 @@ from polarism.config.simulation_parameters import Config, GridParameters
 from polarism.config.validation import ConfigValidationError, validate_config
 from polarism.boundary_conditions.absorption.absorption_strategy import create_absorption_profile
 from polarism.grid.create_grid import create_grid
-from polarism.init_condition import make_initial_psi
+from polarism.noise.initial_field import make_initial_psi
 from polarism.potential.create_potential import create_potential
 from polarism.simulation_controller import SimulationController
 from polarism.solver.rk4_cuda_solver import build_flat_1d_sources

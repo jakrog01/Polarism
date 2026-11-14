@@ -12,6 +12,7 @@
 | `physics` | driven-dissipative GPE and reservoir coefficients |
 | `terms` | extra [term plugins](../plugins/terms.md) added to the condensate equation |
 | `noise` | initial and stochastic condensate noise |
+| `initial_condition` | deterministic start field added to the initial noise |
 | `laser` | pump mode and pump-shape parameters |
 | `reservoir` | reservoir model selection |
 | `solver` | time integrator and timestep settings |
@@ -43,6 +44,9 @@ configurations.  Checks include:
 - `noise.initial_amplitude >= 0`; `noise.initial` is a recognised value;
   `noise.initial_k_cutoff_um > 0` is required for filtered initial fields;
   `noise.seed` is a non-negative int64 or `null`; `noise.stochastic_strength >= 0`
+- `initial_condition.type` must be registered; `amplitude >= 0`; `core_width > 0`;
+  `amplitude`, `x0`, `y0`, `kx`, `ky` are finite; `charge` and `frame` are
+  integers; `path` is required for `file`; `vortex` requires a 2D grid
 - `boundary_condition.strength >= 0`; `mask_width_percent` in `[0, 0.5]`;
   `absorption` must be a registered strategy; `profile_type` is in
   `{'sin2', 'parabolic'}` when absorption is active
@@ -219,6 +223,21 @@ Noise options in the separate `noise` block:
 | `initial_k_cutoff_um` | radial cutoff in rad/um for `filtered_complex_gaussian` | positive float, required for filtered mode |
 | `stochastic` | per-step noise model | `none` or `wigner` |
 | `stochastic_strength` | multiplier of stochastic variance | non-negative float |
+
+The `initial_condition` block sets the deterministic part of the start field
+(see [Initial conditions](../user-guide/grid-and-parameters.md#initial-conditions)):
+
+| Field | Meaning | Main options |
+| --- | --- | --- |
+| `type` | registered [initial condition](../plugins/initial-conditions.md) | `zero` (default), `plane-wave`, `vortex`, `file` |
+| `amplitude` | field amplitude (not applied by `file`) | non-negative float, default `1.0` |
+| `x0`, `y0` | vortex centre in µm | floats, default `0.0` |
+| `kx`, `ky` | plane-wave wave vector in rad/µm | floats, default `0.0` |
+| `charge` | vortex winding number | integer, default `1` |
+| `core_width` | vortex healing length in µm | positive float, default `1.0` |
+| `path` | source of `file`: `.npy`, results `.h5` or checkpoint | path, default `null` |
+| `frame` | frame read from a results file | integer, default `-1` |
+| `extra` | free-form keys for plugin conditions | mapping, default `{}` |
 
 The remaining fields belong to `physics`:
 
