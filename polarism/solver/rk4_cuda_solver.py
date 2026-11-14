@@ -1552,11 +1552,139 @@ def _auto_tune_block_size(kern_rhs, _N: int) -> int:
             continue
     return best_block
 
+
+def build_spinor_tiled_rhs_source(real_type: str, boundary: str,
+                                  tile_x: int, tile_y: int, terms=()) -> str:
+    """Build a two-field shared-memory stencil with corner halo samples."""
+    if real_type not in ("float", "double") or boundary not in ("periodic", "closed-interval"):
+        raise ValueError("Invalid spinor CUDA stencil variant")
+    periodic = 1 if boundary == "periodic" else 0
+    source = f'''typedef {real_type} real;
+__device__ __forceinline__ int spinor_coord(int value, int length) {{
+    if ({periodic}) return (value % length + length) % length;
+    if (length == 1) return 0;
+    while (value < 0 || value >= length) value = value < 0 ? -value : 2*length-2-value;
+    return value;
+}}
+extern "C" __global__ void spinor_tiled_rhs(
+    const real* field, const real* active, const real* inactive,
+    const real* potential_re, const real* potential_im,
+    const real* constants, real* output, int nx, int ny,
+    real inv_dx2, real inv_dy2, real inv_4dxdy) {{
+    const int tx = {tile_x}, ty = {tile_y}, pitch = tx+2, area = (tx+2)*(ty+2);
+    const int spatial_n = nx*ny, member = blockIdx.z, lane = threadIdx.x;
+    const int base_x = blockIdx.x*tx, base_y = blockIdx.y*ty;
+    extern __shared__ real scratch[];
+    for (int p = lane; p < area; p += blockDim.x) {{
+        int x = spinor_coord(base_x+p%pitch-1, nx);
+        int y = spinor_coord(base_y+p/pitch-1, ny);
+        int cell = y*nx+x;
+        for (int c = 0; c < 2; ++c) {{
+            int source = (member*2+c)*spatial_n+cell;
+            scratch[(2*c)*area+p] = field[2*source];
+            scratch[(2*c+1)*area+p] = field[2*source+1];
+        }}
+    }}
+    __syncthreads();
+    if (lane >= tx*ty) return;
+    int local_x = lane%tx, local_y = lane/tx;
+    int gx = base_x+local_x, gy = base_y+local_y;
+    if (gx >= nx || gy >= ny) return;
+    int cell = gy*nx+gx, p = (local_y+1)*pitch+local_x+1;
+    const real* q = constants+11*member;
+    real hbar = q[0], mass = q[1], gC = q[2], alpha2 = q[3];
+    real zeeman = q[4], beta = q[5], gR = q[6], gI = q[7];
+    real R = q[8], gammaC = q[9], eta = q[10];
+    real kinetic = -hbar*hbar/((real)2*mass), relax = eta*hbar/((real)2*mass);
+    real densities[2];
+    for (int c = 0; c < 2; ++c) {{
+        real re = scratch[(2*c)*area+p], im = scratch[(2*c+1)*area+p];
+        densities[c] = re*re+im*im;
+    }}
+    for (int c = 0; c < 2; ++c) {{
+        int index = (member*2+c)*spatial_n+cell, other = 1-c;
+        real re = scratch[(2*c)*area+p], im = scratch[(2*c+1)*area+p];
+        real lap_re = (scratch[(2*c)*area+p+1]-2*re+scratch[(2*c)*area+p-1])*inv_dx2;
+        real lap_im = (scratch[(2*c+1)*area+p+1]-2*im+scratch[(2*c+1)*area+p-1])*inv_dx2;
+        if (ny > 1) {{
+            lap_re += (scratch[(2*c)*area+p+pitch]-2*re+scratch[(2*c)*area+p-pitch])*inv_dy2;
+            lap_im += (scratch[(2*c+1)*area+p+pitch]-2*im+scratch[(2*c+1)*area+p-pitch])*inv_dy2;
+        }}
+        real ore = scratch[(2*other)*area+p], oim = scratch[(2*other+1)*area+p];
+        real diff_re = (scratch[(2*other)*area+p+1]-2*ore+scratch[(2*other)*area+p-1])*inv_dx2;
+        real diff_im = (scratch[(2*other+1)*area+p+1]-2*oim+scratch[(2*other+1)*area+p-1])*inv_dx2;
+        real cross_re = 0, cross_im = 0;
+        if (ny > 1) {{
+            diff_re -= (scratch[(2*other)*area+p+pitch]-2*ore+scratch[(2*other)*area+p-pitch])*inv_dy2;
+            diff_im -= (scratch[(2*other+1)*area+p+pitch]-2*oim+scratch[(2*other+1)*area+p-pitch])*inv_dy2;
+            cross_re = (scratch[(2*other)*area+p+pitch+1]-scratch[(2*other)*area+p+pitch-1]
+                      -scratch[(2*other)*area+p-pitch+1]+scratch[(2*other)*area+p-pitch-1])*inv_4dxdy;
+            cross_im = (scratch[(2*other+1)*area+p+pitch+1]-scratch[(2*other+1)*area+p+pitch-1]
+                      -scratch[(2*other+1)*area+p-pitch+1]+scratch[(2*other+1)*area+p-pitch-1])*inv_4dxdy;
+        }}
+        real sign = c == 0 ? (real)1 : (real)-1;
+        real te_re = -beta*(diff_re+2*sign*cross_im);
+        real te_im = -beta*(diff_im-2*sign*cross_re);
+        real nr = active[index], ni = inactive[index];
+        real energy = potential_re[index]+gC*densities[c]+alpha2*densities[other]
+                    +sign*zeeman*(real)0.5+gR*nr+gI*ni;
+        real gain = (R*nr-gammaC)*(real)0.5+potential_im[index]/hbar;
+        output[2*index] = gain*re+(energy*im+kinetic*lap_im+te_im)/hbar+relax*nr*lap_re;
+        output[2*index+1] = gain*im-(energy*re+kinetic*lap_re+te_re)/hbar+relax*nr*lap_im;
+    }}
+}}
+'''
+    if not terms:
+        return source
+    import re
+
+    declarations = ("const real* x_coords", "const real* y_coords", "real t_stage")
+    loads = []
+    energy_terms = []
+    rate_terms = []
+    for number, term in enumerate(terms):
+        expression = term.cuda.expression
+        for ctype, name, *layout in term.cuda.arguments:
+            kind = layout[0] if layout else "raw"
+            kernel_name = f"term_{number}_{name}"
+            declared_name = kernel_name if kind == "raw" else f"{kernel_name}_arg"
+            declarations += (f"{ctype.replace('{REAL}', real_type)} {declared_name}",)
+            if kind != "raw":
+                if "*" not in ctype:
+                    raise ValueError("Shared or batched CUDA arguments must be arrays")
+                value_type = ctype.replace("const", "").replace("*", "").replace(
+                    "{REAL}", real_type).strip()
+                offset = "cell" if kind == "shared" else "member*spatial_n+cell"
+                loads.append(f"        const {value_type} {kernel_name} = "
+                             f"{declared_name}[{offset}];")
+            expression = re.sub(rf"\b{name}\b", kernel_name, expression)
+        if term.category == "energy":
+            energy_terms.append(f"({expression})")
+        else:
+            rate_terms.append(f"({expression})")
+    source = source.replace("real inv_dx2, real inv_dy2, real inv_4dxdy) {",
+                            "real inv_dx2, real inv_dy2, real inv_4dxdy, "
+                            + ", ".join(declarations) + ") {")
+    local = ("        real rho = densities[c], n_active = nr, n_inactive = ni;\n"
+             "        real psi_re = re, psi_im = im;\n"
+             "        real x = x_coords[cell], y = y_coords[cell];\n")
+    if loads:
+        local += "\n".join(loads) + "\n"
+    local += ("        real extra_energy = " + (" + ".join(energy_terms) or "(real)0") + ";\n"
+              "        real extra_rate = " + (" + ".join(rate_terms) or "(real)0") + ";\n")
+    source = source.replace("        real energy = potential_re[index]", local +
+                            "        real energy = potential_re[index]")
+    source = source.replace("+sign*zeeman*(real)0.5+gR*nr+gI*ni;",
+                            "+sign*zeeman*(real)0.5+gR*nr+gI*ni+extra_energy;")
+    source = source.replace("+potential_im[index]/hbar;",
+                            "+potential_im[index]/hbar+extra_rate;")
+    return source
+
 @register_solver("rk4-cuda")
 class RK4CudaSolver(AbstractSolver):
     """Generic fused RK4 CUDA solver with overridable kernel and launch hooks."""
     capabilities = SolverCapabilities(
-        components=frozenset({1}), ndim=frozenset({1, 2}),
+        components=frozenset({1, 2}), ndim=frozenset({1, 2}),
         grid_types=frozenset({"periodic", "closed-interval"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         custom_reservoirs="unsupported", potential=True,
         kinetic_relaxation=True, dispersion=frozenset({"parabolic"}), terms=True,
@@ -1569,6 +1697,10 @@ class RK4CudaSolver(AbstractSolver):
     def __init__(self, config: Config, grid: SimulationGrid, model):
         """Set up the rk 4 cuda solver."""
         super().__init__(config, grid, model)
+        self._spinor = model.components == 2
+        if self._spinor:
+            self._init_spinor(config, grid, model)
+            return
         self.ndim = grid.ndim
         self.nx = grid.nx
         self.ny = grid.ny if grid.ndim == 2 else None
@@ -1786,6 +1918,141 @@ class RK4CudaSolver(AbstractSolver):
         self._compile_kernels()
         self._init_gpu_buffers()
         self._batch_ready = True
+
+    def _init_spinor(self, config, grid, model):
+        import numpy as np
+
+        self._spinor_grid = grid
+        self._spinor_dt = config.solver.dt
+        self._spinor_real = np.float32 if config.solver.precision == "single" else np.float64
+        self._spinor_complex = self.xp.complex64 if config.solver.precision == "single" else self.xp.complex128
+        self._spinor_kernel = None
+        self._spinor_tile_shape = None
+        self._spinor_term_codegen = False
+        self._spinor_term_arguments = ()
+        if not hasattr(self.xp, "cuda"):
+            return
+        members = self.batch_physics.size or 1
+        names = ("hbar", "m_eff", "g_C", "alpha_2", "zeeman", "te_tm",
+                 "g_R", "g_I", "R", "gamma_C", "kinetic_relaxation_eta")
+        columns = [np.asarray(self.batch_physics.host.get(
+            name, np.full(members, getattr(config.physics, name))), dtype=self._spinor_real)
+            for name in names]
+        self._spinor_constants = self.xp.asarray(np.stack(columns, axis=1).ravel())
+        props = self.xp.cuda.runtime.getDeviceProperties(self.xp.cuda.runtime.getDevice())
+        block_limit = props.get("sharedMemPerBlockOptin", props["sharedMemPerBlock"])
+        sm_limit = props.get("sharedMemPerMultiprocessor", block_limit)
+        real_type = "float" if config.solver.precision == "single" else "double"
+        if grid.ndim == 1:
+            tile_x = _choose_tile_x(real_type, "single", block_limit, sm_limit)
+            self._spinor_tile_shape = (tile_x or 128, 1)
+        else:
+            self._spinor_tile_shape = (_choose_tile_shape(real_type, "single", block_limit,
+                                                          sm_limit) or (8, 8))
+        tile_x, tile_y = self._spinor_tile_shape
+        self._spinor_term_codegen = bool(model.terms) and all(
+            term.cuda is not None for term in model.terms)
+        if self._spinor_term_codegen:
+            xp = self.xp
+            self._spinor_x_coords = xp.ascontiguousarray(grid.X, dtype=self._spinor_real).ravel()
+            self._spinor_y_coords = (xp.ascontiguousarray(grid.Y, dtype=self._spinor_real).ravel()
+                                     if grid.ndim == 2 else xp.zeros(grid.nx, dtype=self._spinor_real))
+            arguments = []
+            for term in model.terms:
+                values = term.cuda_values()
+                for ctype, name, *layout in term.cuda.arguments:
+                    value = values[name]
+                    if "*" in ctype:
+                        dtype = (xp.uint64 if "long long" in ctype else
+                                 xp.uint32 if "unsigned int" in ctype else
+                                 xp.int32 if "int" in ctype else
+                                 xp.float64 if "double" in ctype else
+                                 xp.float32 if "float" in ctype else
+                                 self._spinor_real)
+                        arguments.append(xp.ascontiguousarray(value, dtype=dtype).ravel())
+                    elif "int" in ctype:
+                        arguments.append(np.int32(value))
+                    else:
+                        arguments.append(np.float64(value) if "double" in ctype else
+                                         np.float32(value) if "float" in ctype else
+                                         self._spinor_real(value))
+            self._spinor_term_arguments = tuple(arguments)
+        source = build_spinor_tiled_rhs_source(
+            real_type, grid.boundary, tile_x, tile_y,
+            model.terms if self._spinor_term_codegen else ())
+        self._spinor_kernel = self.xp.RawKernel(source, "spinor_tiled_rhs")
+        self._spinor_shared_bytes = 4 * (tile_x + 2) * (tile_y + 2) * self._spinor_real().nbytes
+
+    def _spinor_rhs(self, model, field, reservoir_fields, t):
+        from polarism.laser.pump_field import evaluate_pump
+        import numpy as np
+
+        if self._spinor_kernel is None:
+            return model.rhs(field, reservoir_fields, t)
+        xp = self.xp
+        pump = evaluate_pump(model.pump, t)
+        if model.reservoir_components == 1:
+            density = (field.real * field.real + field.imag * field.imag).sum(axis=1, keepdims=True)
+            res_derivs = model.reservoir.get_derivatives(field[:, :1], pump,
+                                                          reservoir_fields, rho=density)
+        else:
+            res_derivs = model.reservoir.get_derivatives(field, pump * model.pump_weights,
+                                                          reservoir_fields)
+        active = model.reservoir.get_active_density(reservoir_fields)
+        inactive = model.reservoir.get_inactive_density(reservoir_fields)
+        zero = xp.zeros(field.shape, dtype=field.real.dtype)
+        active = zero if xp.ndim(active) == 0 else xp.ascontiguousarray(xp.broadcast_to(active, field.shape))
+        inactive = zero if xp.ndim(inactive) == 0 else xp.ascontiguousarray(xp.broadcast_to(inactive, field.shape))
+        potential = model.potential_at(t)
+        vr = xp.ascontiguousarray(xp.broadcast_to(xp.real(potential), field.shape))
+        vi = (xp.ascontiguousarray(xp.broadcast_to(xp.imag(potential), field.shape))
+              if xp.iscomplexobj(potential) else zero)
+        result = xp.empty_like(field)
+        tile_x, tile_y = self._spinor_tile_shape
+        grid = self._spinor_grid
+        arguments = (xp.ascontiguousarray(field).view(field.real.dtype).ravel(),
+                     active.ravel(), inactive.ravel(), vr.ravel(), vi.ravel(),
+                     self._spinor_constants, result.view(field.real.dtype).ravel(),
+                     np.int32(grid.nx), np.int32(grid.ny if grid.ndim == 2 else 1),
+                     self._spinor_real(1 / grid.dx**2),
+                     self._spinor_real(1 / grid.dy**2 if grid.ndim == 2 else 0),
+                     self._spinor_real(1 / (4 * grid.dx * grid.dy) if grid.ndim == 2 else 0))
+        if self._spinor_term_codegen:
+            arguments += (self._spinor_x_coords, self._spinor_y_coords,
+                          self._spinor_real(t), *self._spinor_term_arguments)
+        self._spinor_kernel(((grid.nx + tile_x - 1) // tile_x,
+                             ((grid.ny + tile_y - 1) // tile_y if grid.ndim == 2 else 1),
+                             field.shape[0]), (max(256, tile_x * tile_y),),
+                            arguments,
+                            shared_mem=self._spinor_shared_bytes)
+        if model.terms and not self._spinor_term_codegen:
+            result += model.extra_rhs(field, reservoir_fields, t)
+        if model.drive is not None:
+            result += model.drive_contribution(field, t)
+        return result, res_derivs
+
+    def _step_spinor(self, model, state, dt):
+        self.batch_physics.check(state.field, 2)
+        reservoir = model.reservoir
+        field = state.field
+        initial = reservoir.get_state()
+        time = state.t
+        half = 0.5 * dt
+        k1, r1 = self._spinor_rhs(model, field, initial, time)
+        k2, r2 = self._spinor_rhs(model, field + half * k1,
+                                  tuple(a + half * b for a, b in zip(initial, r1)), time + half)
+        k3, r3 = self._spinor_rhs(model, field + half * k2,
+                                  tuple(a + half * b for a, b in zip(initial, r2)), time + half)
+        k4, r4 = self._spinor_rhs(model, field + dt * k3,
+                                  tuple(a + dt * b for a, b in zip(initial, r3)), time + dt)
+        sixth = dt / 6.0
+        result = field + sixth * (k1 + 2 * k2 + 2 * k3 + k4)
+        state.field = model.boundary.after_step_action(result.astype(field.dtype, copy=False))
+        reservoir.set_state(tuple(a + sixth * (b + 2 * c + 2 * d + e)
+                                  for a, b, c, d, e in zip(initial, r1, r2, r3, r4)))
+        state.step += 1
+        state.t = state.t0 + state.step * dt
+        return ACCEPTED
 
     def _build_kernel_source(
         self, bc_type: str, real_type: str, reservoir_type: str
@@ -2233,6 +2500,8 @@ class RK4CudaSolver(AbstractSolver):
 
     def advance(self, model, state, n_steps: int) -> None:
         """Run CUDA chunks; custom reservoirs or boundary actions need individual steps."""
+        if self._spinor:
+            return super().advance(model, state, n_steps)
         potential = model.potential
         pump = model.pump
         reservoir = model.reservoir
@@ -2552,6 +2821,8 @@ class RK4CudaSolver(AbstractSolver):
 
     def step(self, model, state, dt):
         """Advance with CUDA kernels or CuPy stages for a custom reservoir model."""
+        if self._spinor:
+            return self._step_spinor(model, state, dt)
         potential = model.potential
         pump = model.pump
         reservoir = model.reservoir

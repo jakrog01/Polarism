@@ -230,16 +230,9 @@ def test_drive_jones_vector_normalizes_and_bad_config_rejected():
         validate_config(cfg)
 
 
-@pytest.mark.parametrize("method", ["rk4-fdm-fused", "rk4-cuda"])
+@pytest.mark.parametrize("method", ["rk4-fdm-fused"])
 def test_unsupported_solvers_reject_spinor(method):
     cfg = config()
     cfg.solver.method = method
     with pytest.raises(ConfigValidationError, match="2 components"):
-        validate_config(cfg)
-
-
-def test_spinor_gpu_backend_rejected_in_cpu_reference_step():
-    cfg = config()
-    cfg.compute_engine.use_gpu = True
-    with pytest.raises(ConfigValidationError, match="use_gpu=False"):
         validate_config(cfg)

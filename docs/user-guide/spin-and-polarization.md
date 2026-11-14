@@ -1,9 +1,10 @@
 # Spin and polarization
 
 Set `physics.spin: spinor` to evolve two circular components, ordered
-`ψ = (ψ+, ψ−)`. On CPU, `rk4-fdm` supports 1D and 2D grids with periodic or
-closed-interval boundaries. `split-step-fft`, `ip-rk4`, and `etd-rk2` support
-spinors on periodic grids. Scalar runs remain the default.
+`ψ = (ψ+, ψ−)`. `rk4-fdm` and `rk4-cuda` support 1D and 2D grids with periodic
+or closed-interval boundaries. `split-step-fft`, `ip-rk4`, `etd-rk2`,
+`split-step-fft-cuda`, `ifrk-fft-cuda`, and `ifrk4-fft-cuda` support spinors on
+periodic grids. Scalar runs remain the default.
 
 ## Equation and conventions
 
@@ -33,6 +34,25 @@ nine-point cross derivative
 `∂xy f[j,i] = (f[j+1,i+1] − f[j+1,i−1] − f[j−1,i+1] + f[j−1,i−1])/(4 dx dy)`.
 Periodic edges wrap; closed-interval edges mirror the adjacent interior
 value. In 1D, the TE–TM operator reduces to `−β∂xx`.
+
+## GPU execution
+
+`rk4-cuda` uses two complex fields in shared memory for each finite-difference
+tile. It loads a one-cell halo, including the four corners needed for `∂xy`,
+and chooses a 2D tile from the device's shared-memory limit. The four RK
+stages use this tiled stencil; their reservoir and stage arrays are updated
+with CuPy operations. Shared and per-component reservoirs use the same
+equations as `rk4-fdm`.
+
+The spectral CUDA solvers apply the 2×2 matrix exponential to the two Fourier
+spectra with a dedicated CUDA kernel. Their spinor local steps run as CuPy
+array operations. This adds FFTs, matrix products, and local work relative to
+scalar runs; the scalar timing tables do not predict spinor cost. Wigner noise
+uses independent Philox streams 1 and 2 on GPU, with the same spatial and
+step counters as the NumPy reference. A shared reservoir density feeds both
+noise amplitudes. `cuda_graphs: true` currently uses ordinary launches for
+spinors. Measure spinor performance and FP64 tile occupancy on your GPU with
+the intended grid, precision, and reservoir model.
 
 ## Pump and reservoirs
 

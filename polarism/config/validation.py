@@ -195,8 +195,6 @@ def _validate_solver(cfg: Config) -> None:
     components = 2 if cfg.physics.spin == "spinor" else 1
     if components not in solver_capabilities(s.method).components:
         raise ConfigValidationError(f"solver.method={s.method!r} does not support {components} components")
-    if components == 2 and cfg.compute_engine.use_gpu:
-        raise ConfigValidationError("spinor runs require compute_engine.use_gpu=False in step 8a")
     if cfg.grid.ndim not in solver_capabilities(s.method).ndim:
         raise ConfigValidationError(f"solver.method={s.method!r} does not support grid.ndim={cfg.grid.ndim}")
     if cfg.grid.ndim == 1 and s.laplacian == "isotropic-9pt":

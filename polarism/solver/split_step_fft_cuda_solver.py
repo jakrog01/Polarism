@@ -20,6 +20,49 @@ if TYPE_CHECKING:
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
 
 
+def spinor_matrix_kernel_source(precision: str) -> str:
+    """Render a batched two-spectrum complex matrix product."""
+    if precision not in ("single", "double"):
+        raise ValueError("Invalid spinor spectral precision")
+    real = "float" if precision == "single" else "double"
+    return f'''typedef {real} real;
+extern "C" __global__ void spinor_matrix_product(
+    const real* matrix, const real* field, real* output,
+    int spatial_n, int total_n, int matrix_members) {{
+    int j = blockIdx.x*blockDim.x+threadIdx.x;
+    if (j >= total_n) return;
+    int member = j/spatial_n, cell = j%spatial_n;
+    int a = 2*(member*2*spatial_n+cell);
+    int b = a+2*spatial_n;
+    int m = 2*((matrix_members == 1 ? 0 : member)*4*spatial_n+cell);
+    real ar = field[a], ai = field[a+1], br = field[b], bi = field[b+1];
+    real x0 = matrix[m], y0 = matrix[m+1];
+    real x1 = matrix[m+2*spatial_n], y1 = matrix[m+2*spatial_n+1];
+    real x2 = matrix[m+4*spatial_n], y2 = matrix[m+4*spatial_n+1];
+    real x3 = matrix[m+6*spatial_n], y3 = matrix[m+6*spatial_n+1];
+    output[a] = x0*ar-y0*ai+x1*br-y1*bi;
+    output[a+1] = x0*ai+y0*ar+x1*bi+y1*br;
+    output[b] = x2*ar-y2*ai+x3*br-y3*bi;
+    output[b+1] = x2*ai+y2*ar+x3*bi+y3*br;
+}}
+'''
+
+
+def apply_spinor_matrix_cuda(kernel, matrix, field, xp):
+    """Apply a contiguous 2×2 Fourier-space matrix to two components."""
+    field = field.astype(matrix.dtype, copy=False)
+    spatial_n = int(np.prod(field.shape[2:]))
+    total_n = field.shape[0] * spatial_n
+    output = xp.empty_like(field)
+    real_dtype = field.real.dtype
+    kernel(((total_n + 255) // 256,), (256,),
+           (xp.ascontiguousarray(matrix).view(real_dtype).ravel(),
+            xp.ascontiguousarray(field).view(real_dtype).ravel(),
+            output.view(real_dtype).ravel(), np.int32(spatial_n), np.int32(total_n),
+            np.int32(matrix.shape[0])))
+    return output
+
+
 # The same source is also compiled directly by the CPU-only NVRTC smoke test.
 # Reservoir state order is (active, inactive) for both two-field models.
 _LOCAL_KERNEL = r"""
@@ -236,7 +279,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
     """
     injects_noise = True
     capabilities = SolverCapabilities(
-        components=frozenset({1}), ndim=frozenset({1, 2}),
+        components=frozenset({1, 2}), ndim=frozenset({1, 2}),
         grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         custom_reservoirs="quantitative", potential=True,
         kinetic_relaxation=False, dispersion=frozenset({"parabolic"}), terms=True,
@@ -254,6 +297,16 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             raise ValueError("split-step-fft-cuda requires a periodic grid")
         if self.batch_physics.any_nonzero("kinetic_relaxation_eta"):
             raise ValueError("split-step-fft-cuda does not support kinetic_relaxation_eta")
+
+        self._spinor = model.components == 2
+        if self._spinor:
+            from polarism.solver.split_step_fft_solver import SplitStepFFTSolver
+
+            self._spinor_delegate = SplitStepFFTSolver(config, grid, model)
+            self._spinor_matrix_kernel = self.xp.RawKernel(
+                spinor_matrix_kernel_source(config.solver.precision), "spinor_matrix_product")
+            self._spinor_delegate._kinetic_half_step_fft = self._spinor_half_step_fft
+            return
 
         import cupyx.scipy.fft as fft
 
@@ -329,6 +382,61 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             self._prepare_features()
         if self._noise is not None:
             self._noise_step_base = self.xp.zeros(1, dtype=self.xp.uint64)
+
+    def _spinor_half_step_fft(self, field):
+        delegate = self._spinor_delegate
+        spectrum = delegate._fft(field)
+        evolved = apply_spinor_matrix_cuda(self._spinor_matrix_kernel,
+                                            delegate._kinetic_propagator_half,
+                                            spectrum, self.xp)
+        return delegate._ifft(evolved)
+
+    def _step_spinor(self, model, state, dt):
+        xp = self.xp
+        delegate = self._spinor_delegate
+        reservoir = model.reservoir
+        t = state.t
+        dt = self.config.solver.dt
+        midpoint = t + dt / 2
+        hbar = self.batch_physics.get("hbar")
+        delegate._reservoir_half_step(model, dt / 2, state.field,
+                                      evaluate_pump(model.pump, t + dt / 4))
+        res_state = reservoir.get_state()
+        active = reservoir.get_active_density(res_state)
+        inactive = reservoir.get_inactive_density(res_state)
+        field = self._spinor_half_step_fft(state.field)
+        source_half = (0 if model.drive is None else
+                       (-0.5j * dt / hbar) * model.drive.spatial * model.drive.envelope(midpoint))
+        field = (field + source_half).astype(delegate._kinetic_propagator_half.dtype,
+                                            copy=False)
+        potential = model.potential_at(midpoint) - (0 if model.drive is None else model.drive.energy)
+        rho = xp.abs(field) ** 2
+        gain = (self.batch_physics.get("R") * active - self.batch_physics.get("gamma_C")) / 2
+        gain = gain + xp.imag(potential) / hbar
+        x = 2 * gain * dt
+        small = xp.abs(x) < 1e-6
+        phase_time = dt * xp.where(small, 1 + x / 2 + x * x / 6,
+                                   xp.expm1(x) / xp.where(small, 1, x))
+        phase = ((xp.real(potential) + self.batch_physics.get("g_R") * active
+                  + self.batch_physics.get("g_I") * inactive) * dt
+                 + self.batch_physics.get("g_C") * rho * phase_time) / hbar
+        other_phase_time = xp.broadcast_to(phase_time, rho.shape)[:, ::-1]
+        phase = phase + self.batch_physics.get("alpha_2") * rho[:, ::-1] * other_phase_time / hbar
+        field = field * xp.exp(gain * dt - 1j * phase)
+        if model.terms:
+            energy, rate = model.extra_coefficients(field, res_state, midpoint)
+            field = field * xp.exp((rate - 1j * energy / hbar) * dt)
+        field = (field + source_half).astype(delegate._kinetic_propagator_half.dtype,
+                                            copy=False)
+        if model.noise is not None:
+            model.noise.apply_arrays(field, active, state.step)
+        field = self._spinor_half_step_fft(field)
+        delegate._reservoir_half_step(model, dt / 2, field,
+                                      evaluate_pump(model.pump, t + 3 * dt / 4))
+        state.field = model.boundary.after_step_action(field)
+        state.step += 1
+        state.t = state.t0 + state.step * dt
+        return ACCEPTED
 
     def _plan(self, array):
         key = (array.shape, array.dtype.str, int(self.xp.cuda.runtime.getDevice()))
@@ -673,6 +781,8 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                 del self._zero_pump
 
     def advance(self, model, state, n_steps: int) -> None:
+        if self._spinor:
+            return super().advance(model, state, n_steps)
         """Run supported periodic chunks with planned FFTs and optional graphs."""
         potential = model.potential_static if model.time_dependent_potential else model.potential
         pump = model.pump
@@ -837,6 +947,8 @@ class SplitStepFFTCudaSolver(AbstractSolver):
 
     def step(self, model, state, dt):
         """Advance K(dt/2) [R(dt/2) N(dt) R(dt/2)] K(dt/2)."""
+        if self._spinor:
+            return self._step_spinor(model, state, dt)
         potential = model.potential_static if model.time_dependent_potential else model.potential
         pump = model.pump
         reservoir = model.reservoir

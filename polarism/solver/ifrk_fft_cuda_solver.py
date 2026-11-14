@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from polarism.config.dtype_utils import complex_dtype, real_dtype
+from polarism.dispersion import apply_spinor_matrix, spinor_matrix_exponential
 from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver, ACCEPTED, SolverCapabilities
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 class IFRKFFTCudaSolver(AbstractSolver):
     """Stage-coupled spectral Lawson RK with a CPU and plugin-compatible path."""
     capabilities = SolverCapabilities(
-        components=frozenset({1}), ndim=frozenset({1, 2}),
+        components=frozenset({1, 2}), ndim=frozenset({1, 2}),
         grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         custom_reservoirs="quantitative", potential=True,
         kinetic_relaxation=True, dispersion=frozenset({"parabolic"}), terms=True,
@@ -51,6 +52,16 @@ class IFRKFFTCudaSolver(AbstractSolver):
         self._scalar = np.float32 if self._precision == "single" else np.float64
         self._k_squared = self.xp.asarray(grid.k_squared, dtype=self._real_dtype)
         self._minus_k_squared = -self._k_squared
+        self._spinor = model.components == 2
+        self._spinor_matrix_kernel = None
+        if self._spinor:
+            self._spinor_matrix = model.dispersion.matrix(grid, self.batch_physics, 2)
+            self._spinor_phase_cache = {}
+            if getattr(self.xp, "__name__", "") == "cupy":
+                from polarism.solver.split_step_fft_cuda_solver import spinor_matrix_kernel_source
+
+                self._spinor_matrix_kernel = self.xp.RawKernel(
+                    spinor_matrix_kernel_source(config.solver.precision), "spinor_matrix_product")
         phase_rate = -self.batch_physics.get("hbar") / (2.0 * self.batch_physics.get("m_eff"))
         self._phase_rate = (self._scalar(phase_rate) if self.batch_physics.size is None
                             else self.xp.asarray(phase_rate, dtype=self._real_dtype))
@@ -69,6 +80,8 @@ class IFRKFFTCudaSolver(AbstractSolver):
         self._fused = None
 
     def _cuda(self, reservoir):
+        if self._spinor:
+            return None
         if getattr(self.xp, "__name__", "") != "cupy":
             return None
         if self._fused is None:
@@ -77,14 +90,40 @@ class IFRKFFTCudaSolver(AbstractSolver):
         return self._fused if self._fused.eligible(reservoir) else None
 
     def _phase(self, fraction: float, h: float):
+        if self._spinor:
+            key = (fraction, h)
+            if key not in self._spinor_phase_cache:
+                self._spinor_phase_cache[key] = spinor_matrix_exponential(
+                    self._spinor_matrix, self._hbar, h * fraction, self.xp
+                ).astype(self._complex_dtype)
+            return self._spinor_phase_cache[key]
         angle = self._phase_rate * self._scalar(h * fraction) * self._k_squared
         return self.xp.exp(1j * angle).astype(self._complex_dtype, copy=False)
+
+    def _linear(self, fraction, h, field):
+        phase = self._phase(fraction, h)
+        if self._spinor_matrix_kernel is not None:
+            from polarism.solver.split_step_fft_cuda_solver import apply_spinor_matrix_cuda
+
+            return apply_spinor_matrix_cuda(self._spinor_matrix_kernel, phase, field, self.xp)
+        return apply_spinor_matrix(phase, field, self.xp) if self._spinor else phase * field
+
+    def _reservoir_derivatives(self, model, field, pump, res_state, rho):
+        if not self._spinor:
+            return model.reservoir.get_derivatives(field, pump, res_state, rho)
+        if model.reservoir_components == 2:
+            return model.reservoir.get_derivatives(
+                field, pump * model.pump_weights, res_state, rho)
+        shared = rho.sum(axis=1, keepdims=True)
+        return model.reservoir.get_derivatives(field[:, :1], pump, res_state, shared)
 
     def _rhs_psi(self, psi, res_state, potential, reservoir, rho=None, psi_k=None):
         n_active = reservoir.get_active_density(res_state)
         n_inactive = reservoir.get_inactive_density(res_state)
         density = rho if rho is not None else psi.real * psi.real + psi.imag * psi.imag
         eff_energy = potential + self._g_C * density + self._g_R * n_active + self._g_I * n_inactive
+        if self._spinor:
+            eff_energy = eff_energy + self.batch_physics.get("alpha_2") * density[:, ::-1]
         gain_loss = 0.5 * (self._R * n_active - self._gamma_C)
         rhs = (-1j / self._hbar) * eff_energy * psi + gain_loss * psi
         if self.batch_physics.any_nonzero("kinetic_relaxation_eta"):
@@ -116,11 +155,14 @@ class IFRKFFTCudaSolver(AbstractSolver):
                 psi_i = psi0
                 psi_i_k = psi0_k
             else:
-                psi_i_k = self._phase(ci, h) * psi0_k
+                psi_i_k = self._linear(ci, h, psi0_k)
                 for j in range(i):
                     aij = self._a[i][j]
                     if aij:
-                        psi_i_k += self._scalar(h * aij) * self._phase(ci - self._c[j], h) * f[j]
+                        if self._spinor:
+                            psi_i_k += self._scalar(h * aij) * self._linear(ci - self._c[j], h, f[j])
+                        else:
+                            psi_i_k += self._scalar(h * aij) * self._phase(ci - self._c[j], h) * f[j]
                 psi_i_k = psi_i_k.astype(self._complex_dtype, copy=False)
                 psi_i = self._ifft(psi_i_k, **({"axis": -1} if self._ndim == 1 else {"axes": (-2, -1)})).astype(self._complex_dtype, copy=False)
             res_i = []
@@ -143,11 +185,15 @@ class IFRKFFTCudaSolver(AbstractSolver):
             if self._model_features.drive is not None:
                 rhs = rhs + self._model_features.drive_contribution(psi_i, stage_time)
             f.append(self._fft(rhs, **({"axis": -1} if self._ndim == 1 else {"axes": (-2, -1)})).astype(self._complex_dtype, copy=False))
-            derivatives.append(reservoir.get_derivatives(psi_i, pump_at[ci], res_i, rho))
-        psi_new_k = self._phase(1.0, h) * psi0_k
+            derivatives.append(self._reservoir_derivatives(
+                self._model_features, psi_i, pump_at[ci], res_i, rho))
+        psi_new_k = self._linear(1.0, h, psi0_k)
         for j, bj in enumerate(self._b):
             if bj:
-                psi_new_k += self._scalar(h * bj) * self._phase(1.0 - self._c[j], h) * f[j]
+                if self._spinor:
+                    psi_new_k += self._scalar(h * bj) * self._linear(1.0 - self._c[j], h, f[j])
+                else:
+                    psi_new_k += self._scalar(h * bj) * self._phase(1.0 - self._c[j], h) * f[j]
         psi_new_k = psi_new_k.astype(self._complex_dtype, copy=False)
         if self._can_skip_after_step(boundary_condition):
             state.field = None
@@ -171,7 +217,8 @@ class IFRKFFTCudaSolver(AbstractSolver):
         pump = model.pump
         reservoir = model.reservoir
         boundary_condition = model.boundary
-        self.batch_physics.check(state.field_k if state._field is None else state.field)
+        self.batch_physics.check(state.field_k if state._field is None else state.field,
+                                 getattr(state, "components", 1))
         fused = self._cuda(reservoir)
         if fused is None:
             self._generic_step(potential, pump, reservoir, boundary_condition, state)
@@ -187,7 +234,8 @@ class IFRKFFTCudaSolver(AbstractSolver):
         reservoir = model.reservoir
         boundary_condition = model.boundary
         start_step = state.step
-        self.batch_physics.check(state.field_k if state._field is None else state.field)
+        self.batch_physics.check(state.field_k if state._field is None else state.field,
+                                 getattr(state, "components", 1))
         if n_steps <= 0:
             return
         fused = self._cuda(reservoir)

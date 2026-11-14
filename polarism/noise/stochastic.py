@@ -46,7 +46,22 @@ class NoiseApplier:
             dtype = self.xp.float32 if self.precision == "single" else self.xp.float64
             if self.xp.ndim(active_density) == 0:
                 active_density = self.xp.zeros(field.shape, dtype=dtype)
-            self._kernel(((total_n + 255) // 256,), (256,), (
+            kernel = self._kernel
+            if field.shape[1] == 2:
+                if not hasattr(self, "_spinor_kernel"):
+                    source = cuda_source(self.precision).replace(
+                        "int member = j / spatial_n;",
+                        "int member = j / (2*spatial_n); int component = (j / spatial_n) % 2;")
+                    source = source.replace("unsigned int d = 1U;",
+                                            "unsigned int d = 1U + (unsigned int)component;")
+                    source = source.replace("0x1p-24f", "5.960464477539063e-8f")
+                    source = source.replace("0x1p-53", "1.1102230246251565e-16")
+                    self._spinor_kernel = self.xp.RawKernel(source,
+                                                             f"add_wigner_{self.precision}")
+                kernel = self._spinor_kernel
+                active_density = self.xp.ascontiguousarray(
+                    self.xp.broadcast_to(active_density, field.shape))
+            kernel(((total_n + 255) // 256,), (256,), (
                 field.view(dtype).ravel(), active_density.ravel(),
                 self._device_seeds, self._device_gamma, self._device_scattering,
                 self._device_strength, np.uint64(step), self.spatial_n, total_n,
