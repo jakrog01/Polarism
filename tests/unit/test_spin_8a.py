@@ -230,7 +230,7 @@ def test_drive_jones_vector_normalizes_and_bad_config_rejected():
         validate_config(cfg)
 
 
-@pytest.mark.parametrize("method", ["split-step-fft", "ip-rk4", "etd-rk2", "rk4-fdm-fused", "rk4-cuda"])
+@pytest.mark.parametrize("method", ["rk4-fdm-fused", "rk4-cuda"])
 def test_unsupported_solvers_reject_spinor(method):
     cfg = config()
     cfg.solver.method = method

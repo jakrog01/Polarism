@@ -1,8 +1,9 @@
 # Spin and polarization
 
 Set `physics.spin: spinor` to evolve two circular components, ordered
-`ψ = (ψ+, ψ−)`. Step 8a supports this model on CPU with `rk4-fdm` on 1D or 2D
-grids. Scalar runs remain the default.
+`ψ = (ψ+, ψ−)`. On CPU, `rk4-fdm` supports 1D and 2D grids with periodic or
+closed-interval boundaries. `split-step-fft`, `ip-rk4`, and `etd-rk2` support
+spinors on periodic grids. Scalar runs remain the default.
 
 ## Equation and conventions
 
@@ -20,6 +21,12 @@ The **TE–TM sign convention** is `−β(∂x − iσ∂y)²ψ−σ` in positio
 so its Fourier-space off-diagonal element is `+β(kx − iσ ky)²`. The kinetic
 energy is `ε(k) = ħ²k²/(2m)`. For a plane wave without interactions, the two
 energies are `ε(k) ± sqrt((Δ_Z/2)² + β²k⁴)`.
+
+The spectral solvers apply the exact 2×2 linear propagator for each Fourier
+mode. `split-step-fft` uses half steps around its local condensate step;
+`ip-rk4` uses it at each interaction-picture stage; `etd-rk2` uses it with
+matrix-valued exponential time-differencing coefficients. Their local terms
+include `alpha_2` and the component or shared reservoir densities.
 
 The finite-difference reference uses central `∂xx` and `∂yy`, plus the
 nine-point cross derivative

@@ -29,6 +29,12 @@ CUDA solvers to scale a cached envelope inside kernels.
 
 ## Available solver methods
 
+| `solver.method` | Spinor components |
+| --- | --- |
+| `rk4-fdm` | 2, on periodic and closed-interval grids |
+| `split-step-fft`, `ip-rk4`, `etd-rk2` | 2, on periodic grids |
+| `rk4-fdm-fused` and CUDA solvers | 1 only |
+
 | `solver.method` | Family | Intended role |
 | --- | --- | --- |
 | `rk4-fdm` | finite-difference RK4 | reference solver, broadest baseline |
