@@ -15,7 +15,9 @@ Polarism is a Python package for 2-D driven-dissipative Gross-Pitaevskii simulat
 
 - Finite-difference RK4, split-step FFT, ETD-RK2, and interaction-picture solver families.
 - NumPy execution and optional CuPy GPU execution, including CUDA graph chunks for eligible CUDA solver runs.
-- Single, double, and quadratic-double reservoirs; continuous and pulsed pumps.
+- Single, double, quadratic-double or no reservoir; incoherent pumps with spatial profiles, lattices and temporal envelopes, and coherent (resonant) drive.
+- Scalar or spinor (ψ±) polaritons with TE–TM splitting, Zeeman splitting and cross-spin interaction, on 1D and 2D grids.
+- Stochastic truncated-Wigner noise from a counter-based Philox generator, reproducible from one seed on CPU and GPU.
 - HDF5, NPY, and JSON output written on a background thread, so saving frames barely slows GPU runs; `ps.load_results` reads runs back lazily.
 - Checkpoint and restart, including a clean stop on SLURM time-limit signals.
 - Parameter sweeps with batched device execution, saved member results, and resume.

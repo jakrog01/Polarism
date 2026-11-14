@@ -37,22 +37,29 @@ value. In 1D, the TE–TM operator reduces to `−β∂xx`.
 
 ## GPU execution
 
-`rk4-cuda` uses two complex fields in shared memory for each finite-difference
-tile. It loads a one-cell halo, including the four corners needed for `∂xy`,
-and chooses a 2D tile from the device's shared-memory limit. The four RK
-stages use this tiled stencil; their reservoir and stage arrays are updated
-with CuPy operations. Shared and per-component reservoirs use the same
+`rk4-cuda` keeps both complex components of a tile in shared memory, with a
+halo that includes the corners needed for `∂xy`. On periodic grids a whole RK4
+step runs in one kernel (FP32, and GPUs with full-rate FP64) or in two kernels
+of two stages each (GPUs with reduced-rate FP64). Closed-interval spinor runs
+use per-stage kernels, because the mirrored TE–TM cross derivative must be
+reflected after every stage. Shared and per-component reservoirs use the same
 equations as `rk4-fdm`.
 
-The spectral CUDA solvers apply the 2×2 matrix exponential to the two Fourier
-spectra with a dedicated CUDA kernel. Their spinor local steps run as CuPy
-array operations. This adds FFTs, matrix products, and local work relative to
-scalar runs; the scalar timing tables do not predict spinor cost. Wigner noise
-uses independent Philox streams 1 and 2 on GPU, with the same spatial and
-step counters as the NumPy reference. A shared reservoir density feeds both
-noise amplitudes. `cuda_graphs: true` currently uses ordinary launches for
-spinors. Measure spinor performance and FP64 tile occupancy on your GPU with
-the intended grid, precision, and reservoir model.
+The spectral CUDA solvers apply the 2×2 propagator in one kernel per
+application, fused with the local step in `split-step-fft-cuda`, and the IFRK
+stage kernels handle both components. Wigner noise uses independent Philox
+streams 1 and 2 on GPU, with the same spatial and step counters as the NumPy
+reference; a shared reservoir density feeds both noise amplitudes. CUDA graphs
+work for spinor runs.
+
+Measured cost of a spinor step relative to a scalar step at 1024² on an
+RTX 4070 SUPER:
+
+| solver | FP32 | FP64 |
+| --- | ---: | ---: |
+| `rk4-cuda` (periodic) | 1.4× | 2.2× |
+| `split-step-fft-cuda` | 2.2× | 2.1× |
+| `ifrk-fft-cuda` | 2.4× | 2.3× |
 
 ## Pump and reservoirs
 
