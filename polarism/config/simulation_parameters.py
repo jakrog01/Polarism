@@ -39,10 +39,18 @@ class PhysicsConstants:
     reservoir_diffusion_I: float = 0.0
     reservoir_diffusion_A: float = 0.0
     reservoir_diffusion_R: float = 0.0
-    init_eps: float = 1e-3
-    init_mode: str = "legacy_positive_uniform"
-    init_k_cutoff_um: float | None = None
-    init_seed: int | None = None
+
+
+@dataclass
+class NoiseParameters:
+    """Control initial and per-step condensate noise."""
+    enabled: bool = True
+    seed: int | None = None
+    initial: str = "legacy_positive_uniform"
+    initial_amplitude: float = 1e-3
+    initial_k_cutoff_um: float | None = None
+    stochastic: str = "none"
+    stochastic_strength: float = 1.0
 
 
 @dataclass
@@ -171,6 +179,7 @@ class Config:
     )
     potential: PotentialParameters = field(default_factory=PotentialParameters)
     physics: PhysicsConstants = field(default_factory=PhysicsConstants)
+    noise: NoiseParameters = field(default_factory=NoiseParameters)
     laser: LaserParameters = field(default_factory=LaserParameters)
     reservoir: ReservoirParameters = field(default_factory=ReservoirParameters)
     solver: SolverParameters = field(default_factory=SolverParameters)

@@ -33,11 +33,13 @@ disabled, it returns an ordered list of dictionaries containing final `psi`
 and a `reservoir` tuple of final density arrays. A signal stop returns `None`;
 resume with `sweep.run(resume=sweep.run_directory)`.
 
-Override paths include `physics.*`, `laser.*`, `laser.extra.*`, and
+Override paths include `physics.*`, `noise.*`, `laser.*`, `laser.extra.*`, and
 `potential.*`. In `laser.mode="multiple"`, use zero-based `lasers[i].*`, such
 as `lasers[1].delay` or `lasers[1].extra.name`, for entries in the laser YAML
 file. Extra keys must already exist in the configuration or laser entry.
-Physics, laser, and potential changes can vary inside a batch. Grid, solver,
+Physics, laser, potential, `noise.seed`, `noise.initial*`, and
+`noise.stochastic_strength` can vary inside a batch. `noise.enabled` and
+`noise.stochastic` form separate groups. Grid, solver,
 reservoir type, boundary condition, compute engine, result, checkpoint, and
 sweep settings form separate groups. These settings control array shapes,
 component construction, step counts, or output behavior, which must agree
@@ -46,7 +48,9 @@ within one batch.
 Each batch has a leading member axis. Physics constants that differ are passed
 per member. Pump envelopes and potentials are shared when identical, or stacked
 when they differ. Initial fields are constructed separately with each member's
-seed and initialization settings, as in single runs. A batch of one uses the
+seed and initialization settings, as in single runs. All members share
+`noise.seed` (drawn once for the sweep when it is `null`) unless the sweep varies
+`noise.seed` itself, which is how a noise ensemble is built. A batch of one uses the
 normal single-run path. Built-in CPU batches produce fields bitwise equal to
 their corresponding single runs; GPU results can differ within floating-point
 rounding.
@@ -94,8 +98,8 @@ speedup and nanoseconds per member, grid element, and step.
 ## Output and restart
 
 A saved sweep gets one timestamped directory under `result.output_directory`.
-Its `sweep.json` records member parameters, group and batch assignments, and
-configuration. Each `batch_NNN/` directory holds normal result files and, when
+Its `sweep.json` records member parameters, group and batch assignments, the
+resolved seed, and each member's seed. Each `batch_NNN/` directory holds normal result files and, when
 enabled, its own `checkpoint.h5`. Dynamic field datasets have shape
 `(frames, members, *S)` and scalar datasets `(frames, members)`, where `S` is
 `(nx,)` in 1D or `(ny, nx)` in 2D. Identical

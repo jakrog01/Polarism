@@ -87,8 +87,8 @@ def _controller(model="single", potential="zero", lasers=1, precision="double",
     cfg.laser.Pmax = 1.2
     cfg.laser.sigma_time = 0.3
     cfg.laser.delay = 0.0
-    cfg.physics.init_seed = 7
-    cfg.physics.init_eps = 0.2
+    cfg.noise.seed = 7
+    cfg.noise.initial_amplitude = 0.2
     if diffusion:
         cfg.physics.reservoir_diffusion_R = 0.03
         cfg.physics.reservoir_diffusion_A = 0.02

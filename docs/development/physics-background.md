@@ -9,7 +9,7 @@ i \hbar \frac{\partial \psi}{\partial t}
 + V
 + g_C |\psi|^2
 + g_R n_R
-+ \frac{i}{2}\left(R n_R - \gamma_C\right)
++ \frac{i\hbar}{2}\left(R n_R - \gamma_C\right)
 \right] \psi,
 $$
 
@@ -60,6 +60,7 @@ spontaneous symmetry breaking and stochastic growth.  The code exposes this
 choice explicitly:
 
 - `legacy_positive_uniform`: the historical seed, `eps*(Uniform[0,1)+i Uniform[0,1))`
+- `none`: an exactly zero initial field
 - `complex_gaussian_zero_mean`: unbiased complex Gaussian seed
 - `filtered_complex_gaussian`: zero-mean complex Gaussian seed projected to a
   finite radial k band and RMS-normalized
@@ -70,6 +71,20 @@ the parabolic lower-polariton effective-mass model and finite-difference
 Laplacian are not physically meaningful up to arbitrary grid/Nyquist momenta.
 The cutoff is written to metadata and should be swept or justified when spatial
 geometry is part of the claim.
+
+When `noise.stochastic: wigner`, each cell receives one independent complex
+increment after each deterministic step. In one or two dimensions, with cell
+volume $\Delta V = dx$ or $dx\,dy$ respectively, the implementation uses
+
+$$
+\Delta\psi = \sqrt{\frac{s(\gamma_C+R n_{\mathrm{active}})\,dt}{4\Delta V}}
+\,(z_{\mathrm{re}}+i z_{\mathrm{im}}),\qquad z_{\mathrm{re}},z_{\mathrm{im}}\sim\mathcal N(0,1).
+$$
+
+Here $s$ is `noise.stochastic_strength` and the active reservoir density is
+sampled at the end of the step. The implementation does not include the
+$-g_C/\Delta V$ energy shift or the $R n_{\mathrm{active}}/(2\Delta V)$
+reservoir correction of the full truncated-Wigner equations.
 
 ## Energy relaxation and model limits
 
@@ -228,5 +243,7 @@ conditions, reservoir depletion, and energy relaxation as important ingredients.
 Useful starting points:
 
 - Wouters and Carusotto, *Excitations in a Nonequilibrium Bose-Einstein Condensate of Exciton Polaritons*, PRL 99, 140402 (2007): <https://doi.org/10.1103/PhysRevLett.99.140402>
+- Wouters and Savona, *Stochastic classical field model for polariton condensates*, PRB 79, 165302 (2009): <https://doi.org/10.1103/PhysRevB.79.165302>
+- Carusotto and Ciuti, *Quantum fluids of light*, Rev. Mod. Phys. 85, 299 (2013): <https://doi.org/10.1103/RevModPhys.85.299>
 - Estrecho et al., *Single-shot condensation of exciton polaritons and the hole burning effect*, Nature Communications 9, 2944 (2018): <https://doi.org/10.1038/s41467-018-05349-4>
 - studies of relaxation oscillations and expanding condensates that couple GPE dynamics to multi-step reservoir rate equations

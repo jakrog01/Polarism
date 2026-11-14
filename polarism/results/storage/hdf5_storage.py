@@ -66,6 +66,9 @@ class HDF5Storage(BaseStorage):
                 asdict(config) if is_dataclass(config) else config,
                 sort_keys=True,
             )
+            member_seeds = getattr(config, "_storage_member_seeds", None)
+            if member_seeds is not None and "member_seeds" not in config_group:
+                config_group.create_dataset("member_seeds", data=np.asarray(member_seeds, dtype=np.int64))
 
     def dump_batch(self) -> None:
         """Write the current batch to HDF5."""

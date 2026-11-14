@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 _EXPLICIT_FDM_SOLVERS = {"rk4-fdm", "rk4-fdm-fused", "rk4-cuda"}
 _VALID_PRECISIONS = {"single", "double"}
-_VALID_INIT_MODES = {"legacy_positive_uniform", "complex_gaussian_zero_mean", "filtered_complex_gaussian"}
+_VALID_INIT_MODES = {"none", "legacy_positive_uniform", "complex_gaussian_zero_mean", "filtered_complex_gaussian"}
 _VALID_PROFILE_TYPES = {"sin2", "parabolic"}
 _VALID_POWER_DEFINITIONS = {"peak_amplitude", "pulse_energy"}
 _RK4_NEG_REAL_AXIS_LIMIT = 2.7852935634052816
@@ -47,6 +47,7 @@ def validate_config(cfg: Config) -> None:
     """Raise ConfigValidationError for invalid values; warn for instability risk."""
     _validate_grid(cfg)
     _validate_physics(cfg)
+    _validate_noise(cfg)
     _validate_solver(cfg)
     _validate_result(cfg)
     _validate_checkpoint(cfg)
@@ -93,24 +94,32 @@ def _validate_physics(cfg: Config) -> None:
                 f"got {val}"
             )
 
-    if p.init_eps < 0.0:
+def _validate_noise(cfg: Config) -> None:
+    n = cfg.noise
+    if type(n.enabled) is not bool:
+        raise ConfigValidationError(f"noise.enabled must be a boolean, got {n.enabled!r}")
+    if n.seed is not None and (type(n.seed) is not int or n.seed < 0 or n.seed > (1 << 63) - 1):
+        raise ConfigValidationError(f"noise.seed must be a non-negative int64 or null, got {n.seed!r}")
+    if not isinstance(n.initial_amplitude, (int, float)) or not math.isfinite(n.initial_amplitude) or n.initial_amplitude < 0:
         raise ConfigValidationError(
-            f"physics.init_eps must be >= 0, got {p.init_eps}"
+            f"noise.initial_amplitude must be finite and >= 0, got {n.initial_amplitude!r}"
         )
-
-    if p.init_mode not in _VALID_INIT_MODES:
+    if n.initial not in _VALID_INIT_MODES:
         raise ConfigValidationError(
-            f"physics.init_mode='{p.init_mode}' is not recognised. "
+            f"noise.initial='{n.initial}' is not recognised. "
             f"Valid values: {sorted(_VALID_INIT_MODES)}."
         )
-
-    if p.init_mode == "filtered_complex_gaussian":
-        k_cut = getattr(p, "init_k_cutoff_um", None)
-        if k_cut is None or k_cut <= 0.0:
+    if n.initial == "filtered_complex_gaussian":
+        k_cut = n.initial_k_cutoff_um
+        if not isinstance(k_cut, (int, float)) or not math.isfinite(k_cut) or k_cut <= 0.0:
             raise ConfigValidationError(
-                f"physics.init_k_cutoff_um must be > 0 when "
-                f"init_mode='filtered_complex_gaussian', got {k_cut!r}."
+                f"noise.initial_k_cutoff_um must be > 0 when "
+                f"noise.initial='filtered_complex_gaussian', got {k_cut!r}."
             )
+    if n.stochastic not in {"none", "wigner"}:
+        raise ConfigValidationError(f"noise.stochastic must be 'none' or 'wigner', got {n.stochastic!r}")
+    if not isinstance(n.stochastic_strength, (int, float)) or not math.isfinite(n.stochastic_strength) or n.stochastic_strength < 0:
+        raise ConfigValidationError(f"noise.stochastic_strength must be finite and >= 0, got {n.stochastic_strength!r}")
 
 
 def _validate_solver(cfg: Config) -> None:

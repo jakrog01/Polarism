@@ -24,7 +24,6 @@ def _physics() -> SimpleNamespace:
         gamma_R=0.15,
         gamma_I=0.001,
         kappa=0.05,
-        init_eps=1.0e-3,
     )
 
 

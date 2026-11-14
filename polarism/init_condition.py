@@ -30,6 +30,9 @@ def make_initial_psi(
     mode : str
         Initialisation mode.  One of:
 
+        ``'none'``
+            Exactly zero initial field.
+
         ``'legacy_positive_uniform'``
             Uniform [0, 1) real and imaginary parts, scaled by *eps*.
             Reproduces the pre-refactor behaviour exactly.
@@ -64,6 +67,9 @@ def make_initial_psi(
     if rdtype is None:
         rdtype = xp.float64
 
+    if mode == "none":
+        return xp.zeros(shape, dtype=cdtype)
+
     rng = np.random.default_rng(seed)
 
     if mode == "legacy_positive_uniform":
@@ -86,7 +92,7 @@ def make_initial_psi(
     if mode == "filtered_complex_gaussian":
         if k_cutoff_um is None:
             raise ValueError(
-                "init_mode='filtered_complex_gaussian' requires init_k_cutoff_um to be set."
+                "noise.initial='filtered_complex_gaussian' requires noise.initial_k_cutoff_um to be set."
             )
         re = xp.asarray(rng.standard_normal(shape).astype(rdtype))
         im = xp.asarray(rng.standard_normal(shape).astype(rdtype))
@@ -105,8 +111,8 @@ def make_initial_psi(
         n_modes_inside = int(xp.sum(k_r <= k_cutoff_um))
         if n_modes_inside <= 1:
             raise ValueError(
-                f"init_k_cutoff_um={k_cutoff_um} admits only the DC bin on this grid "
-                f"(spacing={spacing}). Increase init_k_cutoff_um or use a finer grid."
+                f"noise.initial_k_cutoff_um={k_cutoff_um} admits only the DC bin on this grid "
+                f"(spacing={spacing}). Increase the cutoff or use a finer grid."
             )
         psi_k = psi_k * (k_r <= k_cutoff_um)
         psi = xp.fft.ifft2(psi_k) if len(shape) == 2 else xp.fft.ifft(psi_k)
@@ -116,13 +122,13 @@ def make_initial_psi(
         if rms < 1e-30:
             raise ValueError(
                 f"filtered_complex_gaussian produced a near-zero wavefunction after "
-                f"low-pass filtering (rms={rms:.3g}). init_k_cutoff_um={k_cutoff_um} "
+                f"low-pass filtering (rms={rms:.3g}). noise.initial_k_cutoff_um={k_cutoff_um} "
                 "is too small for this grid — increase it or use a finer grid."
             )
         return ((eps / rms) * psi).astype(cdtype)
 
     raise ValueError(
-        f"Unknown init_mode '{mode}'. "
-        "Valid values: 'legacy_positive_uniform', 'complex_gaussian_zero_mean', "
+        f"Unknown noise.initial '{mode}'. "
+        "Valid values: 'none', 'legacy_positive_uniform', 'complex_gaussian_zero_mean', "
         "'filtered_complex_gaussian'."
     )

@@ -12,7 +12,8 @@ from polarism import benchmark
 def test_batch_mode_warms_both_paths_with_timed_step_count(monkeypatch, capsys):
     calls = []
 
-    def controller(method, size, precision, reservoir, tableau="rk4", batch=1):
+    def controller(method, size, precision, reservoir, tableau="rk4", batch=1,
+                   ndim=2, noise="none"):
         solver = SimpleNamespace(advance=lambda *args: calls.append((batch, args[-2:])))
         return SimpleNamespace(solver=solver, potential=None, pump_field=None,
                                reservoir=None, boundary_condition=None, state=None)

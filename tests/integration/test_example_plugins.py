@@ -78,7 +78,7 @@ def test_example_component_runs_on_cpu(example_plugins, component):
     cfg.solver.dt = 0.001
     cfg.solver.total_time = 0.002
     cfg.result.save_results = False
-    cfg.physics.init_seed = 42
+    cfg.noise.seed = 42
 
     if component == "laser":
         cfg.laser.laser_type = "example-ring"
@@ -116,7 +116,7 @@ def _comparison_config():
     cfg.solver.method = "rk4-fdm"
     cfg.solver.dt = 0.001
     cfg.solver.total_time = 0.005
-    cfg.physics.init_seed = 42
+    cfg.noise.seed = 42
     return cfg
 
 

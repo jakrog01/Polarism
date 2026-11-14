@@ -1876,6 +1876,7 @@ class RK4CudaSolver(AbstractSolver):
             pump_flat = None
         graph_ok = (
             self.config.solver.cuda_graphs and not self._graphs_failed
+            and not hasattr(self, "noise")
             and (coefficient is not None or multi)
             and getattr(boundary_condition.absorption, "after_step_is_noop", False)
         )
@@ -1969,6 +1970,9 @@ class RK4CudaSolver(AbstractSolver):
                 self._step_gpu(work_psi[parity], work_res[parity], vr, vi,
                                pumps, factors, vi_scale,
                                work_psi[1 - parity], work_res[1 - parity])
+                if hasattr(self, "noise"):
+                    self.noise.apply_arrays(work_psi[1 - parity],
+                                            work_res[1 - parity][0], start_step + k)
                 if len(pending_hosts) >= 32:
                     stream.synchronize()
                     pending_hosts.clear()

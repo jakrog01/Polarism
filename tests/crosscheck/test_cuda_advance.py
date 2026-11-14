@@ -65,7 +65,7 @@ def test_multi_laser_advance_matches_steps(method, tableau, path, precision, gra
     cfg.solver.precision = precision
     cfg.solver.dt = 0.01
     cfg.solver.cuda_graphs = graphs
-    cfg.physics.init_seed = 11
+    cfg.noise.seed = 11
     cfg.reservoir.reservoir_type = "single"
     fast = SimulationController(cfg)
     old = SimulationController(cfg)
@@ -105,7 +105,7 @@ def test_multi_laser_graph_chunks_match_steps(method):
     cfg.solver.tableau = "rk4"
     cfg.solver.precision = "double"
     cfg.solver.dt = 0.01
-    cfg.physics.init_seed = 12
+    cfg.noise.seed = 12
     cfg.reservoir.reservoir_type = "single"
     fast = SimulationController(cfg)
     old = SimulationController(cfg)
@@ -138,7 +138,7 @@ def test_advance_matches_steps(method, precision, model):
     cfg.solver.method = method
     cfg.solver.precision = precision
     cfg.solver.dt = 0.01
-    cfg.physics.init_seed = 7
+    cfg.noise.seed = 7
     cfg.reservoir.reservoir_type = model
     cfg.laser.laser_type = "pulse-gaussian"
     cfg.laser.sigma_time = 0.02
@@ -179,7 +179,7 @@ def test_multiple_graph_lengths_and_odd_remainder_match_steps(method, precision)
     cfg.solver.method = method
     cfg.solver.precision = precision
     cfg.solver.dt = 0.01
-    cfg.physics.init_seed = 10
+    cfg.noise.seed = 10
     cfg.reservoir.reservoir_type = "single"
     cfg.laser.laser_type = "pulse-gaussian"
     cfg.laser.sigma_time = 0.02
@@ -217,7 +217,7 @@ def test_advance_fallback_matches_steps(method, case):
     cfg.solver.method = method
     cfg.solver.precision = "single"
     cfg.solver.dt = 0.01
-    cfg.physics.init_seed = 8
+    cfg.noise.seed = 8
     cfg.reservoir.reservoir_type = "single"
     cfg.laser.laser_type = "pulse-gaussian"
     cfg.laser.sigma_time = 0.02
@@ -264,7 +264,7 @@ def test_advance_boundary_and_diffusion_matches_steps(method, case):
     cfg.solver.method = method
     cfg.solver.precision = "double"
     cfg.solver.dt = 0.01
-    cfg.physics.init_seed = 9
+    cfg.noise.seed = 9
     cfg.reservoir.reservoir_type = "single"
     cfg.laser.laser_type = "pulse-gaussian"
     cfg.laser.sigma_time = 0.02

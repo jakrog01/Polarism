@@ -444,6 +444,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         self.batch_physics.check(state.field_k if state._field is None else state.field)
         if n_steps <= 0:
             return
+        if hasattr(self, "noise"):
+            return super().advance(potential, pump, reservoir, boundary_condition,
+                                   state, start_step, n_steps)
         self._activate_shape(state)
         from polarism.reservoir.single_reservoir import SingleReservoir
         from polarism.reservoir.double_reservoir import DoubleReservoir

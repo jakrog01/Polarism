@@ -18,7 +18,7 @@ def small_config(method="rk4-fdm"):
     cfg.grid.ny = 8
     cfg.solver.total_time = 0.003
     cfg.solver.method = method
-    cfg.physics.init_seed = 7
+    cfg.noise.seed = 7
     cfg.laser.laser_type = "continuous-gaussian"
     cfg.potential.potential_type = "double-well-supergaussian"
     return cfg
@@ -42,9 +42,9 @@ def test_batched_members_equal_separate(method, precision):
     cfg = small_config(method)
     cfg.solver.precision = precision
     members = [
-        {"physics.g_C": 0.002, "physics.init_seed": 11, "laser.P0": 0.3,
+        {"physics.g_C": 0.002, "noise.seed": 11, "laser.P0": 0.3,
          "laser.sigma_space": 8.0, "potential.V1": -0.002},
-        {"physics.g_C": 0.003, "physics.init_seed": 12, "laser.P0": 0.5,
+        {"physics.g_C": 0.003, "noise.seed": 12, "laser.P0": 0.5,
          "laser.sigma_space": 10.0, "potential.V1": -0.003},
     ]
     batched = SimulationController(cfg, members=members)

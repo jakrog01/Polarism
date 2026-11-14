@@ -21,8 +21,8 @@ def configuration(method, reservoir, boundary, gpu):
     cfg.solver.precision = "double"
     cfg.solver.dt = 0.001
     cfg.solver.total_time = 0.003
-    cfg.physics.init_seed = 17
-    cfg.physics.init_eps = 0.1
+    cfg.noise.seed = 17
+    cfg.noise.initial_amplitude = 0.1
     if method in ("split-step-fft", "split-step-fft-cuda"):
         cfg.physics.R = 0.0
         cfg.physics.g_R = 0.0

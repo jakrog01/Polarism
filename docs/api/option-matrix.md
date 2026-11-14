@@ -83,7 +83,7 @@ For pulsed Gaussian studies:
 | --- | --- | --- |
 | `legacy_positive_uniform` | you need to reproduce old runs | biased positive-uniform complex seed |
 | `complex_gaussian_zero_mean` | you want an unbiased stochastic seed | no spectral cutoff |
-| `filtered_complex_gaussian` | you want an explicit condensate-band seed cutoff | requires `init_k_cutoff_um`; report/sweep the cutoff |
+| `filtered_complex_gaussian` | you want an explicit condensate-band seed cutoff | requires `noise.initial_k_cutoff_um`; report/sweep the cutoff |
 
 ## Backend choice
 

@@ -46,6 +46,7 @@ class NPYStorage(BaseStorage):
         }
         if self.members is not None:
             self.metadata["members"] = self.members
+            self.metadata["member_seeds"] = getattr(config, "_storage_member_seeds", None)
             self.metadata["datasets"]["member_index"] = {"dims": ["member"], "units": ""}
             member_path = self.output_dir / "member_index.npy"
             if not self._resume or not member_path.exists():

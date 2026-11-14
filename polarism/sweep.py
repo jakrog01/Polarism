@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from itertools import product
-from dataclasses import asdict
-from copy import deepcopy
+from dataclasses import asdict, replace
+from copy import copy, deepcopy
 import json
 import math
 import os
@@ -17,6 +17,7 @@ from polarism.simulation_controller import SimulationController
 from polarism.results.reader import load_results
 from polarism.results.visitors.storage_visitor import create_run_directory
 from polarism.sweep_config import apply_overrides, override_kind
+from polarism.noise.stochastic import draw_seed
 
 
 def autotune_batch_size(limit, timer, *, max_steps=16384, initial_steps=8):
@@ -104,6 +105,7 @@ class Sweep:
 
     def __init__(self, cfg, parameters, mode="product"):
         load_plugins()
+        self._requested_cfg = cfg
         if mode not in {"product", "zip"}:
             raise ValueError("mode must be 'product' or 'zip'")
         if not isinstance(parameters, dict):
@@ -171,12 +173,13 @@ class Sweep:
         if isinstance(device, bytes):
             device = device.decode()
         names = sorted(key for member in overrides for key in member
-                       if key.startswith("physics.") and key not in
-                       {"physics.init_seed", "physics.init_mode", "physics.init_k_cutoff_um", "physics.init_eps"})
+                       if key.startswith("physics.") or key in {"noise.seed", "noise.initial",
+                       "noise.initial_amplitude", "noise.initial_k_cutoff_um", "noise.stochastic_strength"})
         pump_kind = cfg.laser.laser_type if cfg.laser.mode == "single" else "multiple"
         cache_key = json.dumps([device, cfg.solver.method, [cfg.grid.nx] if cfg.grid.ndim == 1 else [cfg.grid.ny, cfg.grid.nx],
                                 cfg.solver.precision, cfg.reservoir.reservoir_type,
-                                sorted(set(names)), pump_kind])
+                                sorted(set(names)), pump_kind, cfg.noise.enabled,
+                                cfg.noise.stochastic])
         cache_file = _cache_file()
         try:
             cache = json.loads(cache_file.read_text())
@@ -215,6 +218,16 @@ class Sweep:
 
         checkpoint = self.cfg.checkpoint
         source = resume or checkpoint.resume_from
+        self.cfg = copy(self._requested_cfg)
+        self.cfg.noise = replace(self.cfg.noise)
+        if self.cfg.noise.seed is None:
+            if source:
+                saved_manifest = json.loads((Path(source) / "sweep.json").read_text())
+                self.cfg.noise.seed = int(saved_manifest["seed"])
+            else:
+                self.cfg.noise.seed = draw_seed()
+        member_seeds = [self.cfg.noise.seed if member.get("noise.seed") is None
+                        else int(member["noise.seed"]) for member in self.members]
         output = self.cfg.result.save_results
         if output and not (self.cfg.result.formats or self.cfg.result.save_hdf5
                            or self.cfg.result.save_npy or self.cfg.result.save_json):
@@ -259,7 +272,9 @@ class Sweep:
                             "mode": self.mode, "parameter_keys": list(self.members[0]),
                             "parameters": self.members, "members": mapping,
                             "batches": planned, "batch_sizes": [batch["size"] for batch in planned],
-                            "config_signature": _config_signature(self.cfg)}
+                            "config_signature": _config_signature(self.cfg),
+                            "seed": self.cfg.noise.seed,
+                            "member_seeds": member_seeds}
                 manifest_path.write_text(json.dumps(manifest, indent=2, default=_json_value))
 
         results = [None] * len(self.members)

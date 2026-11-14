@@ -10,6 +10,7 @@
 | `boundary_condition` | absorbing boundary settings |
 | `potential` | external potential type and parameters |
 | `physics` | driven-dissipative GPE and reservoir coefficients |
+| `noise` | initial and stochastic condensate noise |
 | `laser` | pump mode and pump-shape parameters |
 | `reservoir` | reservoir model selection |
 | `solver` | time integrator and timestep settings |
@@ -36,8 +37,9 @@ configurations.  Checks include:
   `gamma_A`, `R`, `R_IA`, `R_AI`, `kappa`) are `>= 0`
 - all interaction, relaxation, and diffusion coefficients (`g_C`, `g_R`,
   `g_I`, `kinetic_relaxation_eta`, `reservoir_diffusion_I/A/R`) are `>= 0`
-- `init_eps >= 0`; `init_mode` is a recognised value; `init_k_cutoff_um > 0`
-  is required when `init_mode='filtered_complex_gaussian'`
+- `noise.initial_amplitude >= 0`; `noise.initial` is a recognised value;
+  `noise.initial_k_cutoff_um > 0` is required for filtered initial fields;
+  `noise.seed` is a non-negative int64 or `null`; `noise.stochastic_strength >= 0`
 - `boundary_condition.strength >= 0`; `mask_width_percent` in `[0, 0.5]`;
   `absorption` must be a registered strategy; `profile_type` is in
   `{'sin2', 'parabolic'}` when absorption is active
@@ -198,20 +200,27 @@ The `physics` block stores the scalar coefficients entering the condensate and r
 - `g_C`, `g_R`, `g_I`
 - `R`, `R_IA`, `R_AI`
 - `kappa` for the `quadratic-double` reservoir
-- `init_eps`, `init_mode`, `init_k_cutoff_um`, `init_seed`
 - `kinetic_relaxation_eta`
 - `reservoir_diffusion_I`, `reservoir_diffusion_A`, `reservoir_diffusion_R`
 
 These values are model parameters, not high-level feature flags, so they should be changed with physical units and stability constraints in mind.
 
-Initial-condition options:
+Noise options in the separate `noise` block:
 
 | Field | Meaning | Main options |
 | --- | --- | --- |
-| `init_eps` | amplitude scale of the initial condensate seed | positive float |
-| `init_mode` | initial seed generator | `legacy_positive_uniform`, `complex_gaussian_zero_mean`, `filtered_complex_gaussian` |
-| `init_k_cutoff_um` | radial cutoff in rad/um for `filtered_complex_gaussian` | positive float, required for filtered mode |
-| `init_seed` | optional RNG seed; noise is drawn with NumPy on the host, so CPU and GPU runs with the same seed start from the same field | integer or `null` |
+| `enabled` | master switch; false makes the initial field exactly zero and disables increments | boolean |
+| `seed` | resolved and recorded seed; `null` draws from OS entropy | non-negative int64 or `null` |
+| `initial` | initial field generator | `none`, `legacy_positive_uniform`, `complex_gaussian_zero_mean`, `filtered_complex_gaussian` |
+| `initial_amplitude` | amplitude scale of the initial condensate field | non-negative float |
+| `initial_k_cutoff_um` | radial cutoff in rad/um for `filtered_complex_gaussian` | positive float, required for filtered mode |
+| `stochastic` | per-step noise model | `none` or `wigner` |
+| `stochastic_strength` | multiplier of stochastic variance | non-negative float |
+
+The remaining fields belong to `physics`:
+
+| Field | Meaning | Main options |
+| --- | --- | --- |
 | `kinetic_relaxation_eta` | condensate kinetic-energy relaxation strength | nonnegative float, default `0.0` |
 | `reservoir_diffusion_I` | inactive-reservoir diffusion coefficient | nonnegative float, default `0.0` |
 | `reservoir_diffusion_A` | active-density diffusion coefficient for `double` | nonnegative float, default `0.0` |

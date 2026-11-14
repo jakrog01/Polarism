@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from polarism.init_condition import make_initial_psi
+from polarism.compute_engine import has_cuda_device
 
 TOL_MACHINE_F64 = 1e-12  # Exact algebraic identity in float64.
 
@@ -23,7 +24,7 @@ def test_gaussian_initialisation_invariants_and_filter() -> None:
 
 def test_legacy_and_seed_contracts() -> None:
     eps = 1e-3
-    legacy = make_initial_psi(np, (256, 256), (1.0, 1.0), eps, seed=7)
+    legacy = make_initial_psi(np, (64, 64), (1.0, 1.0), eps, seed=7)
     assert abs(legacy.real.mean() - eps / 2) < eps / 50
     assert abs(legacy.imag.mean() - eps / 2) < eps / 50
     assert abs(legacy.mean()) > eps / 10 and not np.isclose(np.sqrt(np.mean(np.abs(legacy) ** 2)), eps)
@@ -42,8 +43,8 @@ def test_invalid_initialisation_modes() -> None:
 @pytest.mark.gpu
 @pytest.mark.parametrize("mode", ["legacy_positive_uniform", "complex_gaussian_zero_mean", "filtered_complex_gaussian"])
 def test_same_seed_gives_same_noise_on_cpu_and_gpu(mode, use_gpu) -> None:
-    if not use_gpu:
-        pytest.skip("requires --use-gpu")
+    if not use_gpu or not has_cuda_device():
+        pytest.skip("CUDA device unavailable")
     cp = pytest.importorskip("cupy")
     kwargs = dict(mode=mode, k_cutoff_um=2.0, seed=42)
     cpu = make_initial_psi(np, (64, 48), (1.0, 1.0), 1e-3, **kwargs)

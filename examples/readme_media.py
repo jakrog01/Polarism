@@ -56,8 +56,8 @@ def make_config():
     cfg.laser.extra = {"ring_radius": 20.0}
     cfg.laser.P0 = 0.1
     cfg.laser.sigma_space = 4.0
-    cfg.physics.init_mode = "complex_gaussian_zero_mean"
-    cfg.physics.init_seed = 5
+    cfg.noise.initial = "complex_gaussian_zero_mean"
+    cfg.noise.seed = 5
     cfg.solver.method = "ifrk-fft-cuda"
     cfg.solver.precision = "single"
     cfg.solver.dt = 0.05

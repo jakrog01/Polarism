@@ -8,6 +8,7 @@ The full runtime configuration is held in `polarism.config.simulation_parameters
 | --- | --- |
 | `grid` | Spatial resolution, box size, and grid topology |
 | `physics` | Material constants, interaction strengths, and decay rates |
+| `noise` | Initial field, seed, and stochastic Wigner increments |
 | `boundary_condition` | Absorption type, profile, and mask width |
 | `potential` | External potential family and parameters |
 | `laser` | Pump definition for single or multiple sources |
@@ -58,18 +59,57 @@ The `physics` block controls decay, interaction, and reservoir coupling paramete
 - `R`
 - `m_eff`
 - `hbar`
-- `init_eps`
-- `init_mode`, `init_k_cutoff_um`, `init_seed`
 - `kinetic_relaxation_eta`
 - `reservoir_diffusion_I`, `reservoir_diffusion_A`, `reservoir_diffusion_R`
 
 These values directly enter the nonlinear GPE-reservoir dynamics. Keep units consistent across the full configuration; the package does not perform unit conversion for you.
 
-`init_mode` controls the initial condensate seed.  The default
-`legacy_positive_uniform` reproduces historical runs.  For geometry-sensitive
-studies, `complex_gaussian_zero_mean` or `filtered_complex_gaussian` avoids the
-biased positive-uniform seed; filtered mode requires `init_k_cutoff_um` and
-records that cutoff in metadata.
+## Noise
+
+The `noise` block controls the initial condensate field and optional noise
+during evolution:
+
+```yaml
+noise:
+  enabled: true
+  seed: null
+  initial: legacy_positive_uniform
+  initial_amplitude: 1.0e-3
+  initial_k_cutoff_um: null
+  stochastic: none
+  stochastic_strength: 1.0
+```
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | Set to `false` for an exactly zero initial field and no stochastic increments |
+| `seed` | `null` | Non-negative int64 seed; `null` resolves from OS entropy and is recorded |
+| `initial` | `legacy_positive_uniform` | `none`, `legacy_positive_uniform`, `complex_gaussian_zero_mean`, or `filtered_complex_gaussian` |
+| `initial_amplitude` | `1.0e-3` | Amplitude of the initial field |
+| `initial_k_cutoff_um` | `null` | Required positive radial cutoff for filtered initial fields |
+| `stochastic` | `none` | `none` or `wigner` |
+| `stochastic_strength` | `1.0` | Non-negative multiplier of Wigner noise variance; zero disables increments |
+
+The default initial mode reproduces historical seeded starts. For a zero field
+with stochastic growth, set `initial: none` and `stochastic: wigner`. For a
+fully deterministic zero-field run, set `enabled: false`. The initial field
+uses NumPy's seeded generator on both devices.
+
+One seed controls the run. With `seed: null` a seed is drawn once per run (or
+once per sweep) and recorded in the run's config, results metadata and
+checkpoint, so any run can be repeated by setting that seed. All members of a
+parameter sweep share the seed, so they see identical random numbers and differ
+only by the swept parameters. Sweep `noise.seed` over values to create a noise
+ensemble. A sweep member reproduces bit-for-bit as a single run with the same
+config, whatever the batch size, and after a checkpoint resume.
+For a single run, `--noise.seed 42` sets the seed from the command line.
+
+With `stochastic: wigner`, a cell receives
+$\sqrt{s(\gamma_C+R n_A)dt/(4\Delta V)}(z_{re}+i z_{im})$ after each step,
+where $z_{re}$ and $z_{im}$ are independent unit normals, $s$ is
+`stochastic_strength`, and $\Delta V$ is `dx` in 1D or `dx dy` in 2D.
+This implementation omits the Wigner energy and reservoir corrections; see
+[Physics Background](../development/physics-background.md#initial-noise-and-stochastic-seeds).
 
 `kinetic_relaxation_eta` enables a phenomenological kinetic-energy relaxation
 term for the condensate.  It defaults to `0.0`.  When enabled it damps high-k

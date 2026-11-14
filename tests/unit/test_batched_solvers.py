@@ -446,8 +446,6 @@ def _physics_values(cfg, *, diffusion=True):
             values[name] = np.array([0.0, 0.008])
         elif name.startswith("reservoir_diffusion"):
             values[name] = np.array([0.0, 0.004 if diffusion else 0.0])
-        elif name == "init_eps":
-            values[name] = np.array([base, base * 1.2])
         else:
             values[name] = np.array([base * 0.9 + 0.0001, base * 1.1 + 0.0002])
     return values
@@ -504,7 +502,7 @@ def test_batch_physics_validation():
     cfg = _config("rk4-fdm", "single", "cap")
     grid = create_grid(cfg.grid)
     with pytest.raises(ValueError, match="non-float"):
-        create_solver(cfg, grid, {"init_mode": [1, 2]})
+        create_solver(cfg, grid, {"noise_mode": [1, 2]})
     with pytest.raises(ValueError, match="length"):
         create_solver(cfg, grid, {"hbar": [0.6, 0.7], "m_eff": [0.2]})
     solver = create_solver(cfg, grid, {"hbar": [0.6, 0.7]})

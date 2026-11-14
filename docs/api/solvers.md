@@ -133,10 +133,10 @@ cheaper.
 
 In this run the errors of all tableaus fall only about two- to fourfold per
 halving of dt. The cause is the initial condition, not the integrator: the
-default `init_mode` seeds ψ with white noise that has content up to the grid's
+default `noise.initial` seeds ψ with white noise that has content up to the grid's
 Nyquist wavenumber, and Lawson methods lose their classical order on such
-non-smooth data. With a smooth start (`init_mode =
-"filtered_complex_gaussian"`, `init_k_cutoff_um = 0.5`, 256² grid, same
+non-smooth data. With a smooth start (`noise.initial =
+"filtered_complex_gaussian"`, `noise.initial_k_cutoff_um = 0.5`, 256² grid, same
 reference) the nominal orders appear:
 
 | tableau | dt = 0.4 | dt = 0.2 | dt = 0.1 | dt = 0.05 |

@@ -41,6 +41,7 @@ class JSONStorage(BaseStorage):
                          "config": asdict(config) if is_dataclass(config) else config or {}}
         if self.members is not None:
             self.metadata["members"] = self.members
+            self.metadata["member_seeds"] = getattr(config, "_storage_member_seeds", None)
             self.metadata["datasets"]["member_index"] = {"dims": ["member"], "units": ""}
         if self.members is not None and x is not None:
             self.metadata["datasets"]["grid/x"] = {"units": "µm", "dims": ["x"]}

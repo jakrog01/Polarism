@@ -11,9 +11,9 @@ from tests.unit.conftest import small_config
 
 def test_seed_reproducibility() -> None:
     compute_engine.xp = np
-    first = SimulationController(small_config(physics__init_seed=42)); first.run()
-    second = SimulationController(small_config(physics__init_seed=42)); second.run()
-    third = SimulationController(small_config(physics__init_seed=43)); third.run()
+    first = SimulationController(small_config(noise__seed=42)); first.run()
+    second = SimulationController(small_config(noise__seed=42)); second.run()
+    third = SimulationController(small_config(noise__seed=43)); third.run()
     assert np.array_equal(first.state.psi, second.state.psi)
     assert not np.array_equal(first.state.psi, third.state.psi)
 

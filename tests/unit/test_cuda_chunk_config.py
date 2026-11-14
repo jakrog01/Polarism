@@ -33,7 +33,7 @@ def test_controller_chunked_recording_matches_per_step_loop():
     cfg.solver.dt = 0.01
     cfg.solver.total_time = 0.1
     cfg.result.save_every = 3 * cfg.solver.dt
-    cfg.physics.init_seed = 12
+    cfg.noise.seed = 12
     chunked = SimulationController(cfg)
     baseline = SimulationController(cfg)
     records = []

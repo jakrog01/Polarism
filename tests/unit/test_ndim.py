@@ -21,7 +21,7 @@ def configuration(method="rk4-fdm", boundary="periodic", reservoir="single", ndi
     cfg = Config()
     cfg.grid = GridParameters(ndim=ndim, nx=32, ny=4, lx=40.0, ly=7.0,
                               grid_type=boundary)
-    cfg.physics.init_seed = 8
+    cfg.noise.seed = 8
     cfg.physics.reservoir_diffusion_R = 0.02
     cfg.physics.reservoir_diffusion_A = 0.02
     cfg.physics.reservoir_diffusion_I = 0.02

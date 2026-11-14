@@ -165,7 +165,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
         if n_steps <= 0:
             return
         fused = self._cuda(reservoir)
-        if fused is None or not self._can_skip_after_step(boundary_condition):
+        if fused is None or not self._can_skip_after_step(boundary_condition) or hasattr(self, "noise"):
             super().advance(potential, pump, reservoir, boundary_condition,
                             state, start_step, n_steps)
         else:

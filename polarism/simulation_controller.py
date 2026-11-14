@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
-from dataclasses import asdict
+from copy import copy
+from dataclasses import asdict, replace
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,7 @@ from polarism.grid.create_grid import create_grid
 from polarism.grid.simulation_grid import SimulationGrid
 from polarism.laser.laser_factory import LaserFactory
 from polarism.laser.pump_field import BatchedPumpField, PumpField
+from polarism.noise.stochastic import draw_seed
 from polarism.plugins import load_plugins
 from polarism.potential.create_potential import create_potential
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
@@ -104,8 +106,21 @@ class SimulationController:
             load_plugins()
         if members is not None and len(members) == 0:
             raise ValueError("members must contain at least one override mapping")
+        cfg = copy(cfg)
+        cfg.noise = replace(cfg.noise)
+        indices = member_indices or list(range(len(members or [cfg])))
+        self._seed_drawn = cfg.noise.seed is None and cfg.checkpoint.resume_from is None
+        if cfg.noise.seed is None:
+            if cfg.checkpoint.resume_from is not None:
+                with h5py.File(cfg.checkpoint.resume_from, "r") as saved:
+                    cfg.noise.seed = int(json.loads(saved.attrs["config_json"])["noise"]["seed"])
+            else:
+                cfg.noise.seed = draw_seed()
         member_configs = ([apply_overrides(cfg, overrides) for overrides in members]
                           if members is not None else None)
+        for member in member_configs or []:
+            if member.noise.seed is None:
+                member.noise.seed = cfg.noise.seed
         if member_configs is not None and len(member_configs) == 1:
             cfg = member_configs[0]
         batched = member_configs is not None and len(member_configs) >= 2
@@ -113,7 +128,7 @@ class SimulationController:
         self._batched = batched
         self._member_configs = member_configs
         self._output_dir = Path(output_dir) if output_dir is not None else None
-        self._member_indices = member_indices or list(range(len(member_configs or [cfg])))
+        self._member_indices = indices
         if member_configs is not None and cfg.result.view_member >= len(member_configs):
             raise ValueError("result.view_member is outside the batch")
         compute_engine.configure(cfg.compute_engine)
@@ -171,10 +186,11 @@ class SimulationController:
                                               cfg.solver.precision, batch_size=len(member_configs),
                                               batch_physics=batch_physics)
             states = [SimulationState(
-                self.grid, member.physics.init_eps, cfg.solver.precision,
-                mode=member.physics.init_mode,
-                k_cutoff_um=member.physics.init_k_cutoff_um,
-                seed=member.physics.init_seed,
+                self.grid, member.noise.initial_amplitude if member.noise.enabled else 0.0,
+                cfg.solver.precision,
+                mode=member.noise.initial if member.noise.enabled else "none",
+                k_cutoff_um=member.noise.initial_k_cutoff_um,
+                seed=member.noise.seed,
             ) for member in member_configs]
             initial_fields = self.xp.stack([state.psi for state in states])
             self.state = states[0]
@@ -189,13 +205,14 @@ class SimulationController:
             self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid, cfg.solver.precision)
             self.state = SimulationState(
                 self.grid,
-                cfg.physics.init_eps,
+                cfg.noise.initial_amplitude if cfg.noise.enabled else 0.0,
                 cfg.solver.precision,
-                mode=getattr(cfg.physics, "init_mode", "legacy_positive_uniform"),
-                k_cutoff_um=getattr(cfg.physics, "init_k_cutoff_um", None),
-                seed=getattr(cfg.physics, "init_seed", None),
+                mode=cfg.noise.initial if cfg.noise.enabled else "none",
+                k_cutoff_um=cfg.noise.initial_k_cutoff_um,
+                seed=cfg.noise.seed,
             )
-        self.solver = create_solver(cfg, self.grid, batch_physics=batch_physics)
+        self.solver = create_solver(cfg, self.grid, batch_physics=batch_physics,
+                                    noise_members=member_configs)
         self._batch_physics = batch_physics
         self.max_laser_power = self._compute_max_laser_power()
 
@@ -307,6 +324,8 @@ class SimulationController:
 
         self.cfg._storage_members = len(self._member_configs) if self._member_configs is not None and (self._output_dir is not None or self._batched) else None
         self.cfg._storage_indices = self._member_indices
+        self.cfg._storage_member_seeds = ([member.noise.seed for member in self._member_configs]
+                                           if self._member_configs is not None else None)
         self.cfg._storage_resume = self.cfg.checkpoint.resume_from is not None
         self.cfg._storage_resume_time = self.state.t if self._resumed else None
         self.storage_visitor = StorageVisitor(
@@ -543,7 +562,7 @@ class SimulationController:
                 h5.attrs["config_json"] = json.dumps(asdict(self.cfg))
                 if self._member_configs is not None:
                     h5.attrs["member_configs_json"] = json.dumps([
-                        {**{name: asdict(member)[name] for name in ("physics", "laser", "potential")},
+                        {**{name: asdict(member)[name] for name in ("physics", "laser", "potential", "noise")},
                          "laser_entries": getattr(member, "_laser_entry_overrides", {})}
                         for member in self._member_configs
                     ], sort_keys=True)
@@ -568,9 +587,23 @@ class SimulationController:
                 raise ValueError("reservoir type mismatch")
             if h5.attrs["dt"] != self.cfg.solver.dt:
                 raise ValueError("checkpoint dt mismatch")
+            saved_noise = json.loads(h5.attrs["config_json"])["noise"]
+            if self._seed_drawn:
+                drawn = self.cfg.noise.seed
+                self.cfg.noise.seed = saved_noise["seed"]
+                saved_members = json.loads(h5.attrs.get("member_configs_json", "[]"))
+                for member, saved in zip(self._member_configs or [], saved_members):
+                    if member.noise.seed == drawn:
+                        member.noise.seed = saved["noise"]["seed"]
+                self._seed_drawn = False
+            relevant_noise = ("enabled", "seed", "stochastic", "stochastic_strength")
+            if (self._member_configs is None and any(
+                    saved_noise[name] != getattr(self.cfg.noise, name)
+                    for name in relevant_noise)):
+                raise ValueError("checkpoint noise config mismatch")
             if self._member_configs is not None:
                 expected = json.dumps([
-                    {**{name: asdict(member)[name] for name in ("physics", "laser", "potential")},
+                    {**{name: asdict(member)[name] for name in ("physics", "laser", "potential", "noise")},
                      "laser_entries": getattr(member, "_laser_entry_overrides", {})}
                     for member in self._member_configs
                 ], sort_keys=True)
@@ -620,7 +653,8 @@ class SimulationController:
         self._resumed = True
         if field_k is not None:
             self.state.field_k = self.xp.asarray(field_k, dtype=dtype).copy()
-        self.solver = create_solver(self.cfg, self.grid, batch_physics=self._batch_physics)
+        self.solver = create_solver(self.cfg, self.grid, batch_physics=self._batch_physics,
+                                    noise_members=self._member_configs)
 
     def run(self) -> None:
         """Run the simulation loop."""

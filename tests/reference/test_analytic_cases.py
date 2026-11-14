@@ -32,8 +32,8 @@ def test_uniform_phase_rotation() -> None:
         physics__g_R=0.0,
         physics__g_I=0.0,
         laser__P0=0.0,
-        physics__init_eps=1.0,
-        physics__init_mode="legacy_positive_uniform",
+        noise__initial_amplitude=1.0,
+        noise__initial="legacy_positive_uniform",
         solver__total_time=0.02,
     )
     controller = SimulationController(cfg); controller.state.psi.fill(1.0 + 0j); controller.run()
