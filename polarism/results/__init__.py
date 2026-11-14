@@ -3,6 +3,7 @@ from polarism.results.real_time_visualization import RealTimeVisualization
 from polarism.results.result_groups import Results2D, ResultScalar, ResultScalarGroup
 from polarism.results.result_node import ResultNode
 from polarism.results.observable_registry import available_observables, register_observable
+from polarism.results import builtin_observables
 from polarism.results.reader import Results, SweepResults, load_results
 from polarism.results.result_provider import ResultProvider
 from polarism.results.results_manager import ResultsManager

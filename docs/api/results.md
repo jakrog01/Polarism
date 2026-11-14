@@ -109,6 +109,18 @@ The user-facing result configuration exposes these main storage choices:
 | `real_time_view` | interactive visualization during a run |
 | `animate` | stream an online animation during the run |
 
+## Built-in observables
+
+`polarism.results.builtin_observables` registers `angular-momentum`,
+`center-of-mass`, `current`, `momentum-density` and `vortices` in the observable
+registry. They produce the nodes `angular_momentum`, `center_x`, `center_y`,
+`current_x`, `current_y`, `momentum_density`, `vortex_charge` (`int8`) and
+`vortex_count`, computed on the active backend and batch-aware (scalars have
+one value per member, fields keep the member axis). The always-present `norm`
+node is reused rather than repeated. `angular-momentum` and `vortices` need a
+2D grid. Formulas, units and the vortex detection rule are in
+[Output and Visualization](../user-guide/output-and-visualization.md#built-in-observables).
+
 See [storage plugins](../plugins/storage.md) and [observable plugins](../plugins/observables.md)
 for the result extension contracts, including custom visitors.
 

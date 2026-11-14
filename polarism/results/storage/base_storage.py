@@ -42,6 +42,8 @@ class BaseStorage(ABC):
     def dataset_metadata(self, name: str, *, static: bool = False, field: bool = False) -> dict:
         """Describe public dimensions and physical units of a saved array."""
         axes = (["y", "x"] if self.ndim == 2 else ["x"])
+        if name == "momentum_density":
+            axes = [f"k{axis}" for axis in axes]
         dims = ([] if static else ["time"])
         if self.members is not None:
             dims.append("member")

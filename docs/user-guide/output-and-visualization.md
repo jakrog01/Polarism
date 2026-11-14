@@ -20,8 +20,52 @@ plots and movie titles use the display label.
 | `nR`, `nI`, `nR_max`, `nI_max` | | fields, scalars | `quadratic-double` reservoir |
 
 Per-laser peak powers are stored as the scalar group `P_lasers` (`L0`, `L1`, …).
-Additional quantities come from [observable plugins](../plugins/observables.md)
-selected with `cfg.result.observables`.
+Additional quantities are selected with `cfg.result.observables`: the
+[built-in observables](#built-in-observables) below or
+[observable plugins](../plugins/observables.md).
+
+## Built-in observables
+
+```python
+cfg.result.observables = ("center-of-mass", "current", "vortices")
+```
+
+Each name adds the nodes below to the saved frames and costs nothing when it is
+not requested. All are computed on the device from the current `psi`; in a
+batched run scalars hold one value per member and fields keep the member axis.
+The total norm is the always-present `norm` node, so there is no separate
+observable for it. Gradients use central differences: periodic on `periodic`
+grids, one-sided at the edges of `closed-interval` grids. With `ħ` =
+`physics.hbar` and `m` = `physics.m_eff` (per member when swept):
+
+| Observable | Nodes | Kind and units | Definition |
+| --- | --- | --- | --- |
+| `center-of-mass` | `center_x`, `center_y` (2D only) | scalars, µm | `<r> = Σ \|ψ\|² r / Σ \|ψ\|²` |
+| `momentum-density` | `momentum_density` | field, µm^ndim | `n(k) = \|Σ ψ(r) e^{-ik·r} Πh\|² / (2π)^ndim`, fftshifted, so `Σ n(k) Π dk = N` |
+| `current` | `current_x`, `current_y` (2D only) | fields, µm⁻¹ ps⁻¹ (ps⁻¹ in 1D) | `j = (ħ/m) Im(ψ* ∇ψ)` |
+| `angular-momentum` | `angular_momentum` | scalar, ħ | `<L_z>/(Nħ) = Im Σ ψ*(x ∂_y ψ − y ∂_x ψ) / Σ \|ψ\|²` about the grid origin |
+| `vortices` | `vortex_charge`, `vortex_count` | `int8` field, count | phase winding per plaquette (below) |
+
+`angular-momentum` follows from `L_z = −iħ(x ∂_y − y ∂_x)`; a vortex of charge
+`m` centred on the origin gives `m`, and its sign is positive for a phase that
+increases counter-clockwise. `angular-momentum` and `vortices` need a 2D grid
+and are rejected by validation in 1D; the others also work in 1D with only the
+`x` component.
+
+The `momentum_density` axes are `kx` (last axis) and `ky`, with values
+`2π · fftshift(fftfreq(n, h))` for the grid spacing `h` along that axis; the
+datasets record `dims` as `kx`/`ky`.
+
+`vortex_charge[j, i]` is the phase winding, in units of 2π, around the
+plaquette whose corners are the grid points `(j, i)`, `(j, i+1)`, `(j+1, i+1)`
+and `(j+1, i)`; it is the sum of the four phase steps wrapped to `(−π, π]`.
+Phase singularities therefore sit at plaquette centres `(x_i + h/2, y_j + h/2)`.
+On closed-interval grids the last row and column have no plaquette and are
+zero. `vortex_count` counts the non-zero plaquettes whose largest corner
+density exceeds `10⁻³ max|ψ|²` of the member, so phase noise in empty regions
+is ignored (the raw `vortex_charge` field is not masked). A plaquette
+resolves a winding of ±1 only; a charge-2 vortex is undersampled by one
+plaquette and may be missed or miscounted.
 
 The initial state is recorded at its starting time `t0`. After that, every
 output receives a frame every `save_every` ps. The interval must be a positive

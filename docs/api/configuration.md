@@ -159,7 +159,7 @@ with reduced grid-direction anisotropy.
 | `save_results` | enable result processing | boolean |
 | `save_hdf5`, `save_json`, `save_npy` | storage backends | booleans |
 | `formats` | additional registered storage formats, combined with enabled `save_*` options | tuple of names, default `()` |
-| `observables` | registered observable factories that add result nodes | tuple of names, default `()` |
+| `observables` | registered observable factories that add result nodes; built in: `angular-momentum`, `center-of-mass`, `current`, `momentum-density`, `vortices` (the first and last are 2D only) | tuple of names, default `()` |
 | `save_every` | time in ps between writes after the initial state; defaults to one `solver.dt` | positive multiple of `solver.dt` |
 | `batch_size` | maximum frames buffered before a write; a batch is also written once its fields reach 256 MiB | positive integer |
 | `compression` | compression for every HDF5 dataset | `none` (default), `lzf`, `gzip` |

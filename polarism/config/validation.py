@@ -12,6 +12,7 @@ from polarism.dispersion import available_dispersions
 from polarism.grid.create_grid import grid_boundary
 from polarism.initial_condition import available_initial_conditions
 from polarism.model_terms import available_terms
+from polarism.results.builtin_observables import TWO_DIMENSIONAL_OBSERVABLES
 from polarism.results.observable_registry import available_observables
 from polarism.results.storage import available_storages
 
@@ -212,6 +213,12 @@ def _validate_result(cfg: Config) -> None:
                 registry.lookup(name)
             except ValueError as exc:
                 raise ConfigValidationError(f"result.{field}: {exc}") from exc
+    if cfg.grid.ndim == 1:
+        for name in r.observables:
+            if name in TWO_DIMENSIONAL_OBSERVABLES:
+                raise ConfigValidationError(
+                    f"result.observables: {name!r} requires a 2D grid, got grid.ndim=1"
+                )
     if not isinstance(r.compression, str) or r.compression not in {"none", "lzf", "gzip"}:
         raise ConfigValidationError("result.compression must be one of none, lzf, gzip")
     if type(r.compression_level) is not int or not 0 <= r.compression_level <= 9:

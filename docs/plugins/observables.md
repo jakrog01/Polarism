@@ -3,8 +3,11 @@
 Register a factory with `polarism.results.register_observable(name)` and select
 it with `cfg.result.observables = (name,)`. Factories receive the initialized
 `SimulationController` and return one `ResultNode` or a list of nodes. Unknown
-names fail configuration validation and list registered observables. There
-are no built-in names in this registry.
+names fail configuration validation and list registered observables. The
+registry already holds the
+[built-in observables](../user-guide/output-and-visualization.md#built-in-observables);
+a plugin name that equals one of them overrides it with a warning, and two
+selected observables must not produce nodes with the same name.
 
 `ResultNode.compute_fn(**context)` receives `state`, `grid`, `P_total`, and
 `scalar_groups`, the context keys passed by
