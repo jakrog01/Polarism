@@ -11,6 +11,8 @@ from polarism.boundary_conditions.absorption.absorption_registry import (
 from polarism.dispersion import available_dispersions
 from polarism.grid.create_grid import grid_boundary
 from polarism.initial_condition import available_initial_conditions
+from polarism.profiles import validate_profile_spec
+from polarism.envelopes import create_envelope
 from polarism.model_terms import available_terms
 from polarism.results.builtin_observables import TWO_DIMENSIONAL_OBSERVABLES
 from polarism.results.observable_registry import available_observables
@@ -60,6 +62,7 @@ def validate_config(cfg: Config) -> None:
     _validate_stop(cfg)
     _validate_sweep(cfg)
     _validate_boundary(cfg)
+    _validate_potential(cfg)
     _validate_laser(cfg)
     _warn_explicit_stability(cfg)
 
@@ -290,6 +293,17 @@ def _validate_boundary(cfg: Config) -> None:
         )
 
 
+def _validate_potential(cfg: Config) -> None:
+    potential = cfg.potential
+    if potential.potential_type == "profile":
+        if not potential.profile:
+            raise ConfigValidationError("potential.profile is required for potential_type='profile'")
+        try:
+            validate_profile_spec(potential.profile, cfg.grid.ndim)
+        except ValueError as exc:
+            raise ConfigValidationError(f"potential.profile: {exc}") from exc
+
+
 def _validate_laser(cfg: Config) -> None:
     laser = cfg.laser
     if cfg.reservoir.reservoir_type == "none" and (laser.P0 != 0 or laser.n_pulses > 0 or laser.mode == "multiple"):
@@ -323,6 +337,16 @@ def _validate_laser(cfg: Config) -> None:
             f"laser.power_definition='{laser.power_definition}' is not recognised. "
             f"Valid values: {sorted(_VALID_POWER_DEFINITIONS)}."
         )
+    if laser.mode == "single" and laser.laser_type == "profile":
+        if laser.power_definition != "peak_amplitude":
+            raise ConfigValidationError("laser_type='profile' requires power_definition='peak_amplitude'")
+        if not laser.profile:
+            raise ConfigValidationError("laser.profile is required for laser_type='profile'")
+        try:
+            validate_profile_spec(laser.profile, cfg.grid.ndim)
+            create_envelope(laser.envelope)
+        except ValueError as exc:
+            raise ConfigValidationError(f"laser profile/envelope: {exc}") from exc
 
 
 def _dx_min(cfg: Config) -> float:

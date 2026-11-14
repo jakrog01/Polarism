@@ -82,7 +82,8 @@ coefficient so that the corrective action is unambiguous.
 
 | Field | Meaning | Main options |
 | --- | --- | --- |
-| `potential_type` | external potential model | `zero`, `double-well-supergaussian` |
+| `potential_type` | external potential model | `zero`, `double-well-supergaussian`, `profile` |
+| `profile` | [spatial profile](../user-guide/profiles-and-envelopes.md) spec; required for `potential_type: profile`, with amplitude in meV | mapping, default `{}` |
 | `x1`, `y1`, `x2`, `y2` | feature positions for structured potentials | floats |
 | `V1`, `V2` | potential amplitudes | floats |
 | `w1`, `w2` | characteristic widths | positive floats |
@@ -95,7 +96,9 @@ coefficient so that the corrective action is unambiguous.
 | --- | --- | --- |
 | `mode` | single or multi-pump setup | `single`, `multiple` |
 | `config_file` | YAML file for multi-pump setups | path string |
-| `laser_type` | pump-profile selection | `uniform`, `continuous-gaussian`, `continuous-exp`, `continuous-exp-length`, `pulse-gaussian` |
+| `laser_type` | pump-profile selection | `uniform`, `continuous-gaussian`, `continuous-exp`, `continuous-exp-length`, `pulse-gaussian`, `profile` |
+| `profile` | [spatial profile](../user-guide/profiles-and-envelopes.md) spec; required for `laser_type: profile` | mapping, default `{}` |
+| `envelope` | temporal envelope for `laser_type: profile` | mapping, default `{type: constant}` |
 | `P0`, `Pmax` | pump strength parameters; for `pulse-gaussian`, their physical meaning is set by `power_definition` | floats |
 | `power_definition` | interpretation of `P0`, `Pmax`, and per-laser `power` for `pulse-gaussian` | `peak_amplitude`, `pulse_energy` |
 | `x0`, `y0` | pump center | floats |
@@ -106,6 +109,10 @@ coefficient so that the corrective action is unambiguous.
 | `delay` | start delay before pump turns on; for `pulse-gaussian`, the first peak occurs later at `delay + cutoff_sigma * sigma_time` | nonnegative float |
 | `n_pulses` | finite pulse-train length for pulsed lasers; `0` means an unbounded pulse train | nonnegative integer |
 | `expose_results` | publish the total pump field and per-laser scalar group to result visitors | boolean |
+
+`laser_type: profile` requires `power_definition: peak_amplitude`; its pump is
+`P0 × profile(r) × envelope(t − delay)` after the delay. Both mappings also work
+in entries of a multiple-laser YAML file.
 
 `power_definition` is currently used by `pulse-gaussian`.  In
 `peak_amplitude` mode, `P0` is the local peak source density at the pump

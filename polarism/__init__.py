@@ -6,6 +6,8 @@ from polarism.grid import create_grid
 from polarism.laser.laser_factory import LaserFactory
 from polarism.plugins import load_plugins
 from polarism.potential import create_potential
+from polarism.profiles import available_profiles, create_profile, register_profile
+from polarism.envelopes import available_envelopes, create_envelope, register_envelope
 from polarism.reservoir import create_reservoir
 from polarism.results import (
     RealTimeVisualization,
@@ -38,6 +40,12 @@ __all__ = [
     "create_absorption_strategy",
     "create_grid",
     "create_potential",
+    "available_profiles",
+    "create_profile",
+    "register_profile",
+    "available_envelopes",
+    "create_envelope",
+    "register_envelope",
     "create_reservoir",
     "create_solver",
     "AbstractSolver",

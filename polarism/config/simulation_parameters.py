@@ -84,6 +84,7 @@ class PotentialParameters:
     """Store potential settings."""
     expose_results: bool = True
     potential_type: str = "zero"
+    profile: dict[str, Any] = field(default_factory=dict)
     x1: float = -2.0
     y1: float = 0.0
     x2: float = 2.0
@@ -102,6 +103,8 @@ class LaserParameters:
     mode: str = "single"
     config_file: str | None = None
     laser_type: str = "pulse-gaussian"
+    profile: dict[str, Any] = field(default_factory=dict)
+    envelope: dict[str, Any] = field(default_factory=lambda: {"type": "constant"})
     P0: float = 0.4
     Pmax: float = 1.2
     x0: float = 0.0

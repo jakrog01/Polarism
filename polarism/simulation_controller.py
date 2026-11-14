@@ -212,7 +212,7 @@ class SimulationController:
                               for item in potentials[1:]) else self.xp.stack(potentials)[:, None])
             member_lasers = [LaserFactory.create_laser(
                 member.laser, self.grid.X, self._profile_y, cfg.solver.precision,
-                getattr(member, "_laser_entry_overrides", None)) for member in member_configs]
+                getattr(member, "_laser_entry_overrides", None), self.grid) for member in member_configs]
             self.lasers = member_lasers[0]
             self.pump_field = BatchedPumpField(member_lasers, self.grid, cfg.solver.precision)
             self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid,
@@ -234,7 +234,7 @@ class SimulationController:
         else:
             self.potential = create_potential(cfg.potential, self.grid)
             self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self._profile_y, cfg.solver.precision,
-                                                    getattr(cfg, "_laser_entry_overrides", None))
+                                                    getattr(cfg, "_laser_entry_overrides", None), self.grid)
             self.pump_field = PumpField(self.lasers, self.grid, cfg.solver.precision)
             self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid, cfg.solver.precision)
             self.state = SimulationState(

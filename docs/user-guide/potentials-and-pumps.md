@@ -10,6 +10,11 @@ The current potential factory exposes these `potential_type` values:
 
 - `zero`
 - `double-well-supergaussian`
+- `profile`
+
+Use `profile` for a registered [spatial profile](profiles-and-envelopes.md),
+including analytic shapes, file maps, and lattices. Its `profile.amplitude`
+sets the potential strength in meV.
 
 Example:
 
@@ -35,6 +40,11 @@ The laser registry currently includes:
 - `continuous-exp`
 - `continuous-exp-length`
 - `pulse-gaussian`
+- `profile`
+
+The `profile` laser combines a registered spatial profile with a scalar
+[temporal envelope](profiles-and-envelopes.md). Its pump remains separable,
+and each entry in a multiple-laser YAML file may specify both mappings.
 
 All pump profiles follow the same high-level structure used by the shared `AbstractLaser` interface:
 
@@ -61,6 +71,7 @@ pulse peak occurs at \(t = t_{\mathrm{delay}} + \phi\) rather than exactly at
 | `continuous-exp` | Continuous radially decaying pump with exponential tail | \(S(x, y) = \exp[-r / w^2],\; r = \sqrt{(x-x_0)^2 + (y-y_0)^2},\; w = \texttt{sigma\_space}\) |
 | `continuous-exp-length` | Continuous radially decaying pump with a length-consistent exponential tail | \(S(x, y) = \exp[-r / \sigma_{\mathrm{space}}],\; r = \sqrt{(x-x_0)^2 + (y-y_0)^2}\) |
 | `pulse-gaussian` | Repeated Gaussian pulses with Gaussian spot and stepwise strength ramp up to `Pmax` | \(S(x, y) = \exp[-((x-x_0)^2 + (y-y_0)^2)/(2 \sigma_{\mathrm{space}}^2)]\) and \(T(t) = \exp[-(t-(\phi+n\Delta t))^2/(2 \sigma_{\mathrm{time}}^2)]\) near each pulse center \(\phi+n\Delta t\), where \(\phi = \texttt{cutoff\_sigma} \cdot \sigma_{\mathrm{time}}\) |
+| `profile` | Registered spatial profile and scalar temporal envelope | \(S\) is `laser.profile`; \(T\) is `laser.envelope`; \(A=P_0\). Only `peak_amplitude` is supported. |
 
 `continuous-exp` is retained for Phoenix and published-scan reproducibility,
 including its legacy `\exp(-r / w^2)` spatial form. New configurations should

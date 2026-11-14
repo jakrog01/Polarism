@@ -18,4 +18,7 @@ def create_potential(
     """Create potential."""
     from polarism.compute_engine import compute_engine
     Y = compute_engine.xp.zeros_like(grid.X) if grid.ndim == 1 else grid.Y
-    return available_potentials.lookup(potential_config.potential_type)(grid.X, Y, potential_config)
+    factory = available_potentials.lookup(potential_config.potential_type)
+    if potential_config.potential_type == "profile":
+        return factory(grid.X, Y, potential_config, grid)
+    return factory(grid.X, Y, potential_config)
