@@ -7,8 +7,13 @@ import pytest
 from polarism import SimulationController
 from polarism.compute_engine import has_cuda_device
 from polarism.model_terms import CudaSnippet, Term, available_terms, register_term
-from polarism.solver.rk4_cuda_solver import build_spinor_tiled_rhs_source
-from polarism.solver.split_step_fft_cuda_solver import spinor_matrix_kernel_source
+from polarism.solver.ifrk_cuda_fused import spinor_feature_source, spinor_fused_source
+from polarism.solver.rk4_cuda_solver import (build_spinor_step_source,
+                                            build_spinor_tiled_rhs_source,
+                                            build_spinor_tiled_stage_source)
+from polarism.solver.split_step_fft_cuda_solver import (spinor_local_source,
+                                                        spinor_matrix_kernel_source,
+                                                        spinor_spectral_kernel_source)
 from tests.unit.conftest import small_config
 
 
@@ -97,11 +102,71 @@ def test_spinor_spectral_source_multiplies_two_spectra(precision):
     assert "output[a]" in source and "output[b]" in source
 
 
+@pytest.mark.parametrize("real", ("float", "double"))
+def test_spinor_stage_sources_pair_fields_and_reservoirs(real):
+    rk = build_spinor_tiled_stage_source(real, "periodic", 8, 8, graph=True)
+    split = spinor_local_source("single" if real == "float" else "double",
+                                "single", graph=True, noise=True)
+    ifrk = spinor_fused_source(real, 0, 1, 4, 1, 2)
+    assert "previous_field[2*source]" in rk
+    assert "densities[0]+densities[1]" in rk
+    assert "scales[scale_index]" in rk
+    assert "alpha2*rho[1-c]*phase_time[1-c]" in split
+    assert "unsigned int)c" in split
+    assert "spinor_apply(matrix" in ifrk
+    assert "alpha2*rho[1-component]" in ifrk
+
+
+def test_spinor_feature_sources_inline_terms_and_drive():
+    term = type("RateTerm", (), {
+        "category": "rate",
+        "cuda": CudaSnippet("-alpha*rho", (("double", "alpha"),)),
+    })()
+    split = spinor_local_source("double", "single", terms=(term,),
+                                varying_potential=True, drive=True)
+    ifrk = spinor_feature_source(spinor_fused_source("double", 0, 0, 4, 1, 2),
+                                "double", (term,), True, True)
+    rk = build_spinor_tiled_stage_source("double", "periodic", 8, 8, (term,),
+                                         graph=True, varying_potential=True, drive=True)
+    for source in (rk, split, ifrk):
+        assert "term_0_alpha" in source
+        assert "potential_scale" in source
+        assert "drive_scale" in source
+        assert "extra_rate" in source
+
+
+@pytest.mark.parametrize("phase,stages", (("whole", "stage < 4"), ("first", "stage < 2"),
+                                          ("second", "stage = 2")))
+def test_spinor_step_source_covers_stage_range(phase, stages):
+    source = build_spinor_step_source("float", 16, 8, True, 0, 2, phase=phase,
+                                      relaxation=False)
+    assert stages in source
+    assert ("k_field" in source) == (phase != "whole")
+    assert ("const real* __restrict__ k_field" in source) == (phase == "second")
+    assert "__launch_bounds__(256, 2)" in source
+    assert "relaxed" not in source
+    relaxed = build_spinor_step_source("double", 16, 8, True, 1, 2, relaxation=True)
+    assert "relaxed*lap_re" in relaxed and "gI*ni" in relaxed
+
+
+def test_spinor_step_source_one_dimensional_has_no_cross_terms():
+    source = build_spinor_step_source("float", 64, 1, False, 0, 1)
+    assert "crs" not in source and "sums_y" not in source
+
+
+@pytest.mark.parametrize("precision", ("single", "double"))
+def test_spinor_spectral_source_builds_hermitian_propagator(precision):
+    source = spinor_spectral_kernel_source(precision)
+    assert "sincos(theta" in source and "sincos(-eps*tau" in source
+    assert "output[b+1]" in source
+
+
 @pytest.mark.parametrize("method,reference", (("rk4-cuda", "rk4-fdm"),
                                             ("ifrk-fft-cuda", "ip-rk4"),
                                             ("ifrk4-fft-cuda", "ip-rk4")))
-def test_spinor_cpu_path_matches_reference(method, reference):
-    cfg = _config(method)
+@pytest.mark.parametrize("graphs", (False, True))
+def test_spinor_cpu_path_matches_reference(method, reference, graphs):
+    cfg = _config(method, graphs=graphs)
     cfg.compute_engine.use_gpu = False
     expected_cfg = deepcopy(cfg)
     expected_cfg.solver.method = reference
@@ -110,6 +175,54 @@ def test_spinor_cpu_path_matches_reference(method, reference):
     np.testing.assert_allclose(actual, expected, rtol=0, atol=2e-8)
     for got, want in zip(actual_res, expected_res):
         np.testing.assert_allclose(got, want, rtol=0, atol=2e-8)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("method,reference", (("rk4-cuda", "rk4-fdm"),
+                                            ("split-step-fft-cuda", "split-step-fft"),
+                                            ("ifrk-fft-cuda", "ip-rk4")))
+@pytest.mark.parametrize("precision", ("single", "double"))
+def test_spinor_one_dimensional_gpu_matches_numpy(method, reference, precision, use_gpu):
+    import cupy as cp
+
+    if not use_gpu or not has_cuda_device():
+        pytest.skip("CUDA device unavailable")
+    cfg = _config(method, precision, True)
+    cfg.grid.ndim = 1
+    cfg.grid.nx = 64
+    cfg.grid.lx = 8.0
+    results = []
+    for solver, gpu in ((method, True), (reference, False)):
+        current = deepcopy(cfg)
+        current.solver.method = solver
+        current.compute_engine.use_gpu = gpu
+        run = SimulationController(current)
+        wave = np.exp(2j * np.pi * np.asarray(run.grid.X.get() if gpu else run.grid.X) / 8.0)
+        dtype = np.complex64 if precision == "single" else np.complex128
+        initial = np.stack(((0.35 + 0.1j) * wave, (0.2 - 0.15j) * np.conj(wave))).astype(dtype)
+        run.set_initial_state(cp.asarray(initial) if gpu else initial)
+        run.run()
+        results.append(cp.asnumpy(run.state.psi) if gpu else run.state.psi.copy())
+    tolerance = 4e-5 if precision == "single" else 2e-8
+    np.testing.assert_allclose(results[0], results[1], rtol=tolerance, atol=tolerance)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("precision", ("single", "double"))
+@pytest.mark.parametrize("graphs", (False, True))
+def test_spinor_rk_relaxation_matches_fdm(precision, graphs, use_gpu):
+    if not use_gpu or not has_cuda_device():
+        pytest.skip("CUDA device unavailable")
+    cfg = _config("rk4-cuda", precision, graphs)
+    cfg.physics.kinetic_relaxation_eta = 0.3
+    reference = deepcopy(cfg)
+    reference.solver.method = "rk4-fdm"
+    _, expected, expected_res = _run(reference, False)
+    _, actual, actual_res = _run(cfg, True)
+    tolerance = 4e-5 if precision == "single" else 2e-8
+    np.testing.assert_allclose(actual, expected, rtol=tolerance, atol=tolerance)
+    for got, want in zip(actual_res, expected_res):
+        np.testing.assert_allclose(got, want, rtol=tolerance, atol=tolerance)
 
 
 @pytest.mark.gpu
@@ -128,11 +241,16 @@ def test_spinor_gpu_matches_numpy(method, reference, precision, graphs,
     expected_cfg = deepcopy(cfg)
     expected_cfg.solver.method = reference
     _, expected, expected_res = _run(expected_cfg, False)
-    _, actual, actual_res = _run(cfg, True)
+    run, actual, actual_res = _run(cfg, True)
     tolerance = 4e-5 if precision == "single" else 2e-8
     np.testing.assert_allclose(actual, expected, rtol=tolerance, atol=tolerance)
     for got, want in zip(actual_res, expected_res):
         np.testing.assert_allclose(got, want, rtol=tolerance, atol=tolerance)
+    if graphs:
+        cache = (run.solver._spinor_graphs if method == "rk4-cuda" else
+                 run.solver._graph_cache if method == "split-step-fft-cuda" else
+                 run.solver._fused._graph_cache)
+        assert cache
 
 
 @pytest.mark.gpu
@@ -179,6 +297,82 @@ def test_spinor_tiled_term_matches_fdm(use_gpu):
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("method,reference", (("split-step-fft-cuda", "split-step-fft"),
+                                            ("ifrk-fft-cuda", "ip-rk4")))
+@pytest.mark.parametrize("feature", ("term", "potential"))
+@pytest.mark.parametrize("precision", ("single", "double"))
+@pytest.mark.parametrize("graphs", (False, True))
+def test_spinor_spectral_features_match_numpy(method, reference, feature,
+                                              precision, graphs, use_gpu):
+    if not use_gpu or not has_cuda_device():
+        pytest.skip("CUDA device unavailable")
+
+    class CubicLoss(Term):
+        category = "rate"
+        cuda = CudaSnippet("-alpha*rho", (("double", "alpha"),))
+
+        def coefficient(self, field, reservoir, reservoir_fields, t):
+            return -self.params["alpha"] * abs(field) ** 2
+
+    saved = dict(available_terms)
+    try:
+        register_term("spinor-spectral-loss")(CubicLoss)
+        cfg = _config(method, precision, graphs)
+        if feature == "term":
+            cfg.terms = {"spinor-spectral-loss": {"alpha": 0.2}}
+        else:
+            cfg.potential.potential_type = "profile"
+            cfg.potential.profile = {"type": "uniform", "amplitude": 0.4}
+            cfg.potential.envelope = {"type": "step", "t0": 0.002}
+            cfg.boundary_condition.absorption = "cap"
+        expected_cfg = deepcopy(cfg)
+        expected_cfg.solver.method = reference
+        _, expected, expected_res = _run(expected_cfg, False)
+        run, actual, actual_res = _run(cfg, True)
+        tolerance = 4e-5 if precision == "single" else 2e-8
+        np.testing.assert_allclose(actual, expected, rtol=tolerance, atol=tolerance)
+        for got, want in zip(actual_res, expected_res):
+            np.testing.assert_allclose(got, want, rtol=tolerance, atol=tolerance)
+        if graphs:
+            assert (run.solver._graph_cache if method == "split-step-fft-cuda"
+                    else run.solver._fused._graph_cache)
+    finally:
+        available_terms.clear()
+        available_terms.update(saved)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("feature", ("potential", "drive"))
+@pytest.mark.parametrize("precision", ("single", "double"))
+@pytest.mark.parametrize("graphs", (False, True))
+def test_spinor_rk_stage_features_match_fdm(feature, precision, graphs, use_gpu):
+    if not use_gpu or not has_cuda_device():
+        pytest.skip("CUDA device unavailable")
+    cfg = _config("rk4-cuda", precision, graphs)
+    if feature == "potential":
+        cfg.potential.potential_type = "profile"
+        cfg.potential.profile = {"type": "uniform", "amplitude": 0.4}
+        cfg.potential.envelope = {"type": "step", "t0": 0.002}
+        cfg.boundary_condition.absorption = "cap"
+    else:
+        cfg.drive.enabled = True
+        cfg.drive.amplitude = 0.2
+        cfg.drive.energy = 0.3
+        cfg.drive.envelope = {"type": "gaussian-pulses", "center": 0.002,
+                              "sigma": 0.001}
+    reference = deepcopy(cfg)
+    reference.solver.method = "rk4-fdm"
+    _, expected, expected_res = _run(reference, False)
+    run, actual, actual_res = _run(cfg, True)
+    tolerance = 4e-5 if precision == "single" else 2e-8
+    np.testing.assert_allclose(actual, expected, rtol=tolerance, atol=tolerance)
+    for got, want in zip(actual_res, expected_res):
+        np.testing.assert_allclose(got, want, rtol=tolerance, atol=tolerance)
+    if graphs:
+        assert run.solver._spinor_graphs
+
+
+@pytest.mark.gpu
 @pytest.mark.parametrize("method,reference", (("rk4-cuda", "rk4-fdm"),
                                             ("split-step-fft-cuda", "split-step-fft"),
                                             ("ifrk-fft-cuda", "ip-rk4")))
@@ -209,6 +403,22 @@ def test_spinor_noise_streams_match_numpy(method, reference, precision, graphs, 
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("method", ("rk4-cuda", "split-step-fft-cuda", "ifrk-fft-cuda"))
+def test_spinor_noise_graph_captures_multiple_steps(method, use_gpu):
+    if not use_gpu or not has_cuda_device():
+        pytest.skip("CUDA device unavailable")
+    cfg = _config(method, graphs=True)
+    cfg.noise.enabled = True
+    cfg.noise.stochastic = "wigner"
+    cfg.noise.stochastic_strength = 1.0
+    run, _, _ = _run(cfg, True)
+    cache = (run.solver._spinor_graphs if method == "rk4-cuda" else
+             run.solver._graph_cache if method == "split-step-fft-cuda" else
+             run.solver._fused._graph_cache)
+    assert cache
+
+
+@pytest.mark.gpu
 @pytest.mark.parametrize("graphs", (False, True))
 def test_spinor_batch_and_checkpoint_resume(graphs, use_gpu, tmp_path):
     if not use_gpu or not has_cuda_device():
@@ -225,6 +435,8 @@ def test_spinor_batch_and_checkpoint_resume(graphs, use_gpu, tmp_path):
     initial = _initial(batch.grid, np.complex128)
     batch.set_initial_state(cp.asarray(np.stack((initial, initial))))
     batch.run()
+    if graphs:
+        assert batch.solver._spinor_graphs
     for index, override in enumerate(members):
         single = SimulationController(deepcopy(cfg), members=[override])
         single.set_initial_state(cp.asarray(initial))

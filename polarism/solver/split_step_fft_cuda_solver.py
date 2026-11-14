@@ -63,6 +63,44 @@ def apply_spinor_matrix_cuda(kernel, matrix, field, xp):
     return output
 
 
+def spinor_spectral_kernel_source(precision: str) -> str:
+    """Render a two-spectrum Hermitian propagator built from compact (eps, z, u) planes."""
+    if precision not in ("single", "double"):
+        raise ValueError("Invalid spinor spectral precision")
+    real = "float" if precision == "single" else "double"
+    return f'''typedef {real} real;
+extern "C" __global__ void spinor_spectral_step(
+    const real* table, const real* inv_hbar, const real* field, real* output,
+    int spatial_n, int total_n, int table_members, int hbar_members,
+    real factor, real norm) {{
+    int j = blockIdx.x*blockDim.x+threadIdx.x;
+    if (j >= total_n) return;
+    int member = j/spatial_n, cell = j%spatial_n;
+    const real* t = table+(long long)(table_members == 1 ? 0 : member)*4*spatial_n+cell;
+    real eps = t[0], z = t[spatial_n], ur = t[2*spatial_n], ui = t[3*spatial_n];
+    real tau = factor*inv_hbar[hbar_members == 1 ? 0 : member];
+    real omega = sqrt(z*z+ur*ur+ui*ui);
+    real theta = omega*tau;
+    real sn, cs, ps, pc;
+    sincos(theta, &sn, &cs);
+    sincos(-eps*tau, &ps, &pc);
+    real sinc = fabs(theta) < (real)1e-3 ?
+        tau*((real)1-theta*theta/(real)6+theta*theta*theta*theta/(real)120) : sn/omega;
+    real ar = pc*cs, ai = ps*cs, br = pc*sinc, bi = ps*sinc;
+    real m00r = ar+bi*z, m00i = ai-br*z, m11r = ar-bi*z, m11i = ai+br*z;
+    real m01r = br*ui+bi*ur, m01i = bi*ui-br*ur;
+    real m10r = bi*ur-br*ui, m10i = -(br*ur+bi*ui);
+    int a = 2*(member*2*spatial_n+cell);
+    int b = a+2*spatial_n;
+    real xr = field[a], xi = field[a+1], yr = field[b], yi = field[b+1];
+    output[a] = norm*(m00r*xr-m00i*xi+m01r*yr-m01i*yi);
+    output[a+1] = norm*(m00r*xi+m00i*xr+m01r*yi+m01i*yr);
+    output[b] = norm*(m10r*xr-m10i*xi+m11r*yr-m11i*yi);
+    output[b+1] = norm*(m10r*xi+m10i*xr+m11r*yi+m11i*yr);
+}}
+'''
+
+
 # The same source is also compiled directly by the CPU-only NVRTC smoke test.
 # Reservoir state order is (active, inactive) for both two-field models.
 _LOCAL_KERNEL = r"""
@@ -188,6 +226,199 @@ def kernel_source(precision: str, model: str, batched: bool = False,
     return head + "    if (j >= n) return;" + loads + body
 
 
+def spinor_local_source(precision: str, model: str, graph: bool = False,
+                        noise: bool = False, terms=(), varying_potential=False,
+                        drive=False, complex_potential=True) -> str:
+    """Render a paired local update with component and shared reservoirs."""
+    real = "float" if precision == "single" else "double"
+    prefix = kernel_source(precision, model).split('extern "C" __global__ void local_step(', 1)[0]
+    scale_args = ("const real* scales, int scale_index" if graph else
+                  "real scale1, real scale2")
+    scale1 = "scales[scale_index]" if graph else "scale1"
+    scale2 = "scales[scale_index+1]" if graph else "scale2"
+    step_args = ("const unsigned long long* noise_step_base, unsigned int noise_step_offset"
+                 if graph else "unsigned long long noise_step")
+    step = "noise_step_base[0] + noise_step_offset" if graph else "noise_step"
+    noise_args = (f", const unsigned long long* noise_seeds, const {real}* noise_gamma, "
+                  f"const {real}* noise_scattering, const {real}* noise_strength, "
+                  f"{step_args}, {real} noise_scale") if noise else ""
+    noise_body = (f"""
+        wigner_add(&re[c], &im[c], noise_seeds[member], (unsigned int)cell, (unsigned int)c,
+            {step}, noise_strength[member], noise_gamma[member],
+            noise_scattering[member], active[c], noise_scale);
+""") if noise else ""
+    if noise:
+        from polarism.noise.philox import device_source
+        prefix += device_source(precision).replace(
+            "unsigned int cell,", "unsigned int cell, unsigned int component,").replace(
+            "unsigned int d = 1U;", "unsigned int d = 1U + component;")
+    body = r'''
+extern "C" __global__ void local_step(
+    const real* psi, const real* a0, const real* b0,
+    const real* vr, const real* vi, const real* p1, const real* p2,
+    real* out_psi, real* out_a, real* out_b,
+    int n, int spatial_n, int p1_n, int p2_n, int potential_n,
+    int reservoir_components, const real* weights, const real* constants,
+    SCALE_ARGS, real dt, NOISE_ARGS) {
+    int j = blockIdx.x*blockDim.x + threadIdx.x;
+    if (j >= n) return;
+    int member = j/spatial_n, cell = j%spatial_n;
+    const real* q = constants + 13*member;
+    real inv_hbar=q[0], gC=q[1], alpha2=q[2], gR=q[3], gI=q[4];
+    real R=q[5], gammaC=q[6], gammaR=q[7], gammaI=q[8];
+    real gammaA=q[9], ria=q[10], rai=q[11], kappa=q[12];
+    int pidx1 = p1_n == spatial_n ? cell : j;
+    int pidx2 = p2_n == spatial_n ? cell : j;
+    real re[2], im[2], active[2], inactive[2], rho[2], gain[2], phase_time[2];
+    for (int c=0; c<2; ++c) {
+        int k=(member*2+c)*spatial_n+cell;
+        re[c]=psi[2*k]; im[c]=psi[2*k+1];
+        rho[c]=re[c]*re[c]+im[c]*im[c];
+    }
+    for (int c=0; c<2; ++c) {
+        int k=(member*2+c)*spatial_n+cell;
+        int r=(member*reservoir_components+(reservoir_components == 1 ? 0 : c))*spatial_n+cell;
+        active[c]=MODEL == 3 ? (real)0 : a0[r];
+        inactive[c]=(MODEL == 0 || MODEL == 3) ? (real)0 : b0[r];
+#if MODEL != 3
+        real weight=reservoir_components == 1 ? (real)1 : weights[2*member+c];
+        real density=reservoir_components == 1 ? rho[0]+rho[1] : rho[c];
+        half_step(&active[c], &inactive[c], density, pump_value(p1, SCALE1, pidx1)*weight,
+            dt*(real)0.5, R, gammaR, gammaI, gammaA, ria, rai, kappa);
+#endif
+        int potential_index=potential_n == spatial_n ? cell :
+            (potential_n == 2*spatial_n ? c*spatial_n+cell : (member*2+c)*spatial_n+cell);
+        gain[c]=(R*active[c]-gammaC)*(real)0.5IMAGINARY_POTENTIAL;
+        real x=(real)2*gain[c]*dt;
+        phase_time[c]=fabs(x)<(real)1e-6 ? dt*((real)1+x*(real)0.5+x*x/(real)6)
+            : dt*expm1(x)/x;
+    }
+    for (int c=0; c<2; ++c) {
+        int k=(member*2+c)*spatial_n+cell;
+        int potential_index=potential_n == spatial_n ? cell :
+            (potential_n == 2*spatial_n ? c*spatial_n+cell : (member*2+c)*spatial_n+cell);
+        real phase=((vr[potential_index]+gR*active[c]+gI*inactive[c])*dt+
+            gC*rho[c]*phase_time[c]+alpha2*rho[1-c]*phase_time[1-c])*inv_hbar;
+        real sn, cs;
+        sincos(phase, &sn, &cs);
+        real amp=exp(gain[c]*dt);
+        real r=re[c], i=im[c];
+        re[c]=amp*(r*cs+i*sn);
+        im[c]=amp*(i*cs-r*sn);
+    }
+    MIDDLE
+    for (int c=0; c<2; ++c) {
+        int k=(member*2+c)*spatial_n+cell;
+        int r=(member*reservoir_components+(reservoir_components == 1 ? 0 : c))*spatial_n+cell;
+#if MODEL != 3
+        real weight=reservoir_components == 1 ? (real)1 : weights[2*member+c];
+        real density=reservoir_components == 1 ?
+            re[0]*re[0]+im[0]*im[0]+re[1]*re[1]+im[1]*im[1] : re[c]*re[c]+im[c]*im[c];
+        half_step(&active[c], &inactive[c], density, pump_value(p2, SCALE2, pidx2)*weight,
+            dt*(real)0.5, R, gammaR, gammaI, gammaA, ria, rai, kappa);
+        if (reservoir_components == 2 || c == 0) {
+            out_a[r]=active[c];
+#if MODEL != 0
+            out_b[r]=inactive[c];
+#endif
+        }
+#endif
+        NOISE_BODY
+        out_psi[2*k]=re[c];
+        out_psi[2*k+1]=im[c];
+    }
+}
+'''
+    imaginary = ""
+    if complex_potential:
+        imaginary = ("+(vi[potential_index]*potential_scale+cap_im[k])*inv_hbar"
+                     if varying_potential else "+vi[potential_index]*inv_hbar")
+    elif varying_potential:
+        imaginary = "+cap_im[k]*inv_hbar"
+    body = body.replace("IMAGINARY_POTENTIAL", imaginary)
+    body = body.replace("SCALE_ARGS", scale_args).replace("SCALE1", scale1).replace(
+        "SCALE2", scale2).replace("NOISE_ARGS", noise_args.lstrip(", ")).replace(
+        "NOISE_BODY", noise_body)
+    middle = ""
+    if not noise:
+        body = body.replace(", real dt, )", ", real dt)")
+    if terms or varying_potential or drive:
+        declarations = []
+        if varying_potential:
+            declarations.extend(("const real* cap_re", "const real* cap_im"))
+        if drive:
+            declarations.extend(("const real* drive_re", "const real* drive_im",
+                                 "const real* drive_energy"))
+        if terms:
+            declarations.extend(("const real* x_coords", "const real* y_coords"))
+        loads = []
+        energy_terms = []
+        rate_terms = []
+        for number, term in enumerate(terms):
+            expression = term.cuda.expression
+            for ctype, name, *layout in term.cuda.arguments:
+                kind = layout[0] if layout else "raw"
+                identifier = f"term_{number}_{name}"
+                concrete = ctype.replace("{REAL}", real)
+                if kind == "raw":
+                    declarations.append(f"{concrete} {identifier}")
+                else:
+                    declarations.append(f"{concrete} {identifier}_arg")
+                    item_type = concrete.replace("const", "").replace("*", "").strip()
+                    index = "cell" if kind == "shared" else "k"
+                    loads.append(f"        {item_type} {identifier} = {identifier}_arg[{index}];")
+                expression = re.sub(rf"\b{name}\b", identifier, expression)
+            (energy_terms if term.category == "energy" else rate_terms).append(
+                f"({expression})")
+        declarations.extend(("const real* feature_values", "int feature_index",
+                             "int feature_members"))
+        signature_end = body.index(") {", body.index('extern "C" __global__ void local_step('))
+        body = body[:signature_end] + ", " + ", ".join(declarations) + body[signature_end:]
+        setup = ("    int feature_offset=(feature_index*feature_members+member)*3;\n"
+                 "    real potential_scale=feature_values[feature_offset];\n"
+                 "    real drive_scale=feature_values[feature_offset+1];\n"
+                 "    real t_stage=feature_values[feature_offset+2];\n")
+        body = body.replace("    int pidx1 =", setup + "    int pidx1 =")
+        if varying_potential:
+            body = body.replace("vr[potential_index]+gR*active[c]",
+                "(vr[potential_index]*potential_scale+cap_re[k])+gR*active[c]")
+        if drive:
+            body = body.replace("vr[potential_index]+gR*active[c]",
+                "(vr[potential_index]-drive_energy[k])+gR*active[c]")
+            if varying_potential:
+                body = body.replace("(vr[potential_index]*potential_scale+cap_re[k])+gR*active[c]",
+                    "(vr[potential_index]*potential_scale+cap_re[k]-drive_energy[k])+gR*active[c]")
+            body = body.replace("        rho[c]=re[c]*re[c]+im[c]*im[c];",
+                "        re[c]+=(real)0.5*dt*inv_hbar*drive_scale*drive_im[k];\n"
+                "        im[c]-=(real)0.5*dt*inv_hbar*drive_scale*drive_re[k];\n"
+                "        rho[c]=re[c]*re[c]+im[c]*im[c];")
+        if terms:
+            middle = ("    for (int c=0; c<2; ++c) {\n"
+                      "        int k=(member*2+c)*spatial_n+cell;\n"
+                      "        real pre=re[c], pim=im[c], rho=pre*pre+pim*pim;\n"
+                      "        real n_active=active[c], n_inactive=inactive[c];\n"
+                      "        real psi_re=pre, psi_im=pim;\n"
+                      "        real x=x_coords[cell], y=y_coords[cell];\n")
+            middle += "\n".join(loads) + ("\n" if loads else "")
+            middle += ("        real extra_energy=" +
+                       ("+".join(energy_terms) or "(real)0") + ";\n"
+                       "        real extra_rate=" +
+                       ("+".join(rate_terms) or "(real)0") + ";\n"
+                       "        real sn, cs;\n"
+                       "        sincos(extra_energy*inv_hbar*dt,&sn,&cs);\n"
+                       "        real amp=exp(extra_rate*dt);\n"
+                       "        re[c]=amp*(pre*cs+pim*sn);\n"
+                       "        im[c]=amp*(pim*cs-pre*sn);\n"
+                       "    }\n")
+        if drive:
+            middle += ("    for (int c=0; c<2; ++c) {\n"
+                       "        int k=(member*2+c)*spatial_n+cell;\n"
+                       "        re[c]+=(real)0.5*dt*inv_hbar*drive_scale*drive_im[k];\n"
+                       "        im[c]-=(real)0.5*dt*inv_hbar*drive_scale*drive_re[k];\n"
+                       "    }\n")
+    return prefix + body.replace("MIDDLE", middle)
+
+
 def _feature_source(source, real, batched, terms, varying_potential, drive):
     declarations = []
     if varying_potential:
@@ -301,12 +532,25 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         self._spinor = model.components == 2
         if self._spinor:
             from polarism.solver.split_step_fft_solver import SplitStepFFTSolver
-
             self._spinor_delegate = SplitStepFFTSolver(config, grid, model)
             self._spinor_matrix_kernel = self.xp.RawKernel(
                 spinor_matrix_kernel_source(config.solver.precision), "spinor_matrix_product")
             self._spinor_delegate._kinetic_half_step_fft = self._spinor_half_step_fft
-            return
+            self._init_spinor_spectral(model, grid, config)
+            self._spinor_res_components = model.reservoir_components
+            members = self.batch_physics.size or 1
+            constants = ("hbar", "g_C", "alpha_2", "g_R", "g_I", "R", "gamma_C",
+                         "gamma_R", "gamma_I", "gamma_A", "R_IA", "R_AI", "kappa")
+            columns = [np.asarray(self.batch_physics.host.get(
+                name, np.full(members, getattr(config.physics, name))),
+                dtype=np.float32 if config.solver.precision == "single" else np.float64)
+                for name in constants]
+            columns[0] = 1 / columns[0]
+            self._spinor_constants = self.xp.asarray(np.stack(columns, axis=1).ravel())
+            self._spinor_weights = (self.xp.ascontiguousarray(
+                model.pump_weights, dtype=self._spinor_constants.dtype).ravel()
+                                    if model.pump_weights is not None else
+                                    self.xp.ones(2 * members, dtype=self._spinor_constants.dtype))
 
         import cupyx.scipy.fft as fft
 
@@ -321,8 +565,10 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         self._model_features = model
         self._has_features = bool(model.terms or model.drive is not None or
                                   model.time_dependent_potential)
+        self._spinor_reference_features = self._spinor and any(
+            term.cuda is None for term in model.terms)
         for term in model.terms:
-            if term.cuda is None:
+            if term.cuda is None and not self._spinor:
                 raise ValueError(f"Term {type(term).__name__} has no CUDA snippet")
         self._feature_static = ()
         self._feature_buffer = None
@@ -374,14 +620,56 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                 ) / self._n
             ).astype(self._complex_dtype)
         self._potential_cached = None
+        self._complex_potential = True
         self._graph_cache = {}
         self._graph_signature = None
         self._graphs_failed = False
         self._zero_res = self.xp.zeros(self._shape, self._real_dtype)
-        if self._has_features:
+        if self._has_features and not self._spinor_reference_features:
             self._prepare_features()
         if self._noise is not None:
             self._noise_step_base = self.xp.zeros(1, dtype=self.xp.uint64)
+
+    def _init_spinor_spectral(self, model, grid, config):
+        xp = self.xp
+        matrix = xp.asarray(model.dispersion.matrix(grid, self.batch_physics, 2))
+        epsilon = (matrix[:, 0, 0] + matrix[:, 1, 1]) / 2
+        z = (matrix[:, 0, 0] - matrix[:, 1, 1]) / 2
+        upper = matrix[:, 0, 1]
+        scale = float(xp.max(xp.abs(matrix)))
+        deviation = max(float(xp.max(xp.abs(matrix[:, 1, 0] - xp.conj(upper)))),
+                        float(xp.max(xp.abs(xp.imag(epsilon)))),
+                        float(xp.max(xp.abs(xp.imag(z)))))
+        self._spinor_table = None
+        if deviation > 1e-12 * max(scale, 1.0):
+            return
+        real = np.float32 if config.solver.precision == "single" else np.float64
+        self._spinor_table = xp.ascontiguousarray(xp.stack(
+            (xp.real(epsilon), xp.real(z), xp.real(upper), xp.imag(upper)), axis=1),
+            dtype=real)
+        hbar = xp.asarray(self.batch_physics.get("hbar"), dtype=xp.float64)
+        hbar = xp.reshape(hbar, (hbar.shape[0] if hbar.ndim else 1, -1))[:, 0]
+        self._spinor_inverse_hbar = xp.ascontiguousarray(1 / hbar, dtype=real)
+        self._spinor_spectral_kernel = xp.RawKernel(
+            spinor_spectral_kernel_source(config.solver.precision), "spinor_spectral_step")
+        self._spinor_norm = real(1 / int(np.prod(grid.shape)))
+
+    def _spinor_spectral(self, kind, field, out):
+        """Apply the full (normalized), inverse-half or half propagator in place of a table."""
+        dt = self.config.solver.dt
+        factor, norm = {"full": (dt, self._spinor_norm),
+                        "inverse_half": (-dt / 2, 1), "half": (dt / 2, 1)}[kind]
+        real = self._spinor_table.dtype.type
+        spatial_n = int(np.prod(field.shape[2:]))
+        total_n = field.shape[0] * spatial_n
+        real_dtype = field.real.dtype
+        self._spinor_spectral_kernel(
+            ((total_n + 255) // 256,), (256,),
+            (self._spinor_table, self._spinor_inverse_hbar,
+             self.xp.ascontiguousarray(field).view(real_dtype).ravel(),
+             out.view(real_dtype).ravel(), np.int32(spatial_n), np.int32(total_n),
+             np.int32(self._spinor_table.shape[0]),
+             np.int32(self._spinor_inverse_hbar.shape[0]), real(factor), real(norm)))
 
     def _spinor_half_step_fft(self, field):
         delegate = self._spinor_delegate
@@ -453,12 +741,24 @@ class SplitStepFFTCudaSolver(AbstractSolver):
 
     def _potential(self, potential):
         if potential is not self._potential_cached:
-            re = self._flat_gpu_input(self.xp.real(potential), self._real_dtype)
+            value = potential
+            if self._spinor:
+                space = self._shape[2:]
+                if self.xp.size(potential) == 1:
+                    value = self.xp.broadcast_to(self.xp.reshape(potential, ()), space)
+                elif not (self.xp.size(potential) == self._spatial_n and
+                          potential.shape[-len(space):] == space):
+                    value = self.xp.broadcast_to(potential, self._shape)
+                self._complex_potential = bool(self.xp.iscomplexobj(potential))
+            re = self._flat_gpu_input(self.xp.real(value), self._real_dtype)
             if self.xp.iscomplexobj(potential):
-                im = self._flat_gpu_input(self.xp.imag(potential), self._real_dtype)
+                im = self._flat_gpu_input(self.xp.imag(value), self._real_dtype)
                 scale = self._scalar(1)
             else:
-                im, scale = (self.xp.zeros_like(re), self._scalar(1)) if self._model_features.time_dependent_potential else (re, self._scalar(0))
+                im, scale = ((re, self._scalar(0)) if self._spinor else
+                             (self.xp.zeros_like(re), self._scalar(1))
+                             if self._model_features.time_dependent_potential
+                             else (re, self._scalar(0)))
             self._potential_buffers = (re, im, scale)
             self._potential_cached = potential
         return self._potential_buffers
@@ -519,6 +819,13 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         return values
 
     def _source(self, model, graph=False):
+        if self._spinor:
+            return spinor_local_source(self._precision, model, graph,
+                                       self._noise_in_kernel(model),
+                                       self._model_features.terms,
+                                       self._model_features.time_dependent_potential,
+                                       self._model_features.drive is not None,
+                                       self._complex_potential)
         source = kernel_source(self._precision, model, self._batched, self._physics_fields)
         if graph:
             source = source.replace("real scale1, real scale2, real vi_scale,",
@@ -569,7 +876,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                 self._scalar(noise.dt / (4.0 * noise.volume)))
 
     def _kernel(self, model):
-        key = (model, self._batched)
+        key = (model, self._batched, self._complex_potential)
         if key not in self._kernel_cache:
             self._kernel_cache[key] = self.xp.RawKernel(
                 self._source(model), "local_step",
@@ -632,6 +939,10 @@ class SplitStepFFTCudaSolver(AbstractSolver):
 
     def _launch_into(self, model, psi, fields, potential, pumps, scales,
                      out, out_fields, graph_scales=None, scale_index=0, noise_step=0):
+        if self._spinor:
+            return self._launch_spinor_into(model, psi, fields, potential, pumps, scales,
+                                            out, out_fields, graph_scales, scale_index,
+                                            noise_step)
         a = fields[0] if fields else self._zero_res
         b = fields[1] if len(fields) > 1 else a
         vr, vi, vi_scale = self._potential(potential)
@@ -668,10 +979,34 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             graph_scales is not None)
         kernel(((self._n + 255) // 256,), (256,), args)
 
+    def _launch_spinor_into(self, model, psi, fields, potential, pumps, scales,
+                            out, out_fields, graph_scales, scale_index, noise_step):
+        a = fields[0] if fields else self._zero_res
+        b = fields[1] if len(fields) > 1 else a
+        vr, vi, _ = self._potential(potential)
+        scale_args = ((graph_scales, np.int32(scale_index)) if graph_scales is not None
+                      else scales)
+        kernel = self._graph_kernel(model) if graph_scales is not None else self._kernel(model)
+        args = (psi.view(self._real_dtype).ravel(), a.ravel(), b.ravel(), vr, vi,
+                pumps[0], pumps[1], out.view(self._real_dtype).ravel(),
+                out_fields[0].ravel() if fields else self._zero_res.ravel(),
+                out_fields[1].ravel() if len(fields) > 1 else self._zero_res.ravel(),
+                np.int32(self._n), np.int32(self._spatial_n), np.int32(pumps[0].size),
+                np.int32(pumps[1].size), np.int32(vr.size),
+                np.int32(self._spinor_res_components), self._spinor_weights,
+                self._spinor_constants, *scale_args, self._scalar(self.config.solver.dt))
+        args += self._noise_arguments(model, scale_index // 2 if graph_scales is not None
+                                      else noise_step, graph_scales is not None)
+        if self._has_features:
+            args += (*self._feature_static, self._feature_buffer,
+                     np.int32(scale_index // 2 if graph_scales is not None else 0),
+                     np.int32(self._n // self._spatial_n))
+        kernel(((self._n + 255) // 256,), (256,), args)
+
     def _graph_kernel(self, model):
         if not hasattr(self, "_graph_kernel_cache"):
             self._graph_kernel_cache = {}
-        key = (model, self._batched)
+        key = (model, self._batched, self._complex_potential)
         if key not in self._graph_kernel_cache:
             source = self._source(model, graph=True)
             kernel = self.xp.RawKernel(source, "local_step", options=("--std=c++11",))
@@ -702,14 +1037,19 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         # The k-space product is consumed by the inverse FFT before the local
         # kernel overwrites out, so both can share one buffer.
         multiplied = out
-        fields = tuple(tuple(xp.empty(self._shape, self._real_dtype)
+        field_shape = ((self._shape[0], self._spinor_res_components, *self._shape[2:])
+                       if self._spinor else self._shape)
+        fields = tuple(tuple(xp.empty(field_shape, self._real_dtype)
                              for _ in range(n_fields)) for _ in range(2))
         graph_scales = xp.empty(64 * 2, self._real_dtype)
         advance_stream = xp.cuda.Stream(non_blocking=True)
         advance_plan = self._plan(spectrum[0])
         with advance_stream:
-            xp.multiply(spectrum[0], self._full_normalized, out=multiplied)
-            xp.multiply(spectrum[0], self._half, out=multiplied)
+            if self._spinor:
+                self._spinor_spectral("full", spectrum[0], multiplied)
+            else:
+                xp.multiply(spectrum[0], self._full_normalized, out=multiplied)
+                xp.multiply(spectrum[0], self._half, out=multiplied)
             advance_plan.fft(spectrum[0], multiplied, cufft.CUFFT_FORWARD)
             advance_plan.fft(multiplied, spectrum[0], cufft.CUFFT_INVERSE)
             advance_stream.synchronize()
@@ -742,17 +1082,24 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             stream.begin_capture()
             try:
                 for k in range(length):
-                    xp.multiply(spectrum[k % 2], self._full_normalized, out=multiplied)
-                    plan.fft(multiplied, local, cufft.CUFFT_INVERSE)
+                    source = spectrum[0 if self._spinor else k % 2]
+                    if self._spinor:
+                        self._spinor_spectral("full", source, source)
+                    else:
+                        xp.multiply(source, self._full_normalized, out=multiplied)
+                    plan.fft(source if self._spinor else multiplied, local,
+                             cufft.CUFFT_INVERSE)
                     pumps = ((combiner.combine(2 * k, 0),
                               combiner.combine(2 * k + 1, 1))
                              if combiner is not None else (pump_flat, pump_flat))
+                    destination = local if self._spinor else out
                     self._launch_into(
                         model, local, fields[k % 2], potential,
-                        pumps, None, out, fields[(k + 1) % 2],
+                        pumps, None, destination, fields[(k + 1) % 2],
                         scales, 2 * k,
                     )
-                    plan.fft(out, spectrum[(k + 1) % 2], cufft.CUFFT_FORWARD)
+                    plan.fft(destination, spectrum[0 if self._spinor else (k + 1) % 2],
+                             cufft.CUFFT_FORWARD)
                 graph = stream.end_capture()
             except Exception:
                 try:
@@ -770,9 +1117,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         if shape != self._shape or state.batched != self._batched:
             self._shape = shape
             self._batched = state.batched
-            self._n = int(np.prod(shape))
+            self._n = int(np.prod(shape)) // (2 if self._spinor else 1)
             self._zero_res = self.xp.zeros(shape, self._real_dtype)
-            if self._has_features:
+            if self._has_features and not self._spinor_reference_features:
                 self._prepare_features()
             self._graph_cache.clear()
             self._graph_signature = None
@@ -780,8 +1127,22 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             if hasattr(self, "_zero_pump"):
                 del self._zero_pump
 
+    def _spinor_fast_supported(self, model):
+        if self._spinor_table is None or any(term.cuda is None for term in model.terms):
+            return False
+        reservoir = model.reservoir
+        if type(reservoir).__name__ not in (
+                "SingleReservoir", "DoubleReservoir", "QuadraticDoubleReservoir",
+                "NoReservoir"):
+            return False
+        if (hasattr(reservoir, "batch_physics") and
+                any(reservoir.batch_physics.any_nonzero(name) for name in
+                    ("reservoir_diffusion_R", "reservoir_diffusion_A", "reservoir_diffusion_I"))):
+            return False
+        return getattr(model.boundary.absorption, "after_step_is_noop", False)
+
     def advance(self, model, state, n_steps: int) -> None:
-        if self._spinor:
+        if self._spinor and not self._spinor_fast_supported(model):
             return super().advance(model, state, n_steps)
         """Run supported periodic chunks with planned FFTs and optional graphs."""
         potential = model.potential_static if model.time_dependent_potential else model.potential
@@ -789,7 +1150,8 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         reservoir = model.reservoir
         boundary_condition = model.boundary
         start_step = state.step
-        self.batch_physics.check(state.field_k if state._field is None else state.field)
+        self.batch_physics.check(state.field_k if state._field is None else state.field,
+                                 2 if self._spinor else 1)
         if n_steps <= 0:
             return
         self._activate_shape(state)
@@ -855,7 +1217,10 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         plan = self._advance_plan
         done = 0
         with stream:
-            xp.multiply(spectrum_in, self._conj_half, out=spec[0])
+            if self._spinor:
+                self._spinor_spectral("inverse_half", spectrum_in, spec[0])
+            else:
+                xp.multiply(spectrum_in, self._conj_half, out=spec[0])
             for target, source in zip(res[0], fields_in):
                 xp.copyto(target, source)
             pending_hosts = []
@@ -901,7 +1266,10 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                     print(f"split-step-fft-cuda: CUDA graphs unavailable ({exc}); using regular launches.",
                           file=sys.stderr)
                     stream.synchronize()
-                    xp.multiply(spectrum_in, self._conj_half, out=spec[0])
+                    if self._spinor:
+                        self._spinor_spectral("inverse_half", spectrum_in, spec[0])
+                    else:
+                        xp.multiply(spectrum_in, self._conj_half, out=spec[0])
                     for target, source in zip(res[0], fields_in):
                         xp.copyto(target, source)
                     done = 0
@@ -910,8 +1278,13 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                 from cupy.cuda import cufft
                 for k in range(done, n_steps):
                     parity = (k - done) % 2
-                    xp.multiply(spec[parity], self._full_normalized, out=multiplied)
-                    plan.fft(multiplied, local, cufft.CUFFT_INVERSE)
+                    source = spec[0 if self._spinor else parity]
+                    if self._spinor:
+                        self._spinor_spectral("full", source, source)
+                    else:
+                        xp.multiply(source, self._full_normalized, out=multiplied)
+                    plan.fft(source if self._spinor else multiplied, local,
+                             cufft.CUFFT_INVERSE)
                     t = state.t0 + (start_step + k) * self.config.solver.dt
                     times = (t + self.config.solver.dt / 4,
                              t + 3 * self.config.solver.dt / 4)
@@ -928,18 +1301,24 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                         factors = tuple(self._scalar(coefficient(time)) for time in times)
                     if self._has_features:
                         pending_hosts.append(self._feature_values((t + self.config.solver.dt / 2,), stream))
+                    destination = local if self._spinor else out
                     self._launch_into(reservoir_model, local, res[parity], potential, pumps,
-                                      factors, out, res[1 - parity],
+                                      factors, destination, res[1 - parity],
                                       noise_step=start_step + k)
-                    plan.fft(out, spec[1 - parity], cufft.CUFFT_FORWARD)
+                    plan.fft(destination, spec[0 if self._spinor else 1 - parity],
+                             cufft.CUFFT_FORWARD)
                     if len(pending_hosts) >= 32:
                         stream.synchronize()
                         pending_hosts.clear()
 
             final_index = (n_steps - done) % 2
-            xp.multiply(spec[final_index], self._half, out=spec[final_index])
+            spectrum_index = 0 if self._spinor else final_index
+            if self._spinor:
+                self._spinor_spectral("half", spec[0], spec[0])
+            else:
+                xp.multiply(spec[final_index], self._half, out=spec[final_index])
             state.field = None
-            state.field_k = spec[final_index].copy()
+            state.field_k = spec[spectrum_index].copy()
             reservoir.set_state(tuple(field.copy() for field in res[final_index]))
             stream.synchronize()
         state.step = start_step + n_steps
@@ -948,6 +1327,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
     def step(self, model, state, dt):
         """Advance K(dt/2) [R(dt/2) N(dt) R(dt/2)] K(dt/2)."""
         if self._spinor:
+            if self._spinor_fast_supported(model):
+                self.advance(model, state, 1)
+                return ACCEPTED
             return self._step_spinor(model, state, dt)
         potential = model.potential_static if model.time_dependent_potential else model.potential
         pump = model.pump

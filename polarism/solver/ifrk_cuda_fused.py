@@ -213,6 +213,242 @@ def fused_source(real, model, eta, stages, fields, spatial_index, pump_index,
     return _stage_finish_source(source, True) if finish_in_stage else source
 
 
+def spinor_fused_source(real, model, eta, stages, fields, reservoir_components):
+    """Render paired Lawson stages with the matrix exponential in combine_k."""
+    source = r'''
+typedef REAL real;
+#define MODEL MODEL_ID
+#define ETA ETA_ID
+#define STAGES STAGE_COUNT
+#define FIELDS FIELD_COUNT
+#define RESCOMP RES_COUNT
+__device__ __forceinline__ void spinor_apply(const real* matrix, int m,
+    real tau, real ar, real ai, real br, real bi,
+    real* xr, real* xi, real* yr, real* yi, int spatial_n) {
+    real e0=matrix[m], e1=matrix[m+6*spatial_n];
+    real z=(e0-e1)*(real)0.5, epsilon=(e0+e1)*(real)0.5;
+    real ur=matrix[m+2*spatial_n], ui=matrix[m+2*spatial_n+1];
+    real omega=sqrt(z*z+ur*ur+ui*ui);
+    real theta=omega*tau;
+    real s, c, ps, pc;
+    sincos(theta, &s, &c);
+    sincos(epsilon*tau, &ps, &pc);
+    real factor=omega == (real)0 ? tau : s/omega;
+    real vr=z*ar+ur*br-ui*bi;
+    real vi=z*ai+ur*bi+ui*br;
+    real wr=ur*ar+ui*ai-z*br;
+    real wi=ur*ai-ui*ar-z*bi;
+    real x0=c*ar+factor*vi, x1=c*ai-factor*vr;
+    real y0=c*br+factor*wi, y1=c*bi-factor*wr;
+    *xr=pc*x0+ps*x1; *xi=pc*x1-ps*x0;
+    *yr=pc*y0+ps*y1; *yi=pc*y1-ps*y0;
+}
+extern "C" __global__ void combine_k(
+    const real* psi0, const real* f, const real* k2,
+    const real* a, const real* b, const real* c,
+    real* out, real* lap, int n, int spatial_n, int stage, real dt, real phase_rate,
+    const real* matrix, int matrix_members, const real* hbar) {
+    int k=blockIdx.x*blockDim.x+threadIdx.x;
+    if (k >= n) return;
+    int member=k/spatial_n, cell=k%spatial_n;
+    int p=2*(member*2*spatial_n+cell), q=p+2*spatial_n;
+    int m=2*((matrix_members == 1 ? 0 : member)*4*spatial_n+cell);
+    real ci=stage == STAGES ? (real)1 : c[stage];
+    real xr, xi, yr, yi;
+    spinor_apply(matrix,m,dt*ci/hbar[member],
+        psi0[p],psi0[p+1],psi0[q],psi0[q+1],&xr,&xi,&yr,&yi,spatial_n);
+    for (int j=0; j<stage; ++j) {
+        real weight=dt*(stage == STAGES ? b[j] : a[stage*STAGES+j]);
+        if (weight == (real)0) continue;
+        int fp=p+2*j*2*n, fq=q+2*j*2*n;
+        real fr, fi, gr, gi;
+        spinor_apply(matrix,m,dt*(ci-c[j])/hbar[member],
+            f[fp],f[fp+1],f[fq],f[fq+1],&fr,&fi,&gr,&gi,spatial_n);
+        xr+=weight*fr; xi+=weight*fi;
+        yr+=weight*gr; yi+=weight*gi;
+    }
+    real normalization=stage == STAGES ? (real)1 : (real)1/(real)spatial_n;
+    xr*=normalization; xi*=normalization;
+    yr*=normalization; yi*=normalization;
+    out[p]=xr; out[p+1]=xi; out[q]=yr; out[q+1]=yi;
+#if ETA
+    if (stage != STAGES) {
+        real factor=-k2[cell];
+        lap[p]=factor*xr; lap[p+1]=factor*xi;
+        lap[q]=factor*yr; lap[q+1]=factor*yi;
+    }
+#endif
+}
+extern "C" __global__ void stage_rhs(
+    const real* psi, const real* lap,
+    const real* res0, const real* dr, const real* a,
+    const real* vr, const real* vi, const real* pump,
+    const real* scales, int scale_index,
+    real* rhs, real* out_dr, int n, int spatial_n, int pump_n, int stage, real dt,
+    real inv_hbar, real hbar_over_2m, real gC, real gR, real gI,
+    real R, real gammaC, real gammaR, real gammaI, real gammaA,
+    real ria, real rai, real kappa, real eta,
+    const real* constants, const real* weights, int vr_n, int vi_n) {
+    int k=blockIdx.x*blockDim.x+threadIdx.x;
+    if (k >= n) return;
+    int member=k/spatial_n, cell=k%spatial_n;
+    int res_n=n*RESCOMP;
+    const real* q=constants+15*member;
+    inv_hbar=q[0]; hbar_over_2m=q[1]; gC=q[2];
+    real alpha2=q[3]; gR=q[4]; gI=q[5]; R=q[6]; gammaC=q[7];
+    gammaR=q[8]; gammaI=q[9]; gammaA=q[10]; ria=q[11];
+    rai=q[12]; kappa=q[13]; eta=q[14];
+    real rho[2];
+    for (int component=0; component<2; ++component) {
+        int point=(member*2+component)*spatial_n+cell;
+        real pre=psi[2*point], pim=psi[2*point+1];
+        rho[component]=pre*pre+pim*pim;
+    }
+    for (int component=0; component<2; ++component) {
+        int point=(member*2+component)*spatial_n+cell;
+        int r=(member*RESCOMP+(RESCOMP == 1 ? 0 : component))*spatial_n+cell;
+        real active=MODEL == 3 ? (real)0 : res0[r];
+        real inactive=(MODEL == 0 || MODEL == 3) ? (real)0 : res0[res_n+r];
+#if MODEL != 3
+        for (int j=0; j<stage; ++j) {
+            real weight=dt*a[stage*STAGES+j];
+            if (weight == (real)0) continue;
+            active+=weight*dr[(j*FIELDS)*res_n+r];
+#if MODEL != 0
+            inactive+=weight*dr[(j*FIELDS+1)*res_n+r];
+#endif
+        }
+#endif
+        real pre=psi[2*point], pim=psi[2*point+1];
+        int pv=vr_n == spatial_n ? cell :
+            (vr_n == 2*spatial_n ? component*spatial_n+cell : point);
+        int pi=vi_n == spatial_n ? cell :
+            (vi_n == 2*spatial_n ? component*spatial_n+cell : point);
+        real energy=vr[pv]+gC*rho[component]+alpha2*rho[1-component]
+            +gR*active+gI*inactive;
+        real gain=(R*active-gammaC)*(real)0.5+vi[pi]*inv_hbar;
+        real out_re=gain*pre+energy*inv_hbar*pim;
+        real out_im=gain*pim-energy*inv_hbar*pre;
+#if ETA
+        real relax=eta*active*hbar_over_2m;
+        out_re+=relax*lap[2*point];
+        out_im+=relax*lap[2*point+1];
+#endif
+        rhs[2*point]=out_re; rhs[2*point+1]=out_im;
+#if MODEL != 3
+        if (RESCOMP == 2 || component == 0) {
+            int pump_index=pump_n == spatial_n ? cell : k;
+            real source=scales[scale_index]*pump[pump_index]
+                *(RESCOMP == 1 ? (real)1 : weights[2*member+component]);
+            real density=RESCOMP == 1 ? rho[0]+rho[1] : rho[component];
+#if MODEL == 0
+            out_dr[(stage*FIELDS)*res_n+r]=source-(gammaR+R*density)*active;
+#elif MODEL == 1
+            out_dr[(stage*FIELDS)*res_n+r]=ria*inactive-(gammaA+rai+R*density)*active;
+            out_dr[(stage*FIELDS+1)*res_n+r]=source-(gammaI+ria)*inactive+rai*active;
+#else
+            real transfer=kappa*inactive*inactive;
+            out_dr[(stage*FIELDS)*res_n+r]=transfer-(gammaR+R*density)*active;
+            out_dr[(stage*FIELDS+1)*res_n+r]=source-transfer-gammaI*inactive;
+#endif
+        }
+#endif
+    }
+}
+extern "C" __global__ void finish_res(
+    const real* res0, const real* dr, const real* b,
+    real* out, int n, real dt) {
+    int k=blockIdx.x*blockDim.x+threadIdx.x;
+    int res_n=n*RESCOMP;
+    if (k >= res_n*FIELDS) return;
+    int field=k/res_n, point=k%res_n;
+    real val=res0[k];
+    for (int j=0; j<STAGES; ++j) {
+        if (b[j] != (real)0) val+=dt*b[j]*dr[(j*FIELDS+field)*res_n+point];
+    }
+    out[k]=val < (real)0 ? (real)0 : val;
+}
+'''
+    return (source.replace("REAL", real).replace("MODEL_ID", str(model))
+            .replace("ETA_ID", str(eta)).replace("STAGE_COUNT", str(stages))
+            .replace("FIELD_COUNT", str(fields)).replace("RES_COUNT", str(reservoir_components)))
+
+
+def spinor_feature_source(source, real, terms, varying_potential, drive):
+    """Add local potential, coherent drive, and term snippets to paired stages."""
+    source = source.replace("rho[2]", "densities[2]")
+    source = source.replace("rho[component]", "densities[component]")
+    source = source.replace("rho[1-component]", "densities[1-component]")
+    source = source.replace("rho[0]+rho[1]", "densities[0]+densities[1]")
+    declarations = []
+    if varying_potential:
+        declarations.extend(("const real* cap_re", "const real* cap_im"))
+    if drive:
+        declarations.extend(("const real* drive_re", "const real* drive_im",
+                             "const real* drive_energy"))
+    if terms:
+        declarations.extend(("const real* x_coords", "const real* y_coords"))
+    loads = []
+    energy_terms = []
+    rate_terms = []
+    for number, term in enumerate(terms):
+        expression = term.cuda.expression
+        for ctype, name, *layout in term.cuda.arguments:
+            kind = layout[0] if layout else "raw"
+            identifier = f"term_{number}_{name}"
+            concrete = ctype.replace("{REAL}", real)
+            if kind == "raw":
+                declarations.append(f"{concrete} {identifier}")
+            else:
+                declarations.append(f"{concrete} {identifier}_arg")
+                item_type = concrete.replace("const", "").replace("*", "").strip()
+                index = "cell" if kind == "shared" else "point"
+                loads.append(f"        {item_type} {identifier} = {identifier}_arg[{index}];")
+            expression = re.sub(rf"\b{name}\b", identifier, expression)
+        (energy_terms if term.category == "energy" else rate_terms).append(
+            f"({expression})")
+    declarations.extend(("const real* feature_values", "int feature_index",
+                         "int feature_members", "int feature_vr_n", "int feature_vi_n"))
+    signature = "const real* constants, const real* weights, int vr_n, int vi_n) {"
+    source = source.replace(signature, signature.replace(") {", ",\n    " +
+                            ", ".join(declarations) + ") {"))
+    local = ("        int feature_offset=(feature_index*feature_members+member)*3;\n"
+             "        real potential_scale=feature_values[feature_offset];\n"
+             "        real drive_scale=feature_values[feature_offset+1];\n"
+             "        real t_stage=feature_values[feature_offset+2];\n"
+             "        real rho=densities[component], n_active=active, n_inactive=inactive;\n"
+             "        real psi_re=pre, psi_im=pim;\n")
+    if terms:
+        local += "        real x=x_coords[cell], y=y_coords[cell];\n"
+        local += "\n".join(loads) + ("\n" if loads else "")
+    local += ("        real extra_energy=" +
+              ("+".join(energy_terms) or "(real)0") + ";\n"
+              "        real extra_rate=" +
+              ("+".join(rate_terms) or "(real)0") + ";\n")
+    anchor = "        real energy=vr[pv]+gC*densities[component]"
+    source = source.replace(anchor, local + anchor)
+    if varying_potential:
+        source = source.replace("vr[pv]+gC", "(vr[pv]*potential_scale+cap_re[point])+gC")
+        source = source.replace("vi[pi]*inv_hbar", "(vi[pi]*potential_scale+cap_im[point])*inv_hbar")
+    if drive:
+        if varying_potential:
+            source = source.replace("(vr[pv]*potential_scale+cap_re[point])+gC",
+                "(vr[pv]*potential_scale+cap_re[point]-drive_energy[point])+gC")
+        else:
+            source = source.replace("vr[pv]+gC", "(vr[pv]-drive_energy[point])+gC")
+    source = source.replace("+gR*active+gI*inactive;",
+                            "+gR*active+gI*inactive+extra_energy;")
+    source = source.replace("+vi[pi]*inv_hbar;", "+vi[pi]*inv_hbar+extra_rate;")
+    source = source.replace("+(vi[pi]*potential_scale+cap_im[point])*inv_hbar;",
+                            "+(vi[pi]*potential_scale+cap_im[point])*inv_hbar+extra_rate;")
+    if drive:
+        source = source.replace("        rhs[2*point]=out_re;",
+            "        out_re+=inv_hbar*drive_scale*drive_im[point];\n"
+            "        out_im-=inv_hbar*drive_scale*drive_re[point];\n"
+            "        rhs[2*point]=out_re;")
+    return source
+
+
 def _feature_source(source, real, terms, varying_potential, drive, batched):
     declarations = []
     if varying_potential:
@@ -293,6 +529,7 @@ class FusedIFRK:
 
         self.solver = solver
         self.model = solver._model_features
+        self.spinor = solver._spinor
         self._has_features = bool(self.model.terms or self.model.drive is not None or
                                   self.model.time_dependent_potential)
         for term in self.model.terms:
@@ -312,6 +549,28 @@ class FusedIFRK:
         self.complex = solver._complex_dtype
         self.scalar = solver._scalar
         self.k2 = self.xp.ascontiguousarray(solver._k_squared).ravel()
+        if self.spinor:
+            self.res_components = self.model.reservoir_components
+            self._spinor_matrix = self.xp.ascontiguousarray(
+                solver._spinor_matrix, dtype=self.complex)
+            members = solver.batch_physics.size or 1
+            physics_names = ("hbar", "g_C", "alpha_2", "g_R", "g_I", "R",
+                             "gamma_C", "gamma_R", "gamma_I", "gamma_A",
+                             "R_IA", "R_AI", "kappa", "kinetic_relaxation_eta", "m_eff")
+            host = {name: np.asarray(solver.batch_physics.host.get(
+                name, np.full(members, getattr(solver.config.physics, name))),
+                dtype=self.scalar) for name in physics_names}
+            self._spinor_hbar = self.xp.asarray(host["hbar"])
+            constants = (1 / host["hbar"], host["hbar"] / (2 * host["m_eff"]),
+                         host["g_C"], host["alpha_2"], host["g_R"], host["g_I"],
+                         host["R"], host["gamma_C"], host["gamma_R"], host["gamma_I"],
+                         host["gamma_A"], host["R_IA"], host["R_AI"], host["kappa"],
+                         host["kinetic_relaxation_eta"])
+            self._spinor_constants = self.xp.asarray(np.stack(constants, axis=1).ravel())
+            self._spinor_weights = (self.xp.ascontiguousarray(
+                self.model.pump_weights, dtype=self.real).ravel()
+                                    if self.model.pump_weights is not None else
+                                    self.xp.ones(2 * members, dtype=self.real))
         self.a = self.xp.asarray(solver._a, dtype=self.real).ravel()
         self.b = self.xp.asarray(solver._b, dtype=self.real)
         self.c = self.xp.asarray(solver._c, dtype=self.real)
@@ -386,8 +645,10 @@ class FusedIFRK:
             self._graph_cache.clear()
             self._potential_cached = None
             self.vr = self.vi = None
-            vr = self._array(self.xp.real(potential), self.real).ravel()
-            vi = (self._array(self.xp.imag(potential), self.real).ravel()
+            value = (self.xp.broadcast_to(potential, self.shape)
+                     if getattr(self, "spinor", False) else potential)
+            vr = self._array(self.xp.real(value), self.real).ravel()
+            vi = (self._array(self.xp.imag(value), self.real).ravel()
                   if self.xp.iscomplexobj(potential) else self._zero_pump.ravel())
             self.vr, self.vi = vr, vi
             self._potential_cached = potential
@@ -446,6 +707,29 @@ class FusedIFRK:
         return values
 
     def _noise_kernel(self, graph):
+        if self.spinor:
+            key = "_spinor_noise_graph" if graph else "_spinor_noise_regular"
+            if not hasattr(self, key):
+                from polarism.noise.philox import cuda_source
+                source = cuda_source(self.solver._precision)
+                source = source.replace("int member = j / spatial_n;",
+                    "int member = j / (2*spatial_n); int component = (j / spatial_n) % 2;")
+                source = source.replace("unsigned int d = 1U;",
+                                        "unsigned int d = 1U + (unsigned int)component;")
+                source = source.replace("0x1p-24f", "5.960464477539063e-8f")
+                source = source.replace("0x1p-53", "1.1102230246251565e-16")
+                source = source.replace("active[j]",
+                    f"active[(member*{self.res_components}+(component*({self.res_components}==2)))*spatial_n+j%spatial_n]")
+                if graph:
+                    source = source.replace(
+                        "unsigned long long step, int spatial_n, int total_n,",
+                        "const unsigned long long* step_base, unsigned int step_offset, int spatial_n, int total_n,")
+                    source = source.replace("    unsigned int b = (unsigned int)step;",
+                        "    unsigned long long step = step_base[0] + step_offset;\n"
+                        "    unsigned int b = (unsigned int)step;")
+                setattr(self, key, self.xp.RawKernel(
+                    source, f"add_wigner_{self.solver._precision}"))
+            return getattr(self, key)
         if not graph:
             return self._noise._kernel
         if not hasattr(self, "_noise_graph"):
@@ -477,17 +761,24 @@ class FusedIFRK:
         stage0_direct = (self._batched and not self.eta
                          and self.solver._c[0] == 0
                          and all(value == 0 for value in self.solver._a[0]))
-        finish_in_stage = self._batched and model_id != 3
+        finish_in_stage = self._batched and model_id != 3 and not self.spinor
+        if self.spinor:
+            stage0_direct = False
         spec = tuple(xp.empty(self.shape, self.complex) for _ in range(2))
-        res = tuple(xp.empty((fields, *self.shape), self.real) for _ in range(2))
+        res_shape = ((fields, self.shape[0], self.res_components, *self.shape[2:])
+                     if self.spinor else (fields, *self.shape))
+        res = tuple(xp.empty(res_shape, self.real) for _ in range(2))
         f = xp.empty((self.s, *self.shape), self.complex)
-        dr = xp.empty((self.s, fields, *self.shape), self.real)
+        dr = xp.empty((self.s, *res_shape), self.real)
         stage_k = xp.empty(self.shape, self.complex)
         stage_psi = xp.empty_like(stage_k)
         lap_k = xp.empty_like(stage_k)
         lap_psi = xp.empty_like(stage_k)
         rhs = xp.empty_like(stage_k)
-        source = fused_source(real="float" if self.real == xp.float32 else "double",
+        source = (spinor_fused_source(
+            "float" if self.real == xp.float32 else "double", model_id, int(self.eta),
+            self.s, fields, self.res_components) if self.spinor else fused_source(
+            real="float" if self.real == xp.float32 else "double",
                               model=model_id, eta=int(self.eta), stages=self.s,
                               fields=fields,
                               spatial_index="k" if not self._batched else "k % spatial_n",
@@ -495,12 +786,16 @@ class FusedIFRK:
                               sincos="sincosf" if self.real == xp.float32 else "sincos",
                               physics_fields=self._physics_fields,
                               stage0_direct=stage0_direct,
-                              finish_in_stage=finish_in_stage)
+                              finish_in_stage=finish_in_stage))
         if self._has_features:
-            source = _feature_source(source,
-                                     "float" if self.real == xp.float32 else "double",
-                                     self.model.terms, self.model.time_dependent_potential,
-                                     self.model.drive is not None, self._batched)
+            real_type = "float" if self.real == xp.float32 else "double"
+            source = (spinor_feature_source(
+                source, real_type, self.model.terms,
+                self.model.time_dependent_potential, self.model.drive is not None)
+                if self.spinor else _feature_source(
+                    source, real_type, self.model.terms,
+                    self.model.time_dependent_potential,
+                    self.model.drive is not None, self._batched))
         module = xp.RawModule(code=source, options=("--std=c++11",))
         kernels = {name: module.get_function(name)
                    for name in ("combine_k", "stage_rhs", "finish_res")}
@@ -563,6 +858,14 @@ class FusedIFRK:
         scalar = self.scalar
         p = self.p
         finish_args = ((self.b, res_out.ravel()) if self._finish_in_stage else ())
+        combine_extra = ((self._spinor_matrix.view(self.real).ravel(),
+                          np.int32(self._spinor_matrix.shape[0]), self._spinor_hbar)
+                         if self.spinor else self._physics_arg)
+        stage_extra = ((self._spinor_constants, self._spinor_weights,
+                        np.int32(self.vr.size), np.int32(self.vi.size))
+                       if self.spinor else
+                       ((np.int32(self.vr.size), np.int32(self.vi.size)) + self._physics_arg
+                        if self._physics_fields else ()))
         for i in range(self.s):
             if i == 0 and self._stage0_direct:
                 self._plan.fft(spectrum_in, stage_psi, cufft.CUFFT_INVERSE)
@@ -571,7 +874,7 @@ class FusedIFRK:
                     spectrum_in.view(self.real).ravel(), f.view(self.real).ravel(), self.k2,
                     self.a, self.b, self.c, stage_k.view(self.real).ravel(),
                     lap_k.view(self.real).ravel(), np.int32(self.n), np.int32(self.spatial_n), np.int32(i),
-                    self.dt, self.rate) + self._physics_arg)
+                    self.dt, self.rate) + combine_extra)
                 self._plan.fft(stage_k, stage_psi, cufft.CUFFT_INVERSE)
             if self.eta:
                 self._plan.fft(lap_k, lap_psi, cufft.CUFFT_INVERSE)
@@ -586,8 +889,7 @@ class FusedIFRK:
                 scalar(p.gamma_C), scalar(p.gamma_R), scalar(p.gamma_I),
                 scalar(p.gamma_A), scalar(p.R_IA), scalar(p.R_AI),
                 scalar(p.kappa), scalar(p.kinetic_relaxation_eta))
-                + ((np.int32(self.vr.size), np.int32(self.vi.size)) + self._physics_arg
-                   if self._physics_fields else ()) + finish_args
+                + stage_extra + finish_args
                 + ((*self._feature_static, self._feature_buffer,
                     np.int32(scale_base + self.c_index[i]),
                     np.int32(self.n // self.spatial_n), np.int32(self.vr.size),
@@ -597,9 +899,10 @@ class FusedIFRK:
             spectrum_in.view(self.real).ravel(), f.view(self.real).ravel(), self.k2,
             self.a, self.b, self.c, spectrum_out.view(self.real).ravel(),
             lap_k.view(self.real).ravel(), np.int32(self.n), np.int32(self.spatial_n), np.int32(self.s),
-            self.dt, self.rate) + self._physics_arg)
+            self.dt, self.rate) + combine_extra)
         if not self._finish_in_stage and res_in.shape[0]:
-            self._kernels["finish_res"](((self.n*res_in.shape[0]+255)//256,), block, (
+            reservoir_n = self.n * (self.res_components if self.spinor else 1)
+            self._kernels["finish_res"](((reservoir_n*res_in.shape[0]+255)//256,), block, (
                 res_in.ravel(), dr.ravel(), self.b, res_out.ravel(),
                 np.int32(self.n), self.dt))
         if self._noise is not None and noise_step is not None:
@@ -612,9 +915,11 @@ class FusedIFRK:
                           self._noise._device_scattering, self._noise._device_strength)
             noise_args += ((self._noise_step_base, np.uint32(noise_step)) if graph_noise
                            else (np.uint64(noise_step),))
-            noise_args += (np.int32(self.spatial_n), np.int32(self.n),
+            noise_args += (np.int32(self.spatial_n),
+                           np.int32(2*self.n if self.spinor else self.n),
                            self.scalar(self._noise.dt / (4.0 * self._noise.volume)))
-            self._noise_kernel(graph_noise)(launch, block, noise_args)
+            noise_launch = (((2*self.n+255)//256,) if self.spinor else launch)
+            self._noise_kernel(graph_noise)(noise_launch, block, noise_args)
             self._plan.fft(stage_psi, spectrum_out, cufft.CUFFT_FORWARD)
 
     def _copy_in(self, state, reservoir):
@@ -639,7 +944,7 @@ class FusedIFRK:
         if shape != self.shape or state.batched != self._batched:
             self.shape = shape
             self._batched = state.batched
-            self.n = int(np.prod(shape))
+            self.n = int(np.prod(shape)) // (2 if getattr(self, "spinor", False) else 1)
             self._graph_cache.clear()
             self._graph_signature = None
             self._pump_combiner = None

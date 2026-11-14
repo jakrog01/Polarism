@@ -80,9 +80,9 @@ class IFRKFFTCudaSolver(AbstractSolver):
         self._fused = None
 
     def _cuda(self, reservoir):
-        if self._spinor:
-            return None
         if getattr(self.xp, "__name__", "") != "cupy":
+            return None
+        if self._spinor and any(term.cuda is None for term in self._model_features.terms):
             return None
         if self._fused is None:
             from polarism.solver.ifrk_cuda_fused import FusedIFRK
