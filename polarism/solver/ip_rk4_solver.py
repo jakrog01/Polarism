@@ -27,6 +27,7 @@ class IPRK4Solver(AbstractSolver):
         grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         custom_reservoirs="quantitative", potential=True,
         kinetic_relaxation=True, dispersion=frozenset({"*"}),
+        coherent_drive=True, time_dependent_potential=True,
         noise=frozenset({"none", "wigner"}),
         quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         description="Interaction-picture RK4. Stage-coupled reservoir. FFT-only, periodic grid only. Evaluates kinetic_relaxation_eta spectrally via _forward/_inverse. For GPU-native spectral production use 'ifrk4-fft-cuda'.",
@@ -34,6 +35,8 @@ class IPRK4Solver(AbstractSolver):
     def __init__(self, config: Config, grid: SimulationGrid, model):
         """Set up the iprk 4 solver."""
         super().__init__(config, grid, model)
+        self._has_drive = model.drive is not None
+        self._time_dependent_potential = model.time_dependent_potential
         self._fft = self.xp.fft.fft if grid.ndim == 1 else self.xp.fft.fft2
         self._ifft = self.xp.fft.ifft if grid.ndim == 1 else self.xp.fft.ifft2
         dt = self.config.solver.dt
@@ -106,9 +109,13 @@ class IPRK4Solver(AbstractSolver):
         psi0_k = self._forward(psi0)
         nR_0 = reservoir.get_active_density(res0)
         nI_0 = reservoir.get_inactive_density(res0)
+        if self._time_dependent_potential:
+            potential = model.potential_at(t)
         N1 = self._nonlinear_rhs(psi0, nR_0, nI_0, potential, psi0_k)
         if model.terms:
             N1 = N1 + model.extra_rhs(psi0, res0, t)
+        if self._has_drive:
+            N1 = N1 + model.drive_contribution(psi0, t)
         N1_k = self._forward(N1)
         k1_u = N1_k
         k1_res = reservoir.get_derivatives(psi0, p0, res0)
@@ -119,9 +126,13 @@ class IPRK4Solver(AbstractSolver):
         res_mid = tuple(r + 0.5 * dt * k for r, k in zip(res0, k1_res))
         nR_mid = reservoir.get_active_density(res_mid)
         nI_mid = reservoir.get_inactive_density(res_mid)
+        if self._time_dependent_potential:
+            potential = model.potential_at(t + 0.5 * dt)
         N2 = self._nonlinear_rhs(psi_mid, nR_mid, nI_mid, potential, psi_mid_k)
         if model.terms:
             N2 = N2 + model.extra_rhs(psi_mid, res_mid, t + 0.5 * dt)
+        if self._has_drive:
+            N2 = N2 + model.drive_contribution(psi_mid, t + 0.5 * dt)
         N2_k = self._forward(N2)
         k2_u = self._exp_L_neg_half * N2_k
         k2_res = reservoir.get_derivatives(psi_mid, p_half, res_mid)
@@ -132,9 +143,13 @@ class IPRK4Solver(AbstractSolver):
         res_mid2 = tuple(r + 0.5 * dt * k for r, k in zip(res0, k2_res))
         nR_mid2 = reservoir.get_active_density(res_mid2)
         nI_mid2 = reservoir.get_inactive_density(res_mid2)
+        if self._time_dependent_potential:
+            potential = model.potential_at(t + 0.5 * dt)
         N3 = self._nonlinear_rhs(psi_mid2, nR_mid2, nI_mid2, potential, psi_mid2_k)
         if model.terms:
             N3 = N3 + model.extra_rhs(psi_mid2, res_mid2, t + 0.5 * dt)
+        if self._has_drive:
+            N3 = N3 + model.drive_contribution(psi_mid2, t + 0.5 * dt)
         N3_k = self._forward(N3)
         k3_u = self._exp_L_neg_half * N3_k
         k3_res = reservoir.get_derivatives(psi_mid2, p_half, res_mid2)
@@ -145,9 +160,13 @@ class IPRK4Solver(AbstractSolver):
         res_end = tuple(r + dt * k for r, k in zip(res0, k3_res))
         nR_end = reservoir.get_active_density(res_end)
         nI_end = reservoir.get_inactive_density(res_end)
+        if self._time_dependent_potential:
+            potential = model.potential_at(t + dt)
         N4 = self._nonlinear_rhs(psi_end, nR_end, nI_end, potential, psi_end_k)
         if model.terms:
             N4 = N4 + model.extra_rhs(psi_end, res_end, t + dt)
+        if self._has_drive:
+            N4 = N4 + model.drive_contribution(psi_end, t + dt)
         N4_k = self._forward(N4)
         k4_u = self._exp_L_neg_full * N4_k
         k4_res = reservoir.get_derivatives(psi_end, p1, res_end)

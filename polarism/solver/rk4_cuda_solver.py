@@ -1296,6 +1296,7 @@ class RK4CudaSolver(AbstractSolver):
         grid_types=frozenset({"periodic", "closed-interval"}), reservoirs=frozenset({"single", "double", "quadratic-double"}),
         custom_reservoirs="unsupported", potential=True,
         kinetic_relaxation=True, dispersion=frozenset({"parabolic"}), terms=False,
+        coherent_drive=False, time_dependent_potential=False,
         noise=frozenset({"none", "wigner"}),
         quantitative_reservoirs=frozenset({"single", "double", "quadratic-double"}),
         description='GPU-fused CUDA RK4 solver. Stage-coupled reservoir. FDM production/reference path for periodic and closed-interval grids.',

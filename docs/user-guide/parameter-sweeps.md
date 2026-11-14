@@ -35,7 +35,11 @@ resume with `sweep.run(resume=sweep.run_directory)`.
 
 Override paths include `physics.*`, `noise.*`, `laser.*`, `laser.extra.*`,
 `potential.*`, `initial_condition.*`, and `terms.<name>.<parameter>` for a parameter already present
-in `cfg.terms`. In `laser.mode="multiple"`, use zero-based `lasers[i].*`, such
+in `cfg.terms`. Coherent drive values `drive.amplitude`, `drive.energy`,
+`drive.kx`, and `drive.ky` are batchable, as are existing keys in
+`drive.profile`, `drive.envelope`, and `potential.envelope`. Their `type`
+keys and `drive.enabled` create separate groups.
+In `laser.mode="multiple"`, use zero-based `lasers[i].*`, such
 as `lasers[1].delay` or `lasers[1].extra.name`, for entries in the laser YAML
 file. Extra keys must already exist in the configuration or laser entry.
 Physics, laser, potential, `noise.seed`, `noise.initial*`, and

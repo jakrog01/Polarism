@@ -85,6 +85,7 @@ class PotentialParameters:
     expose_results: bool = True
     potential_type: str = "zero"
     profile: dict[str, Any] = field(default_factory=dict)
+    envelope: dict[str, Any] = field(default_factory=lambda: {"type": "constant"})
     x1: float = -2.0
     y1: float = 0.0
     x2: float = 2.0
@@ -117,6 +118,18 @@ class LaserParameters:
     n_pulses: int = 0
     power_definition: str = "peak_amplitude"
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DriveParameters:
+    """Store the coherent source and its rotating-frame energy."""
+    enabled: bool = False
+    amplitude: float = 0.0
+    energy: float = 0.0
+    kx: float = 0.0
+    ky: float = 0.0
+    profile: dict[str, Any] = field(default_factory=lambda: {"type": "uniform"})
+    envelope: dict[str, Any] = field(default_factory=lambda: {"type": "constant"})
 
 
 @dataclass
@@ -207,6 +220,7 @@ class Config:
         default_factory=BoundaryConditionParameters
     )
     potential: PotentialParameters = field(default_factory=PotentialParameters)
+    drive: DriveParameters = field(default_factory=DriveParameters)
     physics: PhysicsConstants = field(default_factory=PhysicsConstants)
     terms: dict[str, Any] = field(default_factory=dict)
     noise: NoiseParameters = field(default_factory=NoiseParameters)

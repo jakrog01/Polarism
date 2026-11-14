@@ -90,7 +90,7 @@ def _config_signature(cfg):
     """Capture settings that determine stored simulation frames."""
     data = asdict(cfg)
     return {name: data[name] for name in ("grid", "solver", "reservoir", "physics",
-                                         "terms", "initial_condition", "laser", "potential",
+                                         "terms", "initial_condition", "laser", "potential", "drive",
                                          "boundary_condition", "stop",
                                          "compute_engine")}
 

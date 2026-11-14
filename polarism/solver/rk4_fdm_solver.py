@@ -19,6 +19,7 @@ class RK4FDMSolver(AbstractSolver):
         grid_types=frozenset({"periodic", "closed-interval"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         custom_reservoirs="quantitative", potential=True,
         kinetic_relaxation=True, dispersion=frozenset({"parabolic"}),
+        coherent_drive=True, time_dependent_potential=True,
         noise=frozenset({"none", "wigner"}),
         quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         description='Reference FDM RK4. Stage-coupled reservoir (psi and reservoir advance through the same 4 RK4 stages). Works with all grid types.',

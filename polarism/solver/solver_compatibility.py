@@ -68,6 +68,14 @@ def check_solver_compatibility(cfg) -> None:
             f"Solver '{solver}' does not support extra terms {sorted(cfg.terms)}. "
             f"Hint: {caps.description}"
         )
+    if cfg.drive.enabled and not caps.coherent_drive:
+        raise SolverCompatibilityError(
+            f"Solver '{solver}' does not support drive.enabled=True. Hint: {caps.description}"
+        )
+    if cfg.potential.envelope.get("type") != "constant" and not caps.time_dependent_potential:
+        raise SolverCompatibilityError(
+            f"Solver '{solver}' does not support time-dependent potential.envelope. Hint: {caps.description}"
+        )
     if cfg.noise.enabled and cfg.noise.stochastic not in caps.noise:
         raise SolverCompatibilityError(
             f"Solver '{solver}' does not support noise.stochastic='{cfg.noise.stochastic}'"

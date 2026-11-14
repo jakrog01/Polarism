@@ -27,6 +27,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
         grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double"}),
         custom_reservoirs="quantitative", potential=True,
         kinetic_relaxation=True, dispersion=frozenset({"parabolic"}), terms=False,
+        coherent_drive=False, time_dependent_potential=False,
         noise=frozenset({"none", "wigner"}),
         quantitative_reservoirs=frozenset({"single", "double", "quadratic-double"}),
         description='FFT interaction-picture RK solver with selectable tableau. Stage-coupled reservoir and cuFFT fused stages for supported GPU cases. Evaluates kinetic_relaxation_eta in nonlinear RHS. Spectral production path for periodic grids; use a wide CAP absorber for open boundaries.',

@@ -53,14 +53,14 @@ def override_kind(path):
             return "group" if field in {"type", "path"} else "batch"
         if field.startswith("extra.") and len(field) > 6:
             return "batch"
-    if section in {"laser", "potential"}:
-        from polarism.config.simulation_parameters import PotentialParameters
-        known = LaserParameters if section == "laser" else PotentialParameters
-        mappings = {"profile"} | ({"envelope"} if section == "laser" else set())
+    if section in {"laser", "potential", "drive"}:
+        from polarism.config.simulation_parameters import DriveParameters, PotentialParameters
+        known = {"laser": LaserParameters, "potential": PotentialParameters, "drive": DriveParameters}[section]
+        mappings = {"profile", "envelope"}
         if any(field.startswith(f"{mapping}.") and len(field) > len(mapping) + 1 for mapping in mappings):
             return "group" if field.endswith(".type") else "batch"
         if field in {item.name for item in fields(known)} or section == "laser" and field.startswith("extra.") and len(field) > 6:
-            return "group" if field in {"laser_type", "potential_type"} else "batch"
+            return "group" if field in {"laser_type", "potential_type", "enabled"} else "batch"
     if section in _GROUP_SECTIONS and field:
         return "group"
     raise ValueError(f"Unknown sweep path {path!r}; use paths such as physics.g_C, laser.P0, laser.extra.name, potential.V1 or lasers[1].delay")

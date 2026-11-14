@@ -26,6 +26,7 @@ class SplitStepFFTSolver(AbstractSolver):
         grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         custom_reservoirs="quantitative", potential=True,
         kinetic_relaxation=False, dispersion=frozenset({"*"}),
+        coherent_drive=False, time_dependent_potential=True,
         noise=frozenset({"none", "wigner"}),
         quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         description='Spectral Strang splitting, second order in time. Reservoir advances in two half-steps around the condensate step. FFT-only, periodic grid only. Does not evaluate kinetic_relaxation_eta.',
@@ -35,6 +36,7 @@ class SplitStepFFTSolver(AbstractSolver):
     def __init__(self, config: Config, grid: SimulationGrid, model):
         """Set up the split step fft solver."""
         super().__init__(config, grid, model)
+        self._time_dependent_potential = model.time_dependent_potential
         self._fft = self.xp.fft.fft if grid.ndim == 1 else self.xp.fft.fft2
         self._ifft = self.xp.fft.ifft if grid.ndim == 1 else self.xp.fft.ifft2
 
@@ -70,6 +72,8 @@ class SplitStepFFTSolver(AbstractSolver):
         boundary_condition = model.boundary
         self.batch_physics.check(state.field)
         dt = self.config.solver.dt
+        if self._time_dependent_potential:
+            potential = model.potential_at(state.t + dt / 2)
         hbar = self.batch_physics.get("hbar")
         g_C = self.batch_physics.get("g_C")
         g_R = self.batch_physics.get("g_R")

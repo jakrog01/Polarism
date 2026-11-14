@@ -7,7 +7,9 @@ step updates `state.step` and computes `state.t = state.t0 + state.step * dt`.
 The inherited `advance` applies `model.noise` after every accepted step.
 
 The model holds `grid`, batched `physics`, `precision`, `xp`, `potential`,
-`pump`, `reservoir`, `boundary`, and optional `noise`. Its
+`pump`, `reservoir`, `boundary`, and optional `noise`. It also holds optional
+`drive`, `potential_static`, `cap`, and `potential_envelope` for the new
+physics. `potential_at(t)` evaluates the configured potential plus CAP. Its
 `rhs(field, reservoir_fields, t, out=None)` evaluates the finite difference
 reference derivative. Built-in fused solvers use their specialized stage code.
 Solver classes publish a frozen `SolverCapabilities` declaration, which
@@ -61,6 +63,24 @@ code path.
 `split-step-fft` multiplies the field by `exp((G - iE/hbar) dt)` after its local
 step, so field-dependent terms are first order in `dt` there. The other
 supporting solvers add the terms to their stage right-hand sides.
+
+## Coherent drive and varying potential
+
+`coherent_drive` and `time_dependent_potential` capabilities control the
+[coherent source](../user-guide/coherent-drive.md) and the
+[potential envelope](../user-guide/potentials-and-pumps.md). A disabled drive
+and constant potential envelope use the existing solver arithmetic.
+
+| `solver.method` | Coherent drive | Varying potential |
+| --- | --- | --- |
+| `rk4-fdm` | yes | yes |
+| `ip-rk4` | yes | yes |
+| `etd-rk2` | yes | yes |
+| `split-step-fft` | no | yes |
+| `rk4-fdm-fused` | no | no |
+| `rk4-cuda` | no | no |
+| `split-step-fft-cuda` | no | no |
+| `ifrk-fft-cuda`, `ifrk4-fft-cuda` | no | no |
 
 ## Compatibility guidance
 

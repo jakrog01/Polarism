@@ -49,6 +49,7 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - PhysicsConstants
         - BoundaryConditionParameters
         - PotentialParameters
+        - DriveParameters
         - InitialConditionParameters
         - LaserParameters
         - ReservoirParameters

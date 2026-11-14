@@ -63,6 +63,7 @@ def validate_config(cfg: Config) -> None:
     _validate_sweep(cfg)
     _validate_boundary(cfg)
     _validate_potential(cfg)
+    _validate_drive(cfg)
     _validate_laser(cfg)
     _warn_explicit_stability(cfg)
 
@@ -295,6 +296,10 @@ def _validate_boundary(cfg: Config) -> None:
 
 def _validate_potential(cfg: Config) -> None:
     potential = cfg.potential
+    try:
+        create_envelope(potential.envelope)
+    except ValueError as exc:
+        raise ConfigValidationError(f"potential.envelope: {exc}") from exc
     if potential.potential_type == "profile":
         if not potential.profile:
             raise ConfigValidationError("potential.profile is required for potential_type='profile'")
@@ -302,6 +307,23 @@ def _validate_potential(cfg: Config) -> None:
             validate_profile_spec(potential.profile, cfg.grid.ndim)
         except ValueError as exc:
             raise ConfigValidationError(f"potential.profile: {exc}") from exc
+
+
+def _validate_drive(cfg: Config) -> None:
+    drive = cfg.drive
+    if type(drive.enabled) is not bool:
+        raise ConfigValidationError("drive.enabled must be a boolean")
+    for name in ("amplitude", "energy", "kx", "ky"):
+        value = getattr(drive, name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ConfigValidationError(f"drive.{name} must be a finite number")
+    if cfg.grid.ndim == 1 and drive.ky != 0.0:
+        raise ConfigValidationError("drive.ky must be zero on a 1D grid")
+    try:
+        validate_profile_spec(drive.profile, cfg.grid.ndim)
+        create_envelope(drive.envelope)
+    except ValueError as exc:
+        raise ConfigValidationError(f"drive profile/envelope: {exc}") from exc
 
 
 def _validate_laser(cfg: Config) -> None:

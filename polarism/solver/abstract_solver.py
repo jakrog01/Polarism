@@ -44,6 +44,7 @@ class SolverCapabilities:
     noise: frozenset[str] = frozenset({"none", "wigner"})
     adaptive: bool = False
     coherent_drive: bool = False
+    time_dependent_potential: bool = False
     quantitative_reservoirs: frozenset[str] = _BUILTIN_RESERVOIRS
     description: str = ""
 

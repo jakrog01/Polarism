@@ -13,6 +13,7 @@ The full runtime configuration is held in `polarism.config.simulation_parameters
 | `initial_condition` | Deterministic start field added to the initial noise |
 | `boundary_condition` | Absorption type, profile, and mask width |
 | `potential` | External potential family and parameters |
+| `drive` | Optional coherent source and rotating-frame energy |
 | `laser` | Pump definition for single or multiple sources |
 | `reservoir` | Single, double, quadratic-double, or no reservoir |
 | `solver` | Time step, total time, precision, and solver method |
@@ -66,6 +67,20 @@ The `physics` block controls decay, interaction, and reservoir coupling paramete
 - `dispersion`, the name of the kinetic-energy relation (`parabolic` by default; see [Dispersion plugins](../plugins/dispersion.md))
 
 These values directly enter the nonlinear GPE-reservoir dynamics. Keep units consistent across the full configuration; the package does not perform unit conversion for you.
+
+## Coherent drive and potential envelope
+
+The `drive` block defaults to disabled. Its fields are `enabled: false`,
+`amplitude: 0.0`, `energy: 0.0`, `kx: 0.0`, `ky: 0.0`,
+`profile: {type: uniform}`, and `envelope: {type: constant}`.
+`amplitude` is the coherent source strength, `energy` is the rotating-frame
+energy in meV, and `kx`/`ky` are in rad/µm. The profile and envelope mappings
+use the registered spatial and temporal factories. See
+[Coherent drive](coherent-drive.md) for the equation and an example.
+
+`potential.envelope` defaults to `{type: constant}` and multiplies only the
+configured external potential. See [Potentials and Pumps](potentials-and-pumps.md)
+for a time-dependent example and CAP behavior.
 
 ## Noise
 

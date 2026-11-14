@@ -22,17 +22,19 @@ from polarism.compute_engine import compute_engine, has_full_rate_fp64
 from polarism.config.dtype_utils import complex_dtype, real_dtype
 from polarism.config.validation import _validate_time_multiple, validate_config
 from polarism.dispersion import available_dispersions
+from polarism.envelopes import create_envelope
 from polarism.grid.create_grid import create_grid
 from polarism.grid.simulation_grid import SimulationGrid
 from polarism.laser.laser_factory import LaserFactory
 from polarism.laser.pump_field import BatchedPumpField, PumpField
-from polarism.model import Model
+from polarism.model import CoherentDrive, Model
 from polarism.model_terms import available_terms
 from polarism.config.batch_physics import BatchPhysics
 from polarism.noise import NoiseApplier
 from polarism.noise.stochastic import draw_seed
 from polarism.plugins import load_plugins
 from polarism.potential.create_potential import create_potential
+from polarism.profiles import create_profile
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
 from polarism.reservoir.create_reservoir import create_reservoir
 from polarism.results.real_time_visualization import RealTimeVisualization
@@ -249,6 +251,13 @@ class SimulationController:
         self._batch_physics = batch_physics
         self.max_laser_power = self._compute_max_laser_power()
 
+        members_for_envelope = member_configs or [cfg]
+        self._potential_dynamic = any(
+            member.potential.envelope.get("type") != "constant"
+            for member in members_for_envelope
+        )
+        if self._potential_dynamic:
+            self._potential_static = self.potential
         cap = self.boundary_condition.before_step_action()
         if self.xp.iscomplexobj(cap) and not self.xp.iscomplexobj(self.potential):
             self.potential = self.potential.astype(self.state.psi.dtype)
@@ -262,6 +271,9 @@ class SimulationController:
                 else real_dtype(self.xp, "single")
             )
             self.potential = self.potential.astype(target)
+        if self._potential_dynamic:
+            self._potential_static = self.xp.asarray(self._potential_static, dtype=self.potential.dtype)
+            self._potential_cap = self.xp.asarray(cap, dtype=self.potential.dtype)
         self.model = self._make_model()
         self.solver = create_solver(cfg, self.grid, self.model)
         self.visualizer = None
@@ -497,10 +509,30 @@ class SimulationController:
                 )
             )
 
+        if self.model.drive is not None:
+            nodes.append(
+                ResultNode(
+                    name="drive", label="|F(r)|",
+                    compute_fn=lambda **ctx: self._drive_result_field(),
+                    reduce_dim_fn=lambda f: f.max(axis=tuple(range(-self.grid.ndim, 0))) if self._batched else float(f.max()),
+                    cmap="magma", scaling=None, clim=None, expose=True, save=True,
+                    cut=None, is_field=True, static=True,
+                )
+            )
+
         for name in self.cfg.result.observables:
             produced = available_observables[name](self)
             nodes.extend(produced if isinstance(produced, list) else [produced])
         return nodes
+
+    def _drive_result_field(self):
+        """Return the static drive magnitude with a batch axis when needed."""
+        field = self.xp.abs(self.model.drive.spatial)
+        if self._batched:
+            if field.ndim == self.grid.ndim:
+                return self.xp.broadcast_to(field, (len(self._member_configs), *self.grid.shape))
+            return field[:, 0]
+        return field
 
     def _checkpoint_path(self) -> Path:
         """Return the configured path, creating a run directory when needed."""
@@ -670,7 +702,7 @@ class SimulationController:
                     h5.create_dataset("steady_density", data=compute_engine.to_cpu(self._steady_density))
                 if self._member_configs is not None:
                     h5.attrs["member_configs_json"] = json.dumps([
-                        {**{name: asdict(member)[name] for name in ("physics", "laser", "potential", "noise")},
+                        {**{name: asdict(member)[name] for name in ("physics", "laser", "potential", "drive", "noise")},
                          "laser_entries": getattr(member, "_laser_entry_overrides", {})}
                         for member in self._member_configs
                     ], sort_keys=True)
@@ -714,12 +746,12 @@ class SimulationController:
                 raise ValueError("checkpoint noise config mismatch")
             if self._member_configs is not None:
                 expected = json.dumps([
-                    {**{name: asdict(member)[name] for name in ("physics", "laser", "potential", "noise")},
+                    {**{name: asdict(member)[name] for name in ("physics", "laser", "potential", "drive", "noise")},
                      "laser_entries": getattr(member, "_laser_entry_overrides", {})}
                     for member in self._member_configs
                 ], sort_keys=True)
                 if h5.attrs.get("member_configs_json") != expected:
-                    raise ValueError("checkpoint member physics, pump or potential mismatch")
+                    raise ValueError("checkpoint member physics, pump, potential or drive mismatch")
             field = h5["field"][:]
             shape = field.shape
             if int(h5.attrs["ndim"]) != self.grid.ndim or tuple(h5.attrs["shape"]) != self.grid.shape:
@@ -798,9 +830,40 @@ class SimulationController:
         terms = tuple(available_terms.lookup(name)(params, self.grid, physics)
                       for name, params in cfg.terms.items())
         dispersion = available_dispersions.lookup(cfg.physics.dispersion)()
+        members = self._member_configs or [cfg]
+        drive = None
+        if cfg.drive.enabled:
+            spatial = []
+            for member in members:
+                phase = member.drive.kx * self.grid.X
+                if self.grid.ndim == 2:
+                    phase = phase + member.drive.ky * self.grid.Y
+                source = member.drive.amplitude * create_profile(member.drive.profile, self.grid) * self.xp.exp(1j * phase)
+                spatial.append(self.xp.asarray(source, dtype=complex_dtype(self.xp, cfg.solver.precision)))
+            source = (spatial[0] if len(spatial) == 1 or all(bool(self.xp.array_equal(spatial[0], item)) for item in spatial[1:])
+                      else self.xp.stack(spatial)[:, None])
+            energies = [member.drive.energy for member in members]
+            energy = (energies[0] if len(energies) == 1 or all(value == energies[0] for value in energies[1:])
+                      else self.xp.asarray(energies, dtype=real_dtype(self.xp, cfg.solver.precision)).reshape((-1, 1, *(1,) * self.grid.ndim)))
+            drive = CoherentDrive(source, self._member_envelope([member.drive.envelope for member in members]), energy)
+        potential_envelope = None
+        if self._potential_dynamic:
+            potential_envelope = self._member_envelope([member.potential.envelope for member in members])
         return Model(self.grid, physics, cfg.solver.precision, self.potential,
                      self.pump_field, self.reservoir, self.boundary_condition, noise,
-                     terms, dispersion)
+                     terms, dispersion, drive,
+                     self._potential_static if self._potential_dynamic else None,
+                     self._potential_cap if self._potential_dynamic else None,
+                     potential_envelope)
+
+    def _member_envelope(self, specs):
+        """Build one scalar envelope or a member-broadcast coefficient."""
+        envelopes = [create_envelope(spec) for spec in specs]
+        if len(envelopes) == 1 or all(spec == specs[0] for spec in specs[1:]):
+            return envelopes[0]
+        shape = (-1, 1, *(1,) * self.grid.ndim)
+        dtype = real_dtype(self.xp, self.cfg.solver.precision)
+        return lambda t: self.xp.asarray([envelope(t) for envelope in envelopes], dtype=dtype).reshape(shape)
 
     def run(self) -> None:
         """Run the simulation loop."""

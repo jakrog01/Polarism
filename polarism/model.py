@@ -1,20 +1,41 @@
 """Simulation model and finite-difference reference right-hand side."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from polarism.compute_engine import compute_engine
 from polarism.dispersion import ParabolicDispersion
+
+
+@dataclass(frozen=True)
+class CoherentDrive:
+    """Hold F(r, t) = spatial * envelope(t) and the frame energy E_p.
+
+    The source in dψ/dt is -i F(r, t)/ħ, while the frame contributes
+    +i E_p ψ/ħ to the same derivative.
+    """
+    spatial: object
+    envelope: object
+    energy: object
 
 
 class Model:
     """Collect the physical components passed to a solver."""
 
     def __init__(self, grid, physics, precision, potential, pump, reservoir,
-                 boundary, noise=None, terms=(), dispersion=None):
+                 boundary, noise=None, terms=(), dispersion=None, drive=None,
+                 potential_static=None, cap=None, potential_envelope=None):
         self.grid = grid
         self.physics = physics
         self.precision = precision
         self.xp = compute_engine.xp
         self.potential = potential
+        self.potential_static = potential_static
+        self.cap = cap
+        self.potential_envelope = potential_envelope
+        self.time_dependent_potential = potential_envelope is not None
+        self.drive = drive
+        self._has_drive = drive is not None
         self.pump = pump
         self.reservoir = reservoir
         self.boundary = boundary
@@ -22,6 +43,25 @@ class Model:
         self.terms = tuple(terms)
         self.dispersion = ParabolicDispersion() if dispersion is None else dispersion
         self._laplacian_buf = None
+
+    def potential_at(self, t):
+        """Return V(r) f(t) + CAP, keeping the absorber time independent."""
+        if not self.time_dependent_potential:
+            return self.potential
+        return self.potential_static * self.potential_envelope(t) + self.cap
+
+    def drive_rhs(self, t):
+        """Return -i F(r, t)/ħ for the enabled coherent drive."""
+        return (-1j / self.physics.get("hbar")) * self.drive.spatial * self.drive.envelope(t)
+
+    def drive_contribution(self, field, t):
+        """Return (+i E_p/ħ)ψ - i F(r, t)/ħ.
+
+        For V = g = k = 0 without reservoir, dψ/dt =
+        (i E_p/ħ - γ_C/2)ψ - i F/ħ, so
+        ψ_ss = (-i F/ħ)/(γ_C/2 - i E_p/ħ).
+        """
+        return (1j / self.physics.get("hbar")) * self.drive.energy * field + self.drive_rhs(t)
 
     def extra_coefficients(self, field, reservoir_fields, t):
         """Sum the extra terms into ``(energy, rate)`` coefficients.
@@ -61,7 +101,7 @@ class Model:
         self._laplacian(field, lap)
         kinetic = -(physics.get("hbar")**2) / (2 * physics.get("m_eff")) * lap
         eff_energy = (
-            self.potential
+            (self.potential_at(t) if self.time_dependent_potential else self.potential)
             + physics.get("g_C") * xp.abs(field) ** 2
             + physics.get("g_R") * n_active
             + physics.get("g_I") * n_inactive
@@ -76,6 +116,8 @@ class Model:
         ) + gain_loss * field + eta * n_active * hbar_over_2m * lap
         if self.terms:
             dfield = dfield + self.extra_rhs(field, reservoir_fields, t)
+        if self._has_drive:
+            dfield = dfield + self.drive_contribution(field, t)
         return dfield, res_derivs
 
     def _laplacian(self, field, out):

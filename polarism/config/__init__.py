@@ -3,6 +3,7 @@ from polarism.config.simulation_parameters import (
     BoundaryConditionParameters,
     CheckpointParameters,
     Config,
+    DriveParameters,
     GridParameters,
     InitialConditionParameters,
     NoiseParameters,
@@ -14,6 +15,7 @@ from polarism.config.simulation_parameters import (
 
 __all__ = [
     "Config",
+    "DriveParameters",
     "GridParameters",
     "PhysicsConstants",
     "NoiseParameters",
