@@ -68,7 +68,7 @@ def test_no_reservoir_gaussian_free_decay(method):
     assert np.isclose(final_norm, expected, rtol=5e-4)
 
 
-@pytest.mark.parametrize("method", tuple(method for method in FUSED_SOLVERS if method != "rk4-cuda"))
+@pytest.mark.parametrize("method", ("rk4-fdm-fused",))
 def test_fused_solver_rejects_no_reservoir_at_validation(method):
     cfg = config(method, "none")
     with pytest.raises(SolverCompatibilityError, match="reservoir_type='none'"):

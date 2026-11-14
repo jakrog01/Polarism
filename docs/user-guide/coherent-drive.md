@@ -59,5 +59,8 @@ solver:
 The profile and envelope use the same [registries](profiles-and-envelopes.md)
 as spatial potentials and profile lasers. `drive` is a static result field
 containing $|F_0p(\mathbf r)e^{i\mathbf k\cdot\mathbf r}|$ when enabled.
-`rk4-fdm`, `rk4-cuda`, `ip-rk4`, and `etd-rk2` support coherent drive. Other built-in
-solvers reject it during compatibility checking.
+`rk4-fdm`, `rk4-cuda`, `ip-rk4`, `etd-rk2`, `split-step-fft-cuda`,
+`ifrk-fft-cuda`, and `ifrk4-fft-cuda` support coherent drive. The CUDA
+split-step solver uses two source half-steps around its local condensate step,
+with the envelope sampled at `t + dt/2`. This is second order for a smooth
+envelope. The NumPy `split-step-fft` solver and `rk4-fdm-fused` reject drive.

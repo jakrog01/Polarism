@@ -104,7 +104,9 @@ solver's own accuracy.
 | `etd-rk2` | yes | added to the nonlinear right-hand side of predictor and corrector |
 | `split-step-fft` | yes | local factor `exp((G - iE/hbar) dt)` at `t + dt/2`, first order in `dt` for field-dependent terms |
 | `rk4-cuda` | with a `cuda` snippet | coefficient expression fused into each CUDA RK stage |
-| `rk4-fdm-fused`, `split-step-fft-cuda`, `ifrk-fft-cuda`, `ifrk4-fft-cuda` | no | rejected at validation |
+| `split-step-fft-cuda` | with a CUDA snippet | local factor after the core step |
+| `ifrk-fft-cuda`, `ifrk4-fft-cuda` | with a CUDA snippet | evaluated at each RK stage |
+| `rk4-fdm-fused` | no | rejected at validation |
 
 A plugin solver that integrates with `model.rhs` supports terms automatically.
 A solver with its own kernels reads `model.terms` and declares

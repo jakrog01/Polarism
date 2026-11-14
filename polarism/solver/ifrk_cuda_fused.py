@@ -157,6 +157,18 @@ def fused_source(real, model, eta, stages, fields, spatial_index, pump_index,
     source = _SOURCE.format(real=real, model=model, eta=eta, stages=stages,
                             fields=fields, spatial_index=spatial_index,
                             pump_index=pump_index, sincos=sincos)
+    if model == 3:
+        source = source.replace("    real active = res0[k];",
+                                "    real active = (real)0;")
+        source = source.replace("    real inactive = MODEL == 0 ? (real)0 : res0[n+k];",
+                                "    real inactive = (real)0;")
+        start = source.index("    for (int j = 0; j < stage; ++j)",
+                             source.index('extern "C" __global__ void stage_rhs('))
+        end = source.index("    real pre =", start)
+        source = source[:start] + source[end:]
+        start = source.index("    real source = scales[scale_index]")
+        end = source.index('\n}', start)
+        source = source[:start] + source[end:]
     if stage0_direct:
         source = source.replace(
             "    real pre = psi[2*k], pim = psi[2*k+1];",
@@ -201,6 +213,78 @@ def fused_source(real, model, eta, stages, fields, spatial_index, pump_index,
     return _stage_finish_source(source, True) if finish_in_stage else source
 
 
+def _feature_source(source, real, terms, varying_potential, drive, batched):
+    declarations = []
+    if varying_potential:
+        declarations.extend(("const real* cap_re", "const real* cap_im"))
+    if drive:
+        declarations.extend(("const real* drive_re", "const real* drive_im",
+                             "const real* drive_energy"))
+    if terms:
+        declarations.extend(("const real* x_coords", "const real* y_coords"))
+    loads = []
+    for number, term in enumerate(terms):
+        for ctype, name, *layout in term.cuda.arguments:
+            kind = layout[0] if layout else "raw"
+            kernel_name = f"term_{number}_{name}"
+            concrete = ctype.replace("{REAL}", real)
+            if kind == "raw":
+                declarations.append(f"{concrete} {kernel_name}")
+            else:
+                declarations.append(f"{concrete} {kernel_name}_arg")
+                item_type = concrete.replace("const", "").replace("*", "").strip()
+                index = "cell" if kind == "shared" else "k"
+                loads.append(f"    {item_type} {kernel_name} = {kernel_name}_arg[{index}];\n")
+    declarations.extend(("const real* feature_values", "int feature_index",
+                         "int feature_members", "int feature_vr_n",
+                         "int feature_vi_n"))
+    start = source.index('extern "C" __global__ void stage_rhs(')
+    end = source.index(") {", start)
+    source = source[:end] + ",\n    " + ", ".join(declarations) + source[end:]
+    stage_start = source.index("    real energy =", start)
+    local = ("    int cell = k % spatial_n, member = k / spatial_n;\n"
+             "    int feature_offset = (feature_index*feature_members+member)*3;\n"
+             "    real potential_scale = feature_values[feature_offset];\n"
+             "    real drive_scale = feature_values[feature_offset+1];\n"
+             "    real t_stage = feature_values[feature_offset+2];\n")
+    if terms:
+        local += ("    real n_active = active, n_inactive = inactive;\n"
+                  "    real x = x_coords[cell], y = y_coords[cell];\n")
+        local += "".join(loads)
+    source = source[:stage_start] + local + source[stage_start:]
+    energy_extras = []
+    rate_extras = []
+    for number, term in enumerate(terms):
+        expression = term.cuda.expression
+        for argument in term.cuda.arguments:
+            expression = re.sub(rf"\b{argument[1]}\b", f"term_{number}_{argument[1]}", expression)
+        (energy_extras if term.category == "energy" else rate_extras).append(f"({expression})")
+    energy_line = re.search(r"(?m)^    real energy = (.*);$", source)
+    gain_line = re.search(r"(?m)^    real gain = (.*);$", source)
+    energy = energy_line.group(1)
+    gain = gain_line.group(1)
+    if varying_potential:
+        energy = re.sub(r"vr\[[^]]+\]",
+                        "(vr[k % feature_vr_n]*potential_scale+cap_re[k])", energy)
+        gain = re.sub(r"vi\[[^]]+\]",
+                      "(vi[k % feature_vi_n]*potential_scale+cap_im[k])", gain)
+    if drive:
+        energy += " - drive_energy[k]"
+    if energy_extras:
+        energy += " + " + " + ".join(energy_extras)
+    if rate_extras:
+        gain += " + " + " + ".join(rate_extras)
+    source = source[:energy_line.start()] + f"    real energy = {energy};" + source[energy_line.end():]
+    gain_line = re.search(r"(?m)^    real gain = (.*);$", source)
+    source = source[:gain_line.start()] + f"    real gain = {gain};" + source[gain_line.end():]
+    if drive:
+        anchor = "    rhs[2*k] = out_re;"
+        source = source.replace(anchor,
+            "    out_re += inv_hbar*drive_scale*drive_im[k];\n"
+            "    out_im -= inv_hbar*drive_scale*drive_re[k];\n" + anchor, 1)
+    return source
+
+
 class FusedIFRK:
     """Own fixed tableau coefficients, stage storage, and cuFFT plans."""
 
@@ -208,6 +292,13 @@ class FusedIFRK:
         from cupyx.scipy import fft
 
         self.solver = solver
+        self.model = solver._model_features
+        self._has_features = bool(self.model.terms or self.model.drive is not None or
+                                  self.model.time_dependent_potential)
+        for term in self.model.terms:
+            if term.cuda is None:
+                raise ValueError(f"Term {type(term).__name__} has no CUDA snippet")
+        self._noise = self.model.noise if self.model.noise is not None and self.model.noise.active else None
         self.xp = solver.xp
         self.fft = fft
         self.ndim = grid.ndim
@@ -261,17 +352,25 @@ class FusedIFRK:
         self._graphs_failed = False
         self._potential_cached = None
         self._zero_pump = self.xp.zeros(self.shape, dtype=self.real)
+        self._zero_res = self.xp.zeros(self.shape, dtype=self.real)
+        self._feature_static = ()
+        self._feature_buffer = None
+        self._noise_step_base = (self.xp.zeros(1, dtype=self.xp.uint64)
+                                 if self._noise is not None else None)
+        if self._has_features:
+            self._prepare_features()
 
     def _model(self, reservoir):
         from polarism.reservoir.single_reservoir import SingleReservoir
         from polarism.reservoir.double_reservoir import DoubleReservoir
         from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
+        from polarism.reservoir.no_reservoir import NoReservoir
 
         models = {SingleReservoir: (0, 1), DoubleReservoir: (1, 2),
-                  QuadraticDoubleReservoir: (2, 2)}
+                  QuadraticDoubleReservoir: (2, 2), NoReservoir: (3, 0)}
         if type(reservoir) not in models:
             return None
-        if any(reservoir.batch_physics.any_nonzero(name) for name in
+        if type(reservoir) is not NoReservoir and any(reservoir.batch_physics.any_nonzero(name) for name in
                ("reservoir_diffusion_R", "reservoir_diffusion_A", "reservoir_diffusion_I")):
             return None
         return models[type(reservoir)]
@@ -293,6 +392,73 @@ class FusedIFRK:
             self.vr, self.vi = vr, vi
             self._potential_cached = potential
 
+    def _prepare_features(self):
+        xp = self.xp
+        model = self.model
+        arrays = []
+        if model.time_dependent_potential:
+            cap = xp.broadcast_to(xp.asarray(model.cap), self.shape)
+            arrays.extend((self._array(xp.real(cap), self.real).ravel(),
+                           self._array(xp.imag(cap), self.real).ravel()))
+        if model.drive is not None:
+            drive = xp.broadcast_to(xp.asarray(model.drive.spatial), self.shape)
+            energy = xp.broadcast_to(xp.asarray(model.drive.energy), self.shape)
+            arrays.extend((self._array(xp.real(drive), self.real).ravel(),
+                           self._array(xp.imag(drive), self.real).ravel(),
+                           self._array(energy, self.real).ravel()))
+        if model.terms:
+            arrays.extend((self._array(model.grid.X, self.real).ravel(),
+                           self._array(model.grid.Y, self.real).ravel()
+                           if model.grid.ndim == 2 else xp.zeros(self.spatial_n, self.real)))
+        for term in model.terms:
+            values = term.cuda_values()
+            for ctype, name, *layout in term.cuda.arguments:
+                value = values[name]
+                if "*" in ctype:
+                    dtype = (xp.uint64 if "long long" in ctype else
+                             xp.uint32 if "unsigned int" in ctype else
+                             xp.int32 if "int" in ctype else
+                             xp.float64 if "double" in ctype else
+                             xp.float32 if "float" in ctype else self.real)
+                    arrays.append(self._array(value, dtype).ravel())
+                elif "int" in ctype:
+                    arrays.append(np.int32(value))
+                else:
+                    arrays.append(np.float64(value) if "double" in ctype else
+                                  np.float32(value) if "float" in ctype else self.scalar(value))
+        self._feature_static = tuple(arrays)
+        self._feature_buffer = xp.empty(64 * len(self.unique_c) * (self.n // self.spatial_n) * 3,
+                                        self.real)
+
+    def _feature_values(self, times, stream=None):
+        members = self.n // self.spatial_n
+        values = np.empty((len(times), members, 3), dtype=self.scalar)
+        def sample(value):
+            host = np.asarray(value.get() if hasattr(value, "get") else value)
+            return np.broadcast_to(host.reshape(-1), (members,))
+        for index, time in enumerate(times):
+            values[index, :, 0] = (sample(self.model.potential_envelope(time))
+                                   if self.model.time_dependent_potential else 1)
+            values[index, :, 1] = (sample(self.model.drive.envelope(time))
+                                   if self.model.drive is not None else 0)
+            values[index, :, 2] = time
+        self._feature_buffer[:values.size].set(values.ravel(), stream=stream)
+        return values
+
+    def _noise_kernel(self, graph):
+        if not graph:
+            return self._noise._kernel
+        if not hasattr(self, "_noise_graph"):
+            from polarism.noise.philox import cuda_source
+            source = cuda_source(self.solver._precision).replace(
+                "unsigned long long step, int spatial_n, int total_n,",
+                "const unsigned long long* step_base, unsigned int step_offset, int spatial_n, int total_n,")
+            source = source.replace("    unsigned int b = (unsigned int)step;",
+                                    "    unsigned long long step = step_base[0] + step_offset;\n"
+                                    "    unsigned int b = (unsigned int)step;")
+            self._noise_graph = self.xp.RawKernel(source, f"add_wigner_{self.solver._precision}")
+        return self._noise_graph
+
     def _ensure(self, model):
         xp = self.xp
         from cupy.cuda import cufft
@@ -311,7 +477,7 @@ class FusedIFRK:
         stage0_direct = (self._batched and not self.eta
                          and self.solver._c[0] == 0
                          and all(value == 0 for value in self.solver._a[0]))
-        finish_in_stage = self._batched
+        finish_in_stage = self._batched and model_id != 3
         spec = tuple(xp.empty(self.shape, self.complex) for _ in range(2))
         res = tuple(xp.empty((fields, *self.shape), self.real) for _ in range(2))
         f = xp.empty((self.s, *self.shape), self.complex)
@@ -330,6 +496,11 @@ class FusedIFRK:
                               physics_fields=self._physics_fields,
                               stage0_direct=stage0_direct,
                               finish_in_stage=finish_in_stage)
+        if self._has_features:
+            source = _feature_source(source,
+                                     "float" if self.real == xp.float32 else "double",
+                                     self.model.terms, self.model.time_dependent_potential,
+                                     self.model.drive is not None, self._batched)
         module = xp.RawModule(code=source, options=("--std=c++11",))
         kernels = {name: module.get_function(name)
                    for name in ("combine_k", "stage_rhs", "finish_res")}
@@ -383,7 +554,7 @@ class FusedIFRK:
         return [samples[i] for i in self.c_index], [1] * len(samples), None, None
 
     def _run_into(self, spectrum_in, res_in, spectrum_out, res_out,
-                  pumps, scales, scale_base):
+                  pumps, scales, scale_base, noise_step=None, graph_noise=False):
         from cupy.cuda import cufft
 
         _, _, f, dr, stage_k, stage_psi, lap_k, lap_psi, rhs = self._buffers
@@ -416,17 +587,35 @@ class FusedIFRK:
                 scalar(p.gamma_A), scalar(p.R_IA), scalar(p.R_AI),
                 scalar(p.kappa), scalar(p.kinetic_relaxation_eta))
                 + ((np.int32(self.vr.size), np.int32(self.vi.size)) + self._physics_arg
-                   if self._physics_fields else ()) + finish_args)
+                   if self._physics_fields else ()) + finish_args
+                + ((*self._feature_static, self._feature_buffer,
+                    np.int32(scale_base + self.c_index[i]),
+                    np.int32(self.n // self.spatial_n), np.int32(self.vr.size),
+                    np.int32(self.vi.size)) if self._has_features else ()))
             self._plan.fft(rhs, f[i], cufft.CUFFT_FORWARD)
         self._kernels["combine_k"](launch, block, (
             spectrum_in.view(self.real).ravel(), f.view(self.real).ravel(), self.k2,
             self.a, self.b, self.c, spectrum_out.view(self.real).ravel(),
             lap_k.view(self.real).ravel(), np.int32(self.n), np.int32(self.spatial_n), np.int32(self.s),
             self.dt, self.rate) + self._physics_arg)
-        if not self._finish_in_stage:
+        if not self._finish_in_stage and res_in.shape[0]:
             self._kernels["finish_res"](((self.n*res_in.shape[0]+255)//256,), block, (
                 res_in.ravel(), dr.ravel(), self.b, res_out.ravel(),
                 np.int32(self.n), self.dt))
+        if self._noise is not None and noise_step is not None:
+            xp = self.xp
+            xp.multiply(spectrum_out, self.scalar(1 / self.spatial_n), out=stage_k)
+            self._plan.fft(stage_k, stage_psi, cufft.CUFFT_INVERSE)
+            active = res_out[0] if res_out.shape[0] else self._zero_res
+            noise_args = (stage_psi.view(self.real).ravel(), active.ravel(),
+                          self._noise._device_seeds, self._noise._device_gamma,
+                          self._noise._device_scattering, self._noise._device_strength)
+            noise_args += ((self._noise_step_base, np.uint32(noise_step)) if graph_noise
+                           else (np.uint64(noise_step),))
+            noise_args += (np.int32(self.spatial_n), np.int32(self.n),
+                           self.scalar(self._noise.dt / (4.0 * self._noise.volume)))
+            self._noise_kernel(graph_noise)(launch, block, noise_args)
+            self._plan.fft(stage_psi, spectrum_out, cufft.CUFFT_FORWARD)
 
     def _copy_in(self, state, reservoir):
         xp = self.xp
@@ -460,13 +649,17 @@ class FusedIFRK:
             self._model_id = None
             self._buffer_shape = None
             self._zero_pump = None
+            self._zero_res = self.xp.zeros(self.shape, self.real)
+            if getattr(self, "_has_features", False):
+                self._prepare_features()
             self._potential_cached = None
             self.vr = self.vi = None
         if self._zero_pump is None:
             self._zero_pump = self.xp.zeros(self.shape, dtype=self.real)
 
     def step(self, physical_model, state):
-        potential = physical_model.potential
+        potential = (physical_model.potential_static if physical_model.time_dependent_potential
+                     else physical_model.potential)
         pump = physical_model.pump
         reservoir = physical_model.reservoir
         boundary_condition = physical_model.boundary
@@ -476,6 +669,8 @@ class FusedIFRK:
         self._potential(potential)
         pumps, factors, _, _ = self._pump(pump, state.t)
         scales = self.xp.asarray(factors, dtype=self.real)
+        if self._has_features:
+            self._feature_values([state.t + c * self.host_dt for c in self.unique_c])
         self._copy_in(state, reservoir)
         spec, res = self._buffers[:2]
         self._run_into(spec[0], res[0], spec[1], res[1], pumps, scales, 0)
@@ -497,6 +692,8 @@ class FusedIFRK:
         stream = self._stream
         spec, res = self._buffers[:2]
         pumps = [pump_flat] * self.s
+        if self._noise is not None:
+            self._noise_kernel(True).compile()
         stream.synchronize()
         with stream:
             stream.begin_capture()
@@ -509,7 +706,7 @@ class FusedIFRK:
                     self._run_into(spec[k % 2], res[k % 2],
                                    spec[(k + 1) % 2], res[(k + 1) % 2],
                                    pumps, self._graph_scales.ravel(),
-                                   k * len(self.unique_c))
+                                   k * len(self.unique_c), k, True)
                 graph = stream.end_capture()
             except Exception:
                 try:
@@ -523,7 +720,8 @@ class FusedIFRK:
         return graph
 
     def advance(self, physical_model, state, n_steps):
-        potential = physical_model.potential
+        potential = (physical_model.potential_static if physical_model.time_dependent_potential
+                     else physical_model.potential)
         pump = physical_model.pump
         reservoir = physical_model.reservoir
         boundary_condition = physical_model.boundary
@@ -564,7 +762,7 @@ class FusedIFRK:
                         and self.solver._can_skip_after_step(boundary_condition))
             pending_hosts = []
             if graph_ok:
-                nodes_per_step = ((4 + int(self.eta))*self.s + 2
+                nodes_per_step = ((4 + int(self.eta))*self.s + 2 + 4*int(self._noise is not None)
                                   - int(self._stage0_direct) - int(self._finish_in_stage)
                                   + (len(self.unique_c) if multi else 0))
                 max_length = max(2, min(64, (1800 // nodes_per_step) // 2 * 2))
@@ -584,6 +782,12 @@ class FusedIFRK:
                         host = host.reshape(length, len(self.unique_c))
                         pending_hosts.append(host)
                         self._graph_scales[:length].set(host, stream=stream)
+                        if self._has_features:
+                            pending_hosts.append(self._feature_values(times, stream))
+                        if self._noise is not None:
+                            host_step = np.asarray([start_step + done], dtype=np.uint64)
+                            pending_hosts.append(host_step)
+                            self._noise_step_base.set(host_step, stream=stream)
                         graph.launch(stream=stream)
                         done += length
                         if len(pending_hosts) >= 32:
@@ -609,9 +813,12 @@ class FusedIFRK:
                 else:
                     stage_pumps, factors, _, _ = self._pump(pump, t)
                 scales = xp.asarray(factors, dtype=self.real)
+                if self._has_features:
+                    pending_hosts.append(self._feature_values(
+                        [t + c * self.host_dt for c in self.unique_c], stream))
                 parity = (k-done) % 2
                 self._run_into(spec[parity], res[parity], spec[1-parity],
-                               res[1-parity], stage_pumps, scales, 0)
+                               res[1-parity], stage_pumps, scales, 0, start_step + k)
                 if len(pending_hosts) >= 32:
                     stream.synchronize()
                     pending_hosts.clear()

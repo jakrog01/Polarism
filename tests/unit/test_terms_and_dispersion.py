@@ -19,8 +19,8 @@ from polarism.sweep_config import apply_overrides, override_kind
 
 TERM_SOLVERS = ("rk4-fdm", "rk4-cuda", "ip-rk4", "etd-rk2", "split-step-fft")
 SPECTRAL_SOLVERS = ("split-step-fft", "ip-rk4", "etd-rk2")
-NO_TERM_SOLVERS = ("rk4-fdm-fused", "split-step-fft-cuda", "ifrk-fft-cuda", "ifrk4-fft-cuda")
-PARABOLIC_ONLY_SOLVERS = ("rk4-fdm",) + NO_TERM_SOLVERS
+NO_TERM_SOLVERS = ("rk4-fdm-fused",)
+PARABOLIC_ONLY_SOLVERS = ("rk4-fdm", "split-step-fft-cuda", "ifrk-fft-cuda", "ifrk4-fft-cuda") + NO_TERM_SOLVERS
 LOSS_RTOL = {"rk4-fdm": 1e-8, "rk4-cuda": 1e-8, "ip-rk4": 1e-8, "etd-rk2": 1e-4, "split-step-fft": 5e-3}
 SHIFT_ATOL = {"rk4-fdm": 1e-8, "rk4-cuda": 1e-8, "ip-rk4": 1e-8, "etd-rk2": 1e-6, "split-step-fft": 1e-8}
 

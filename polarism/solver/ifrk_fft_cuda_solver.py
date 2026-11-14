@@ -24,17 +24,18 @@ class IFRKFFTCudaSolver(AbstractSolver):
     """Stage-coupled spectral Lawson RK with a CPU and plugin-compatible path."""
     capabilities = SolverCapabilities(
         components=frozenset({1}), ndim=frozenset({1, 2}),
-        grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double"}),
+        grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         custom_reservoirs="quantitative", potential=True,
-        kinetic_relaxation=True, dispersion=frozenset({"parabolic"}), terms=False,
-        coherent_drive=False, time_dependent_potential=False,
+        kinetic_relaxation=True, dispersion=frozenset({"parabolic"}), terms=True,
+        coherent_drive=True, time_dependent_potential=True,
         noise=frozenset({"none", "wigner"}),
-        quantitative_reservoirs=frozenset({"single", "double", "quadratic-double"}),
+        quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         description='FFT interaction-picture RK solver with selectable tableau. Stage-coupled reservoir and cuFFT fused stages for supported GPU cases. Evaluates kinetic_relaxation_eta in nonlinear RHS. Spectral production path for periodic grids; use a wide CAP absorber for open boundaries.',
     )
 
     def __init__(self, config: Config, grid: SimulationGrid, model) -> None:
         super().__init__(config, grid, model)
+        self._model_features = model
         self._ndim = grid.ndim
         self._fft = self.xp.fft.fft if grid.ndim == 1 else self.xp.fft.fft2
         self._ifft = self.xp.fft.ifft if grid.ndim == 1 else self.xp.fft.ifft2
@@ -110,6 +111,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
         f = []
         derivatives = []
         for i, ci in enumerate(self._c):
+            stage_time = state.t + ci * h
             if i == 0 and psi0 is not None:
                 psi_i = psi0
                 psi_i_k = psi0_k
@@ -132,8 +134,14 @@ class IFRKFFTCudaSolver(AbstractSolver):
             res_i = tuple(res_i)
             rho = psi_i.real * psi_i.real + psi_i.imag * psi_i.imag
             if ci not in pump_at:
-                pump_at[ci] = evaluate_pump(pump, state.t + ci * h)
-            rhs = self._rhs_psi(psi_i, res_i, potential, reservoir, rho, psi_i_k)
+                pump_at[ci] = evaluate_pump(pump, stage_time)
+            stage_potential = (self._model_features.potential_at(stage_time)
+                               if self._model_features.time_dependent_potential else potential)
+            rhs = self._rhs_psi(psi_i, res_i, stage_potential, reservoir, rho, psi_i_k)
+            if self._model_features.terms:
+                rhs = rhs + self._model_features.extra_rhs(psi_i, res_i, stage_time)
+            if self._model_features.drive is not None:
+                rhs = rhs + self._model_features.drive_contribution(psi_i, stage_time)
             f.append(self._fft(rhs, **({"axis": -1} if self._ndim == 1 else {"axes": (-2, -1)})).astype(self._complex_dtype, copy=False))
             derivatives.append(reservoir.get_derivatives(psi_i, pump_at[ci], res_i, rho))
         psi_new_k = self._phase(1.0, h) * psi0_k
@@ -183,7 +191,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
         if n_steps <= 0:
             return
         fused = self._cuda(reservoir)
-        if fused is None or not self._can_skip_after_step(boundary_condition) or model.noise is not None:
+        if fused is None or not self._can_skip_after_step(boundary_condition):
             super().advance(model, state, n_steps)
         else:
             fused.advance(model, state, n_steps)

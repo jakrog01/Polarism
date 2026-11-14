@@ -68,14 +68,14 @@ def check_solver_compatibility(cfg) -> None:
             f"Solver '{solver}' does not support extra terms {sorted(cfg.terms)}. "
             f"Hint: {caps.description}"
         )
-    if solver == "rk4-cuda" and cfg.terms:
+    if solver in {"rk4-cuda", "split-step-fft-cuda", "ifrk-fft-cuda", "ifrk4-fft-cuda"} and cfg.terms:
         from polarism.model_terms import CudaSnippet, available_terms
 
         missing = [name for name in cfg.terms
                    if not isinstance(available_terms.lookup(name).cuda, CudaSnippet)]
         if missing:
             raise SolverCompatibilityError(
-                f"Solver 'rk4-cuda' requires a CUDA snippet for terms {missing}."
+                f"Solver '{solver}' requires a CUDA snippet for terms {missing}."
             )
     if cfg.drive.enabled and not caps.coherent_drive:
         raise SolverCompatibilityError(

@@ -18,6 +18,14 @@ their contributions evaluated at each RK stage. A device coefficient buffer
 holds potential and drive envelopes and stage times, so eligible graph chunks
 can replay with updated values.
 
+The spectral CUDA solvers keep their fused stepping paths with Wigner noise.
+They transform the completed field to real space, add the Philox increment
+using the completed active density and global step counter, then transform it
+back for the next step. Captured chunks update the counter base before each
+replay, including after checkpoint resume. This adds two cuFFT transforms per
+noisy step, so noise overhead depends on grid size and device; no GPU overhead
+measurement is available from the CPU-only test environment.
+
 `cfg.solver.precision` accepts `single` and `double` and defaults to `double`. The controller emits a one-time notice for double-precision runs on GPUs outside the high-throughput FP64 classes recognized by the code: compute capabilities 6.0 (P100), 7.0 (V100), 8.0 (A100), 9.0 (H100), and 10.0 (B200). Consumer GPUs often have reduced FP64 throughput. Compare accuracy and speed before switching to `single`.
 
 ## CUDA graph chunks

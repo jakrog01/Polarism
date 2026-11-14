@@ -105,8 +105,9 @@ extern "C" __global__ void local_step(
 
 def kernel_source(precision: str, model: str, batched: bool = False,
                   physics_fields=()) -> str:
-    """Render one of the eight precision/model CUDA variants for RawKernel or NVRTC."""
-    models = {"single": 0, "double": 1, "quadratic-double": 2, "nonlinear": 3}
+    """Render a precision and reservoir CUDA variant for RawKernel or NVRTC."""
+    models = {"single": 0, "double": 1, "quadratic-double": 2,
+              "nonlinear": 3, "none": 3}
     if precision not in {"single", "double"} or model not in models:
         raise ValueError(f"Invalid CUDA kernel variant: {precision}, {model}")
     source = _LOCAL_KERNEL.format(
@@ -117,6 +118,9 @@ def kernel_source(precision: str, model: str, batched: bool = False,
         p1_index="j % p1_n" if batched else "j",
         p2_index="j % p2_n" if batched else "j",
     )
+    if model == "none":
+        source = source.replace("    real a = a0[j], b = MODEL == 0 ? (real)0 : b0[j];",
+                                "    real a = (real)0, b = (real)0;")
     if not physics_fields:
         return source
     names = {"hbar": "inv_hbar", "g_C": "gC", "g_R": "gR", "g_I": "gI",
@@ -141,17 +145,99 @@ def kernel_source(precision: str, model: str, batched: bool = False,
     return head + "    if (j >= n) return;" + loads + body
 
 
+def _feature_source(source, real, batched, terms, varying_potential, drive):
+    declarations = []
+    if varying_potential:
+        declarations.extend(("const real* cap_re", "const real* cap_im"))
+    if drive:
+        declarations.extend(("const real* drive_re", "const real* drive_im",
+                             "const real* drive_energy"))
+    if terms:
+        declarations.extend(("const real* x_coords", "const real* y_coords"))
+    loads = []
+    for number, term in enumerate(terms):
+        for ctype, name, *layout in term.cuda.arguments:
+            kind = layout[0] if layout else "raw"
+            name_in_kernel = f"term_{number}_{name}"
+            type_in_kernel = ctype.replace("{REAL}", real)
+            if kind == "raw":
+                declarations.append(f"{type_in_kernel} {name_in_kernel}")
+            else:
+                declarations.append(f"{type_in_kernel} {name_in_kernel}_arg")
+                value_type = type_in_kernel.replace("const", "").replace("*", "").strip()
+                index = "cell" if kind == "shared" else "j"
+                loads.append(f"    {value_type} {name_in_kernel} = {name_in_kernel}_arg[{index}];\n")
+    declarations.extend(("const real* feature_values", "int feature_index",
+                         "int feature_members", "int feature_vr_n"))
+    start = source.index('extern "C" __global__ void local_step(')
+    end = source.index(") {", start)
+    source = source[:end] + ",\n    " + ", ".join(declarations) + source[end:]
+    local = ("    int cell = j % spatial_n;\n"
+             "    int member = j / spatial_n;\n"
+             "    int feature_offset = (feature_index*feature_members+member)*3;\n"
+             "    real potential_scale = feature_values[feature_offset];\n"
+             "    real drive_scale = feature_values[feature_offset+1];\n"
+             "    real t_stage = feature_values[feature_offset+2];\n")
+    if terms:
+        local += ("    real x = x_coords[cell], y = y_coords[cell];\n"
+                  "    real n_active = a, n_inactive = b;\n")
+        local += "".join(loads)
+    potential_index = "j % feature_vr_n"
+    local += (f"    real local_vr = vr[{potential_index}], "
+              f"local_vi = vi[{potential_index}];\n")
+    if varying_potential:
+        local += ("    local_vr = local_vr*potential_scale + cap_re[j];\n"
+                  "    local_vi = local_vi*potential_scale + cap_im[j];\n")
+    if drive:
+        local += "    local_vr -= drive_energy[j];\n"
+        local += ("    re += (real)0.5*dt*inv_hbar*drive_scale*drive_im[j];\n"
+                  "    im -= (real)0.5*dt*inv_hbar*drive_scale*drive_re[j];\n")
+    anchor = "    nonlinear(&re, &im, a, b, "
+    start = source.index(anchor)
+    end = source.index(";", start) + 1
+    source = source[:start] + local + ("    nonlinear(&re, &im, a, b, local_vr, local_vi, "
+              "vi_scale, dt,\n        inv_hbar, gC, gR, gI, R, gammaC);") + source[end:]
+    insert = ""
+    if terms:
+        insert += "    real pre = re, pim = im, rho = pre*pre+pim*pim;\n"
+        for category in ("energy", "rate"):
+            expressions = []
+            for number, term in enumerate(terms):
+                if term.category != category:
+                    continue
+                expression = term.cuda.expression
+                for argument in term.cuda.arguments:
+                    expression = re.sub(rf"\b{argument[1]}\b",
+                                        f"term_{number}_{argument[1]}", expression)
+                expressions.append(f"({expression})")
+            if expressions:
+                insert += f"    real extra_{category} = " + " + ".join(expressions) + ";\n"
+        energy = "extra_energy" if any(term.category == "energy" for term in terms) else "(real)0"
+        rate = "extra_rate" if any(term.category == "rate" for term in terms) else "(real)0"
+        insert += (f"    real extra_amp = exp({rate}*dt);\n"
+                   f"    real extra_phase = {energy}*inv_hbar*dt;\n"
+                   "    real extra_s, extra_c;\n"
+                   "    sincos(extra_phase, &extra_s, &extra_c);\n"
+                   "    re = extra_amp*(pre*extra_c+pim*extra_s);\n"
+                   "    im = extra_amp*(pim*extra_c-pre*extra_s);\n")
+    if drive:
+        insert += ("    re += (real)0.5*dt*inv_hbar*drive_scale*drive_im[j];\n"
+                   "    im -= (real)0.5*dt*inv_hbar*drive_scale*drive_re[j];\n")
+    location = source.index("\n#if MODEL != 3\n    half_step", source.index("    nonlinear(&re"))
+    return source[:location] + "\n" + insert.rstrip() + source[location:]
+
+
 @register_solver("split-step-fft-cuda")
 class SplitStepFFTCudaSolver(AbstractSolver):
     """K-outer Strang split with two planned cuFFT transforms per step."""
     capabilities = SolverCapabilities(
         components=frozenset({1}), ndim=frozenset({1, 2}),
-        grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double"}),
+        grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         custom_reservoirs="quantitative", potential=True,
-        kinetic_relaxation=False, dispersion=frozenset({"parabolic"}), terms=False,
-        coherent_drive=False, time_dependent_potential=False,
+        kinetic_relaxation=False, dispersion=frozenset({"parabolic"}), terms=True,
+        coherent_drive=True, time_dependent_potential=True,
         noise=frozenset({"none", "wigner"}),
-        quantitative_reservoirs=frozenset({"single", "double", "quadratic-double"}),
+        quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         description='GPU-only, two-transform spectral Strang splitting with symmetric reservoir half-steps. Periodic grids only; no kinetic relaxation.',
     )
 
@@ -174,6 +260,16 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         self._real_dtype = real_dtype(self.xp, self._precision)
         self._complex_dtype = complex_dtype(self.xp, self._precision)
         self._scalar = np.float32 if self._precision == "single" else np.float64
+        self._model_features = model
+        self._has_features = bool(model.terms or model.drive is not None or
+                                  model.time_dependent_potential)
+        for term in model.terms:
+            if term.cuda is None:
+                raise ValueError(f"Term {type(term).__name__} has no CUDA snippet")
+        self._feature_static = ()
+        self._feature_buffer = None
+        self._noise = model.noise if model.noise is not None and model.noise.active else None
+        self._noise_step_base = None
         kernel_fields = ("hbar", "g_C", "g_R", "g_I", "R", "gamma_C", "gamma_R",
                          "gamma_I", "gamma_A", "R_IA", "R_AI", "kappa")
         self._physics_fields = tuple(name for name in kernel_fields
@@ -222,6 +318,11 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         self._graph_cache = {}
         self._graph_signature = None
         self._graphs_failed = False
+        self._zero_res = self.xp.zeros(self._shape, self._real_dtype)
+        if self._has_features:
+            self._prepare_features()
+        if self._noise is not None:
+            self._noise_step_base = self.xp.zeros(1, dtype=self.xp.uint64)
 
     def _plan(self, array):
         key = (array.shape, array.dtype.str, int(self.xp.cuda.runtime.getDevice()))
@@ -243,16 +344,115 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                 im = self._flat_gpu_input(self.xp.imag(potential), self._real_dtype)
                 scale = self._scalar(1)
             else:
-                im, scale = re, self._scalar(0)
+                im, scale = (self.xp.zeros_like(re), self._scalar(1)) if self._model_features.time_dependent_potential else (re, self._scalar(0))
             self._potential_buffers = (re, im, scale)
             self._potential_cached = potential
         return self._potential_buffers
+
+    def _prepare_features(self):
+        model = self._model_features
+        xp = self.xp
+        shape = self._shape
+        spatial = self._spatial_n
+        arrays = []
+        if model.time_dependent_potential:
+            cap = xp.broadcast_to(xp.asarray(model.cap), shape)
+            arrays.extend((self._flat_gpu_input(xp.real(cap), self._real_dtype),
+                           self._flat_gpu_input(xp.imag(cap), self._real_dtype)))
+        if model.drive is not None:
+            drive = xp.broadcast_to(xp.asarray(model.drive.spatial), shape)
+            energy = xp.broadcast_to(xp.asarray(model.drive.energy), shape)
+            arrays.extend((self._flat_gpu_input(xp.real(drive), self._real_dtype),
+                           self._flat_gpu_input(xp.imag(drive), self._real_dtype),
+                           self._flat_gpu_input(energy, self._real_dtype)))
+        if model.terms:
+            arrays.extend((self._flat_gpu_input(xp.asarray(model.grid.X), self._real_dtype),
+                           self._flat_gpu_input(xp.asarray(model.grid.Y), self._real_dtype)
+                           if model.grid.ndim == 2 else xp.zeros(spatial, self._real_dtype)))
+        for term in model.terms:
+            values = term.cuda_values()
+            for ctype, name, *layout in term.cuda.arguments:
+                value = values[name]
+                if "*" in ctype:
+                    dtype = (xp.uint64 if "long long" in ctype else
+                             xp.uint32 if "unsigned int" in ctype else
+                             xp.int32 if "int" in ctype else
+                             xp.float64 if "double" in ctype else
+                             xp.float32 if "float" in ctype else self._real_dtype)
+                    arrays.append(xp.ascontiguousarray(value, dtype=dtype).ravel())
+                elif "int" in ctype:
+                    arrays.append(np.int32(value))
+                else:
+                    arrays.append(np.float64(value) if "double" in ctype else
+                                  np.float32(value) if "float" in ctype else self._scalar(value))
+        self._feature_static = tuple(arrays)
+        self._feature_buffer = xp.empty(64 * (self._n // spatial) * 3, self._real_dtype)
+
+    def _feature_values(self, times, stream=None):
+        model = self._model_features
+        members = self._n // self._spatial_n
+        values = np.empty((len(times), members, 3), dtype=self._scalar)
+        def sample(value):
+            host = np.asarray(value.get() if hasattr(value, "get") else value)
+            return np.broadcast_to(host.reshape(-1), (members,))
+        for index, time in enumerate(times):
+            values[index, :, 0] = (sample(model.potential_envelope(time))
+                                   if model.time_dependent_potential else 1)
+            values[index, :, 1] = (sample(model.drive.envelope(time))
+                                   if model.drive is not None else 0)
+            values[index, :, 2] = time
+        self._feature_buffer[:values.size].set(values.ravel(), stream=stream)
+        return values
+
+    def _source(self, model, graph=False):
+        source = kernel_source(self._precision, model, self._batched, self._physics_fields)
+        if graph:
+            source = source.replace("real scale1, real scale2, real vi_scale,",
+                                    "const real* scales, int scale_index, real vi_scale,")
+            source = source.replace("scale1", "scales[scale_index]")
+            source = source.replace("scale2", "scales[scale_index+1]")
+        if self._has_features:
+            source = _feature_source(source, "float" if self._precision == "single" else "double",
+                                     self._batched, self._model_features.terms,
+                                     self._model_features.time_dependent_potential,
+                                     self._model_features.drive is not None)
+        return source
+
+    def _noise_kernel(self, graph):
+        if not graph:
+            return self._noise._kernel
+        if not hasattr(self, "_noise_graph"):
+            from polarism.noise.philox import cuda_source
+            source = cuda_source(self._precision).replace(
+                "unsigned long long step, int spatial_n, int total_n,",
+                "const unsigned long long* step_base, unsigned int step_offset, int spatial_n, int total_n,")
+            source = source.replace("    unsigned int b = (unsigned int)step;",
+                                    "    unsigned long long step = step_base[0] + step_offset;\n"
+                                    "    unsigned int b = (unsigned int)step;")
+            self._noise_graph = self.xp.RawKernel(source, f"add_wigner_{self._precision}")
+        return self._noise_graph
+
+    def _apply_fused_noise(self, spectrum, local, active, step, graph=False):
+        from cupy.cuda import cufft
+        xp = self.xp
+        plan = self._advance_plan
+        xp.multiply(spectrum, self._half_normalized, out=self._advance_buffers[4])
+        plan.fft(self._advance_buffers[4], local, cufft.CUFFT_INVERSE)
+        args = (local.view(self._real_dtype).ravel(), active.ravel(),
+                self._noise._device_seeds, self._noise._device_gamma,
+                self._noise._device_scattering, self._noise._device_strength)
+        args += ((self._noise_step_base, np.uint32(step)) if graph else (np.uint64(step),))
+        args += (np.int32(self._spatial_n), np.int32(self._n),
+                 self._scalar(self._noise.dt / (4.0 * self._noise.volume)))
+        self._noise_kernel(graph)(((self._n + 255) // 256,), (256,), args)
+        plan.fft(local, spectrum, cufft.CUFFT_FORWARD)
+        xp.multiply(spectrum, self._conj_half, out=spectrum)
 
     def _kernel(self, model):
         key = (model, self._batched)
         if key not in self._kernel_cache:
             self._kernel_cache[key] = self.xp.RawKernel(
-                kernel_source(self._precision, model, key[1], self._physics_fields), "local_step",
+                self._source(model), "local_step",
                 options=("--std=c++11",),
             )
         return self._kernel_cache[key]
@@ -283,12 +483,14 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         return ((field, field), tuple(self._scalar(coefficient(time)) for time in times))
 
     def _launch(self, model, psi, fields, potential, pumps, scales):
-        a = self._flat_gpu_input(fields[0], self._real_dtype)
+        a = self._flat_gpu_input(fields[0], self._real_dtype) if fields else self._zero_res.ravel()
         b = self._flat_gpu_input(fields[1], self._real_dtype) if len(fields) > 1 else a
         vr, vi, vi_scale = self._potential(potential)
+        if self._model_features.time_dependent_potential:
+            vi_scale = self._scalar(1)
         out = self.xp.empty_like(psi)
-        out_a = self.xp.empty_like(a) if model != "nonlinear" else a
-        out_b = self.xp.empty_like(b) if model not in {"single", "nonlinear"} else b
+        out_a = self.xp.empty_like(a) if model not in {"nonlinear", "none"} else a
+        out_b = self.xp.empty_like(b) if model not in {"single", "nonlinear", "none"} else b
         p = self.config.physics
         scalar = self._scalar
         args = (psi.ravel().view(self._real_dtype), a, b, vr, vi, pumps[0], pumps[1],
@@ -300,14 +502,20 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                 scalar(p.gamma_A), scalar(p.R_IA), scalar(p.R_AI), scalar(p.kappa))
         if self._physics_fields:
             args += (np.int32(vr.size), self._physics_device)
+        if self._has_features:
+            self._feature_values((self._launch_time + self.config.solver.dt / 2,))
+            args += (*self._feature_static, self._feature_buffer, np.int32(0),
+                     np.int32(self._n // self._spatial_n), np.int32(vr.size))
         self._kernel(model)(((self._n + 255) // 256,), (256,), args)
         return out, tuple(x.reshape(self._shape) for x in (out_a, out_b)[:len(fields)])
 
     def _launch_into(self, model, psi, fields, potential, pumps, scales,
                      out, out_fields, graph_scales=None, scale_index=0):
-        a = fields[0]
+        a = fields[0] if fields else self._zero_res
         b = fields[1] if len(fields) > 1 else a
         vr, vi, vi_scale = self._potential(potential)
+        if self._model_features.time_dependent_potential:
+            vi_scale = self._scalar(1)
         p = self.config.physics
         scalar = self._scalar
         if graph_scales is None:
@@ -319,8 +527,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         args = (
             psi.ravel().view(self._real_dtype), a.ravel(), b.ravel(),
             vr, vi, pumps[0], pumps[1], out.ravel().view(self._real_dtype),
-            out_fields[0].ravel(),
-            out_fields[1].ravel() if len(fields) > 1 else out_fields[0].ravel(),
+            out_fields[0].ravel() if fields else self._zero_res.ravel(),
+            out_fields[1].ravel() if len(fields) > 1 else
+            out_fields[0].ravel() if fields else self._zero_res.ravel(),
             np.int32(self._n), np.int32(self._spatial_n),
             np.int32(pumps[0].size), np.int32(pumps[1].size), *scale_args, vi_scale, scalar(self.config.solver.dt),
             scalar(1 / p.hbar), scalar(p.g_C), scalar(p.g_R), scalar(p.g_I),
@@ -329,6 +538,10 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         )
         if self._physics_fields:
             args += (np.int32(vr.size), self._physics_device)
+        if self._has_features:
+            args += (*self._feature_static, self._feature_buffer,
+                     np.int32(scale_index // 2 if graph_scales is not None else 0),
+                     np.int32(self._n // self._spatial_n), np.int32(vr.size))
         kernel(((self._n + 255) // 256,), (256,), args)
 
     def _graph_kernel(self, model):
@@ -336,13 +549,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             self._graph_kernel_cache = {}
         key = (model, self._batched)
         if key not in self._graph_kernel_cache:
-            source = kernel_source(self._precision, model, key[1], self._physics_fields)
-            source = source.replace(
-                "real scale1, real scale2, real vi_scale,",
-                "const real* scales, int scale_index, real vi_scale,",
-            )
-            source = source.replace("scale1", "scales[scale_index]")
-            source = source.replace("scale2", "scales[scale_index+1]")
+            source = self._source(model, graph=True)
             kernel = self.xp.RawKernel(source, "local_step", options=("--std=c++11",))
             kernel.compile()
             self._graph_kernel_cache[key] = kernel
@@ -405,6 +612,8 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         plan = self._advance_plan
         self._potential(potential)
         self._graph_kernel(model)
+        if self._noise is not None:
+            self._noise_kernel(True).compile()
         stream = self._advance_stream
         stream.synchronize()
         with stream:
@@ -422,6 +631,10 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                         scales, 2 * k,
                     )
                     plan.fft(out, spectrum[(k + 1) % 2], cufft.CUFFT_FORWARD)
+                    if self._noise is not None:
+                        active = fields[(k + 1) % 2][0] if fields[(k + 1) % 2] else self._zero_res
+                        self._apply_fused_noise(spectrum[(k + 1) % 2], local,
+                                                active, k, graph=True)
                 graph = stream.end_capture()
             except Exception:
                 try:
@@ -440,6 +653,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             self._shape = shape
             self._batched = state.batched
             self._n = int(np.prod(shape))
+            self._zero_res = self.xp.zeros(shape, self._real_dtype)
+            if self._has_features:
+                self._prepare_features()
             self._graph_cache.clear()
             self._graph_signature = None
             self._pump_combiner = None
@@ -448,7 +664,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
 
     def advance(self, model, state, n_steps: int) -> None:
         """Run supported periodic chunks with planned FFTs and optional graphs."""
-        potential = model.potential
+        potential = model.potential_static if model.time_dependent_potential else model.potential
         pump = model.pump
         reservoir = model.reservoir
         boundary_condition = model.boundary
@@ -456,19 +672,18 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         self.batch_physics.check(state.field_k if state._field is None else state.field)
         if n_steps <= 0:
             return
-        if model.noise is not None:
-            return super().advance(model, state, n_steps)
         self._activate_shape(state)
         from polarism.reservoir.single_reservoir import SingleReservoir
         from polarism.reservoir.double_reservoir import DoubleReservoir
         from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
+        from polarism.reservoir.no_reservoir import NoReservoir
 
         models = {SingleReservoir: "single", DoubleReservoir: "double",
-                  QuadraticDoubleReservoir: "quadratic-double"}
+                  QuadraticDoubleReservoir: "quadratic-double", NoReservoir: "none"}
         reservoir_model = models.get(type(reservoir))
         diffusion = any(reservoir.batch_physics.any_nonzero(name) for name in
                         ("reservoir_diffusion_R", "reservoir_diffusion_A",
-                         "reservoir_diffusion_I")) if reservoir_model is not None else False
+                         "reservoir_diffusion_I")) if reservoir_model not in (None, "none") else False
         absorption = getattr(boundary_condition, "absorption", None)
         if reservoir_model is None or diffusion or not getattr(absorption, "after_step_is_noop", False):
             return super().advance(model, state, n_steps)
@@ -545,6 +760,14 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                             host_scales = self._scalar([coefficient(t) for t in times])
                         pending_hosts.append(host_scales)
                         self._graph_scales[:length * 2].set(host_scales, stream=stream)
+                        if self._has_features:
+                            pending_hosts.append(self._feature_values(
+                                [state.t0 + (start_step + done + k) * self.config.solver.dt
+                                 + self.config.solver.dt / 2 for k in range(length)], stream))
+                        if self._noise is not None:
+                            host_step = np.asarray([start_step + done], dtype=np.uint64)
+                            pending_hosts.append(host_step)
+                            self._noise_step_base.set(host_step, stream=stream)
                         graph.launch(stream=stream)
                         done += length
                         if len(pending_hosts) >= 32:
@@ -583,9 +806,15 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                     else:
                         pumps = (pump_flat, pump_flat)
                         factors = tuple(self._scalar(coefficient(time)) for time in times)
+                    if self._has_features:
+                        pending_hosts.append(self._feature_values((t + self.config.solver.dt / 2,), stream))
                     self._launch_into(reservoir_model, local, res[parity], potential, pumps,
                                       factors, out, res[1 - parity])
                     plan.fft(out, spec[1 - parity], cufft.CUFFT_FORWARD)
+                    if self._noise is not None:
+                        active = res[1 - parity][0] if res[1 - parity] else self._zero_res
+                        self._apply_fused_noise(spec[1 - parity], local, active,
+                                                start_step + k)
                     if len(pending_hosts) >= 32:
                         stream.synchronize()
                         pending_hosts.clear()
@@ -601,7 +830,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
 
     def step(self, model, state, dt):
         """Advance K(dt/2) [R(dt/2) N(dt) R(dt/2)] K(dt/2)."""
-        potential = model.potential
+        potential = model.potential_static if model.time_dependent_potential else model.potential
         pump = model.pump
         reservoir = model.reservoir
         boundary_condition = model.boundary
@@ -610,6 +839,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         from polarism.reservoir.single_reservoir import SingleReservoir
         from polarism.reservoir.double_reservoir import DoubleReservoir
         from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
+        from polarism.reservoir.no_reservoir import NoReservoir
 
         psi_k = getattr(state, "field_k", None)
         if psi_k is None:
@@ -620,10 +850,11 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         reservoir_state = reservoir.get_state()
         cls = type(reservoir)
         model = ({SingleReservoir: "single", DoubleReservoir: "double",
-                  QuadraticDoubleReservoir: "quadratic-double"}).get(cls)
+                  QuadraticDoubleReservoir: "quadratic-double", NoReservoir: "none"}).get(cls)
         diffusion = any(reservoir.batch_physics.any_nonzero(name) for name in
                         ("reservoir_diffusion_R", "reservoir_diffusion_A",
-                         "reservoir_diffusion_I")) if model is not None else False
+                         "reservoir_diffusion_I")) if model not in (None, "none") else False
+        self._launch_time = state.t
         if model is not None and not diffusion:
             pumps, scales = self._pump_pair(pump, state.t)
             psi, fields = self._launch(model, psi, reservoir_state, potential, pumps, scales)

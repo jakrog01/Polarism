@@ -12,7 +12,7 @@ from tests.unit.conftest import small_config
 
 
 DRIVE_SOLVERS = ("rk4-fdm", "rk4-cuda", "ip-rk4", "etd-rk2")
-NO_DRIVE_SOLVERS = ("rk4-fdm-fused", "split-step-fft", "split-step-fft-cuda", "ifrk-fft-cuda", "ifrk4-fft-cuda")
+NO_DRIVE_SOLVERS = ("rk4-fdm-fused", "split-step-fft")
 
 
 def config(method="rk4-fdm"):

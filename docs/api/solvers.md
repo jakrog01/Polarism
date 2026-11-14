@@ -55,14 +55,15 @@ code path.
 | `rk4-fdm-fused` | no | `parabolic` |
 | `rk4-cuda` | with a `cuda` snippet | `parabolic` |
 | `split-step-fft` | yes | any registered |
-| `split-step-fft-cuda` | no | `parabolic` |
+| `split-step-fft-cuda` | with a `cuda` snippet | `parabolic` |
 | `etd-rk2` | yes | any registered |
 | `ip-rk4` | yes | any registered |
-| `ifrk-fft-cuda`, `ifrk4-fft-cuda` | no | `parabolic` |
+| `ifrk-fft-cuda`, `ifrk4-fft-cuda` | with a `cuda` snippet | `parabolic` |
 
 `split-step-fft` multiplies the field by `exp((G - iE/hbar) dt)` after its local
-step, so field-dependent terms are first order in `dt` there. The other
-supporting solvers add the terms to their stage right-hand sides.
+step, so field-dependent terms are first order in `dt` there. The CUDA
+split-step solver uses the same local factor. The other supporting solvers add
+the terms to their stage right-hand sides.
 
 ## Coherent drive and varying potential
 
@@ -79,8 +80,8 @@ and constant potential envelope use the existing solver arithmetic.
 | `split-step-fft` | no | yes |
 | `rk4-fdm-fused` | no | no |
 | `rk4-cuda` | yes | yes |
-| `split-step-fft-cuda` | no | no |
-| `ifrk-fft-cuda`, `ifrk4-fft-cuda` | no | no |
+| `split-step-fft-cuda` | yes | yes |
+| `ifrk-fft-cuda`, `ifrk4-fft-cuda` | yes | yes |
 
 ## Compatibility guidance
 
@@ -93,8 +94,7 @@ The package includes explicit compatibility checks and warnings. In practice:
 - for `closed-interval` grids use the FDM family: `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`
 - `etd-rk2` advances the reservoir between predictor and corrector using a midpoint condensate estimate, retaining second-order coupling for all supported reservoir types
 - CUDA solvers are meaningful only when the GPU backend is actually active
-- `reservoir_type: none` is supported by `rk4-fdm`, `rk4-cuda`, `split-step-fft`,
-  `ip-rk4`, and `etd-rk2` on NumPy or CuPy
+- `reservoir_type: none` is supported by all solvers except `rk4-fdm-fused`
 
 `split-step-fft-cuda` keeps the wavefunction in Fourier space between steps and
 uses two cuFFT transforms per step. Its local kernel combines two reservoir RK2
@@ -104,6 +104,10 @@ reservoirs through their `step` method. A mask absorber costs two additional
 transforms; CAP absorption stays on the fast path. It requires an active CUDA
 GPU and does not support `kinetic_relaxation_eta`. Like `split-step-fft`, it is
 second order, so compare timestep errors before using large steps.
+With coherent drive, it places source half-steps around the local condensate
+step and evaluates the envelope at `t + dt/2`. A varying potential is sampled
+at the same midpoint while CAP remains static. Extra terms use their CUDA
+snippets in the local factor.
 
 For CUDA graph eligibility, precision guidance, benchmarking, and device
 selection, see [Running on GPUs](../user-guide/running-on-gpus.md).

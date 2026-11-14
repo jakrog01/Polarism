@@ -12,7 +12,7 @@ from tests.unit.conftest import small_config
 
 
 POTENTIAL_SOLVERS = ("rk4-fdm", "rk4-cuda", "ip-rk4", "etd-rk2", "split-step-fft")
-NO_DYNAMIC_SOLVERS = ("rk4-fdm-fused", "split-step-fft-cuda", "ifrk-fft-cuda", "ifrk4-fft-cuda")
+NO_DYNAMIC_SOLVERS = ("rk4-fdm-fused",)
 
 
 def config(method="rk4-fdm"):

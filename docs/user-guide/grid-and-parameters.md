@@ -136,6 +136,9 @@ final RK stage from the completed active density. CUDA graphs can replay noisy
 chunks; the global step index is supplied through a device counter base so a
 replay uses fresh Philox counters. Noise uses the staged CUDA kernels rather
 than the whole-step tiled kernel, so measure the cost for your device and grid.
+The spectral CUDA solvers add the same increment inside their fused step paths
+after the completed spectral update. The real-space noise placement requires
+an extra inverse and forward cuFFT per step. CUDA graphs remain available.
 
 `kinetic_relaxation_eta` enables a phenomenological kinetic-energy relaxation
 term for the condensate.  It defaults to `0.0`.  When enabled it damps high-k
