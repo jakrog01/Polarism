@@ -63,7 +63,7 @@ def _time_run(method, size, precision, reservoir, steps, chunked, cp,
         start = time.perf_counter()
         chunks(steps)
     else:
-        noise_applier = controller.model.noise
+        noise_applier = None if controller.solver.injects_noise else controller.model.noise
         for k in range(4):
             controller.solver.step(*args, dt)
             if noise_applier is not None:

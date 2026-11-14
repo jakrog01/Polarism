@@ -93,7 +93,28 @@ def test_spectral_features_match_numpy(method, reference, feature, precision, gr
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("method", ("split-step-fft-cuda", "ifrk-fft-cuda"))
+@pytest.mark.parametrize("precision", ("single", "double"))
+@pytest.mark.parametrize("graphs", (False, True))
+def test_split_step_noise_matches_cpu_solver(precision, graphs, use_gpu):
+    if not use_gpu or not has_cuda_device():
+        pytest.skip("CUDA device unavailable")
+    cfg = configuration("split-step-fft-cuda", precision, graphs)
+    cfg.noise.stochastic = "wigner"
+    cfg.noise.stochastic_strength = 1.0
+    expected_cfg = deepcopy(cfg)
+    expected_cfg.solver.method = "split-step-fft"
+    _, expected = run_case(expected_cfg, False)
+    _, actual = run_case(cfg, True)
+    noiseless = deepcopy(cfg)
+    noiseless.noise.stochastic_strength = 0.0
+    _, reference = run_case(noiseless, True)
+    assert np.max(np.abs(expected - reference)) > 1e-3
+    tolerance = 3e-6 if precision == "single" else 3e-13
+    np.testing.assert_allclose(actual, expected, rtol=tolerance, atol=tolerance)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("method", ("ifrk-fft-cuda",))
 @pytest.mark.parametrize("precision", ("single", "double"))
 @pytest.mark.parametrize("graphs", (False, True))
 def test_fused_noise_matches_numpy_philox(method, precision, graphs, use_gpu):

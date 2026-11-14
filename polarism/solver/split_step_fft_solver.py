@@ -31,6 +31,7 @@ class SplitStepFFTSolver(AbstractSolver):
         quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         description='Spectral Strang splitting, second order in time. Reservoir advances in two half-steps around the condensate step. FFT-only, periodic grid only. Does not evaluate kinetic_relaxation_eta.',
     )
+    injects_noise = True
     _kinetic_propagator_half: Union[np.ndarray, cp.ndarray]
 
     def __init__(self, config: Config, grid: SimulationGrid, model):
@@ -107,6 +108,9 @@ class SplitStepFFTSolver(AbstractSolver):
                 state.field, res_state, state.t + dt / 2
             )
             state.field = state.field * self.xp.exp((extra_rate - 1j * extra_energy / hbar) * dt)
+
+        if model.noise is not None:
+            model.noise.apply_arrays(state.field, nR, state.step)
 
         state.field = self._kinetic_half_step_fft(state.field)
 

@@ -88,6 +88,17 @@ sampled at the end of the step. The implementation does not include the
 $-g_C/\Delta V$ energy shift or the $R n_{\mathrm{active}}/(2\Delta V)$
 reservoir correction of the full truncated-Wigner equations.
 
+The split-step solvers inject the increment inside the local part of the Strang
+step, after the nonlinear update and the second reservoir half-step and before
+the second kinetic half-step (symmetric Strang placement). `split-step-fft`
+advances the reservoir in half-steps around the condensate step, so there
+$n_{\mathrm{active}}$ is the density after the first half-step. The kinetic
+propagator is unitary in Fourier space and the increment is white, additive
+and Gaussian, so its distribution is unchanged by the second kinetic half-step;
+the realization differs from end-of-step placement, and the two placements
+agree up to $O(dt)$. All solvers draw the same Philox counters (cell, global
+step, stream 1).
+
 ## Energy relaxation and model limits
 
 The minimal open-dissipative GPE/reservoir model does not automatically include

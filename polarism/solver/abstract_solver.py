@@ -58,9 +58,15 @@ DEFAULT_CAPABILITIES = SolverCapabilities(description="Plugin solver with undecl
 
 
 class AbstractSolver(ABC):
-    """Define the interface for solver backends."""
+    """Define the interface for solver backends.
+
+    A solver that injects the Wigner increment inside its own step, at the
+    point its scheme prescribes, sets ``injects_noise = True``. The default
+    ``advance`` then does not add the increment again after each step.
+    """
 
     capabilities: ClassVar[SolverCapabilities] = DEFAULT_CAPABILITIES
+    injects_noise: ClassVar[bool] = False
 
     def __init__(self, config, grid, model):
         """Set up common solver data."""
@@ -80,5 +86,5 @@ class AbstractSolver(ABC):
         for _ in range(n_steps):
             completed = state.step
             report = self.step(model, state, self.config.solver.dt)
-            if report.accepted and model.noise is not None:
+            if report.accepted and model.noise is not None and not self.injects_noise:
                 model.noise.apply_to_state(state, model.reservoir, completed)

@@ -229,7 +229,12 @@ def _feature_source(source, real, batched, terms, varying_potential, drive):
 
 @register_solver("split-step-fft-cuda")
 class SplitStepFFTCudaSolver(AbstractSolver):
-    """K-outer Strang split with two planned cuFFT transforms per step."""
+    """K-outer Strang split with two planned cuFFT transforms per step.
+
+    The Wigner increment is added inside the local kernel, after the second
+    reservoir half-step and before the second kinetic half-step.
+    """
+    injects_noise = True
     capabilities = SolverCapabilities(
         components=frozenset({1}), ndim=frozenset({1, 2}),
         grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
@@ -270,6 +275,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         self._feature_buffer = None
         self._noise = model.noise if model.noise is not None and model.noise.active else None
         self._noise_step_base = None
+        self._launch_step = 0
         kernel_fields = ("hbar", "g_C", "g_R", "g_I", "R", "gamma_C", "gamma_R",
                          "gamma_I", "gamma_A", "R_IA", "R_AI", "kappa")
         self._physics_fields = tuple(name for name in kernel_fields
@@ -416,37 +422,43 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                                      self._batched, self._model_features.terms,
                                      self._model_features.time_dependent_potential,
                                      self._model_features.drive is not None)
+        if self._noise_in_kernel(model):
+            source = self._noise_source(source, graph)
         return source
 
-    def _noise_kernel(self, graph):
-        if not graph:
-            return self._noise._kernel
-        if not hasattr(self, "_noise_graph"):
-            from polarism.noise.philox import cuda_source
-            source = cuda_source(self._precision).replace(
-                "unsigned long long step, int spatial_n, int total_n,",
-                "const unsigned long long* step_base, unsigned int step_offset, int spatial_n, int total_n,")
-            source = source.replace("    unsigned int b = (unsigned int)step;",
-                                    "    unsigned long long step = step_base[0] + step_offset;\n"
-                                    "    unsigned int b = (unsigned int)step;")
-            self._noise_graph = self.xp.RawKernel(source, f"add_wigner_{self._precision}")
-        return self._noise_graph
+    def _noise_in_kernel(self, model):
+        return self._noise is not None and model != "nonlinear"
 
-    def _apply_fused_noise(self, spectrum, local, active, step, graph=False):
-        from cupy.cuda import cufft
-        xp = self.xp
-        plan = self._advance_plan
-        xp.multiply(spectrum, self._half_normalized, out=self._advance_buffers[4])
-        plan.fft(self._advance_buffers[4], local, cufft.CUFFT_INVERSE)
-        args = (local.view(self._real_dtype).ravel(), active.ravel(),
-                self._noise._device_seeds, self._noise._device_gamma,
-                self._noise._device_scattering, self._noise._device_strength)
-        args += ((self._noise_step_base, np.uint32(step)) if graph else (np.uint64(step),))
-        args += (np.int32(self._spatial_n), np.int32(self._n),
-                 self._scalar(self._noise.dt / (4.0 * self._noise.volume)))
-        self._noise_kernel(graph)(((self._n + 255) // 256,), (256,), args)
-        plan.fft(local, spectrum, cufft.CUFFT_FORWARD)
-        xp.multiply(spectrum, self._conj_half, out=spectrum)
+    def _noise_source(self, source, graph):
+        from polarism.noise.philox import device_source
+        real = "float" if self._precision == "single" else "double"
+        step = ("const unsigned long long* noise_step_base, unsigned int noise_step_offset"
+                if graph else "unsigned long long noise_step")
+        declarations = (f"const unsigned long long* noise_seeds, const {real}* noise_gamma, "
+                        f"const {real}* noise_scattering, const {real}* noise_strength, "
+                        f"{step}, {real} noise_scale")
+        start = source.index('extern "C" __global__ void local_step(')
+        end = source.index(") {", start)
+        source = source[:end] + ",\n    " + declarations + source[end:]
+        source = source[:start] + device_source(self._precision) + source[start:]
+        step_value = "noise_step_base[0] + noise_step_offset" if graph else "noise_step"
+        injection = ("    {\n"
+                     "        int noise_member = j / spatial_n;\n"
+                     "        wigner_add(&re, &im, noise_seeds[noise_member], (unsigned int)(j % spatial_n),\n"
+                     f"            {step_value}, noise_strength[noise_member], noise_gamma[noise_member],\n"
+                     "            noise_scattering[noise_member], a, noise_scale);\n"
+                     "    }\n")
+        anchor = "    out_psi[2*j] = re;"
+        return source.replace(anchor, injection + anchor)
+
+    def _noise_arguments(self, model, step, graph):
+        if not self._noise_in_kernel(model):
+            return ()
+        noise = self._noise
+        return (noise._device_seeds, noise._device_gamma, noise._device_scattering,
+                noise._device_strength,
+                *((self._noise_step_base, np.uint32(step)) if graph else (np.uint64(step),)),
+                self._scalar(noise.dt / (4.0 * noise.volume)))
 
     def _kernel(self, model):
         key = (model, self._batched)
@@ -506,11 +518,12 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             self._feature_values((self._launch_time + self.config.solver.dt / 2,))
             args += (*self._feature_static, self._feature_buffer, np.int32(0),
                      np.int32(self._n // self._spatial_n), np.int32(vr.size))
+        args += self._noise_arguments(model, self._launch_step, False)
         self._kernel(model)(((self._n + 255) // 256,), (256,), args)
         return out, tuple(x.reshape(self._shape) for x in (out_a, out_b)[:len(fields)])
 
     def _launch_into(self, model, psi, fields, potential, pumps, scales,
-                     out, out_fields, graph_scales=None, scale_index=0):
+                     out, out_fields, graph_scales=None, scale_index=0, noise_step=0):
         a = fields[0] if fields else self._zero_res
         b = fields[1] if len(fields) > 1 else a
         vr, vi, vi_scale = self._potential(potential)
@@ -542,6 +555,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             args += (*self._feature_static, self._feature_buffer,
                      np.int32(scale_index // 2 if graph_scales is not None else 0),
                      np.int32(self._n // self._spatial_n), np.int32(vr.size))
+        args += self._noise_arguments(
+            model, scale_index // 2 if graph_scales is not None else noise_step,
+            graph_scales is not None)
         kernel(((self._n + 255) // 256,), (256,), args)
 
     def _graph_kernel(self, model):
@@ -612,8 +628,6 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         plan = self._advance_plan
         self._potential(potential)
         self._graph_kernel(model)
-        if self._noise is not None:
-            self._noise_kernel(True).compile()
         stream = self._advance_stream
         stream.synchronize()
         with stream:
@@ -631,10 +645,6 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                         scales, 2 * k,
                     )
                     plan.fft(out, spectrum[(k + 1) % 2], cufft.CUFFT_FORWARD)
-                    if self._noise is not None:
-                        active = fields[(k + 1) % 2][0] if fields[(k + 1) % 2] else self._zero_res
-                        self._apply_fused_noise(spectrum[(k + 1) % 2], local,
-                                                active, k, graph=True)
                 graph = stream.end_capture()
             except Exception:
                 try:
@@ -809,12 +819,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                     if self._has_features:
                         pending_hosts.append(self._feature_values((t + self.config.solver.dt / 2,), stream))
                     self._launch_into(reservoir_model, local, res[parity], potential, pumps,
-                                      factors, out, res[1 - parity])
+                                      factors, out, res[1 - parity],
+                                      noise_step=start_step + k)
                     plan.fft(out, spec[1 - parity], cufft.CUFFT_FORWARD)
-                    if self._noise is not None:
-                        active = res[1 - parity][0] if res[1 - parity] else self._zero_res
-                        self._apply_fused_noise(spec[1 - parity], local, active,
-                                                start_step + k)
                     if len(pending_hosts) >= 32:
                         stream.synchronize()
                         pending_hosts.clear()
@@ -855,6 +862,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                         ("reservoir_diffusion_R", "reservoir_diffusion_A",
                          "reservoir_diffusion_I")) if model not in (None, "none") else False
         self._launch_time = state.t
+        self._launch_step = state.step
         if model is not None and not diffusion:
             pumps, scales = self._pump_pair(pump, state.t)
             psi, fields = self._launch(model, psi, reservoir_state, potential, pumps, scales)
@@ -873,6 +881,9 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             psi, _ = self._launch("nonlinear", psi, densities, potential,
                                   (dummy, dummy), (self._scalar(1), self._scalar(1)))
             reservoir.step(dt / 2, psi, p2)
+            if self._noise is not None:
+                self._noise.apply_arrays(
+                    psi, reservoir.get_active_density(reservoir.get_state()), state.step)
         psi_k = self._fft_forward(psi, plan=self._plan(psi)) * self._half
         absorption = getattr(boundary_condition, "absorption", None)
         if getattr(absorption, "after_step_is_noop", False):

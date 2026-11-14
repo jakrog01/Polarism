@@ -130,6 +130,47 @@ def cuda_source(precision: str):
     return source.replace("{{", "{").replace("}}", "}")
 
 
+WIGNER_DEVICE = r"""
+__device__ __forceinline__ void wigner_add(
+    {real}* re, {real}* im, unsigned long long seed, unsigned int cell,
+    unsigned long long step, {real} strength, {real} gamma,
+    {real} scattering, {real} active, {real} dt_over_4v) {{
+    unsigned int a = cell;
+    unsigned int b = (unsigned int)step;
+    unsigned int c = (unsigned int)(step >> 32);
+    unsigned int d = 1U;
+    philox4x32(&a, &b, &c, &d, (unsigned int)seed, (unsigned int)(seed >> 32));
+    {uniforms}
+    {real} radius = {sqrt_fn}(({real})(-2) * {log_fn}(u1));
+    {real} angle = ({real})6.283185307179586476925286766559 * u2;
+    {real} sn, cs;
+    {sincos_fn}(angle, &sn, &cs);
+    {real} sigma = {sqrt_fn}(strength * (gamma + scattering * active) * dt_over_4v);
+    *re += sigma * radius * cs;
+    *im += sigma * radius * sn;
+}}
+"""
+
+
+def device_source(precision: str):
+    """Render the Philox and Wigner device functions for inclusion in a fused kernel."""
+    philox = cuda_source(precision).split('extern "C" __global__ void philox_words', 1)[0]
+    if precision == "single":
+        uniforms = "float u1 = (float)((a >> 8) + 1U) * 5.9604644775390625e-08f; float u2 = (float)((b >> 8) + 1U) * 5.9604644775390625e-08f;"
+        real, math_suffix = "float", "f"
+    else:
+        uniforms = ("double u1 = ((double)(a >> 5) * 67108864.0 + (double)(b >> 6) + 1.0) * 1.1102230246251565404236316680908203125e-16; "
+                    "double u2 = ((double)(c >> 5) * 67108864.0 + (double)(d >> 6) + 1.0) * 1.1102230246251565404236316680908203125e-16;")
+        real, math_suffix = "double", ""
+    source = WIGNER_DEVICE
+    replacements = {"real": real, "uniforms": uniforms,
+                    "sqrt_fn": "sqrt" + math_suffix, "log_fn": "log" + math_suffix,
+                    "sincos_fn": "sincos" + math_suffix}
+    for name, value in replacements.items():
+        source = source.replace("{" + name + "}", value)
+    return philox + source.replace("{{", "{").replace("}}", "}")
+
+
 def gpu_philox4x32(counters, key: int):
     """Return CUDA Philox words for testing the integer contract."""
     import cupy as cp

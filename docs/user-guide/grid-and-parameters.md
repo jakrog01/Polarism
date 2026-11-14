@@ -136,9 +136,17 @@ final RK stage from the completed active density. CUDA graphs can replay noisy
 chunks; the global step index is supplied through a device counter base so a
 replay uses fresh Philox counters. Noise uses the staged CUDA kernels rather
 than the whole-step tiled kernel, so measure the cost for your device and grid.
-The spectral CUDA solvers add the same increment inside their fused step paths
-after the completed spectral update. The real-space noise placement requires
-an extra inverse and forward cuFFT per step. CUDA graphs remain available.
+The split-step solvers (`split-step-fft`, `split-step-fft-cuda`) add the
+increment inside the real-space part of the Strang step, after the nonlinear
+update and before the second kinetic half-step. On `split-step-fft-cuda` it is
+part of the local kernel, so noise adds no FFTs and no extra kernel launch, and
+CUDA graphs remain available. On `split-step-fft` the density $n_A$ is the one
+after the first reservoir half-step, because that solver advances the reservoir
+in two half-steps around the condensate step. White additive noise is
+statistically invariant under the unitary kinetic half-step, so this placement
+differs from adding the increment after the full step only at $O(dt)$. The
+other spectral CUDA solvers add the increment after the completed spectral
+update, which costs an extra inverse and forward cuFFT per step.
 
 `kinetic_relaxation_eta` enables a phenomenological kinetic-energy relaxation
 term for the condensate.  It defaults to `0.0`.  When enabled it damps high-k
