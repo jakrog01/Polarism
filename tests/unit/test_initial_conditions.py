@@ -110,7 +110,7 @@ def test_file_loads_npy_and_rejects_bad_shape(tmp_path) -> None:
     psi = build(g, type="file", path=str(path))
     np.testing.assert_array_equal(psi, field)
     np.save(tmp_path / "small.npy", field[:8, :8])
-    with pytest.raises(ValueError, match=r"shape \(8, 8\).*grid shape \(16, 16\)"):
+    with pytest.raises(ValueError, match=r"shape \(8, 8\).*grid shape is \(16, 16\)"):
         build(g, type="file", path=str(tmp_path / "small.npy"))
 
 

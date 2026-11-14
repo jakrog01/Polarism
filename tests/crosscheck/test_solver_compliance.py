@@ -212,20 +212,24 @@ def test_double_reservoir_matches_single(solver_cls):
     psi0 = 1e-3 * np.ones((grid.ny, grid.nx), dtype=np.complex128)
     sample_stride = max(1, n_steps // 50)
 
-    solver_s = solver_cls(cfg, grid)
     res_s = SingleReservoir(make_reservoir_cfg(False), physics, grid)
+    model_s = Model(grid, BatchPhysics(physics, None, np), "double",
+                    V, lambda t: P, res_s, bc)
+    solver_s = solver_cls(cfg, grid, model_s)
     state_s = State(psi0.copy())
 
-    solver_d = solver_cls(cfg, grid)
     res_d = DoubleReservoir(make_reservoir_cfg(False), physics, grid)
+    model_d = Model(grid, BatchPhysics(physics, None, np), "double",
+                    V, lambda t: P, res_d, bc)
+    solver_d = solver_cls(cfg, grid, model_d)
     state_d = State(psi0.copy())
 
     times = []
     rho_single = []
     rho_double = []
     for step in range(n_steps):
-        solver_s.step(V, lambda t: P, res_s, bc, state_s)
-        solver_d.step(V, lambda t: P, res_d, bc, state_d)
+        solver_s.step(model_s, state_s, dt)
+        solver_d.step(model_d, state_d, dt)
         if (step + 1) % sample_stride == 0:
             times.append((step + 1) * dt)
             rho_single.append(float(np.max(np.abs(state_s.psi) ** 2)))

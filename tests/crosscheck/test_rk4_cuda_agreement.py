@@ -138,10 +138,11 @@ def test_fused_pump_matches_array_path_bitwise(absorption: str, precision: str) 
     assert bool(compute_engine.xp.iscomplexobj(fused.potential)) == (absorption == "cap")
 
     start = fused.lasers[0].phase
+    pump = array.pump_field
     for step in range(3):
         fused.state.t = array.state.t = start + step * cfg.solver.dt
         fused.solver.step(fused.model, fused.state, cfg.solver.dt)
-        array.model.pump = lambda t: array.pump_field(t)
+        array.model.pump = lambda t: pump(t)
         array.solver.step(array.model, array.state, cfg.solver.dt)
 
     np.testing.assert_array_equal(
@@ -163,7 +164,8 @@ def test_rk4_cuda_does_not_alias_previous_state(reservoir_type: str) -> None:
         compute_engine=ComputeEngineParameters(use_gpu=True),
     )
     controller = SimulationController(cfg)
-    controller.model.pump = controller._compute_total_pump
+    pump_field = controller.pump_field
+    controller.model.pump = lambda t: pump_field(t)
     controller.solver.step(controller.model, controller.state, cfg.solver.dt)
     before = controller.state.psi
     saved = before.copy()

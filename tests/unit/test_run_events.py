@@ -94,7 +94,8 @@ def test_event_clips_solver_chunks():
 
 
 def test_unstopped_member_has_nan_metadata(tmp_path):
-    cfg = quiet_config(solver__total_time=0.02)
+    cfg = quiet_config(solver__total_time=0.02, stop__steady_state=True,
+                       stop__check_every=0.02)
     cfg.result.save_results = True
     cfg.result.formats = ("hdf5",)
     controller = SimulationController(cfg, output_dir=tmp_path)
@@ -102,6 +103,15 @@ def test_unstopped_member_has_nan_metadata(tmp_path):
     with h5py.File(tmp_path / "results.h5") as handle:
         assert handle.attrs["stop_time"].shape == (1,)
         assert np.isnan(handle.attrs["stop_time"][0])
+
+
+def test_default_run_writes_no_stop_metadata(tmp_path):
+    cfg = quiet_config(solver__total_time=0.02)
+    cfg.result.save_results = True
+    cfg.result.formats = ("hdf5",)
+    SimulationController(cfg, output_dir=tmp_path).run()
+    with h5py.File(tmp_path / "results.h5") as handle:
+        assert "stop_time" not in handle.attrs
 
 
 def test_checkpoint_restores_steady_reference_and_stop_times(tmp_path):

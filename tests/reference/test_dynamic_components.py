@@ -105,9 +105,10 @@ def _pulse_response_error(dt: float) -> tuple[float, SimulationController]:
     controller.state.psi.fill(0.0)
     squared_error = 0.0
     squared_reference = 0.0
+    source = controller.pump_field
     for step in range(int(cfg.solver.total_time / dt)):
         time = step * dt
-        pump = np.asarray(controller._compute_total_pump(time))
+        pump = np.asarray(source(time))
         controller.model.pump = lambda t: pump
         controller.solver.step(controller.model, controller.state, dt)
         expected = _closed_form_pulse_response(cfg, controller, time + dt)

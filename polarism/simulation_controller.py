@@ -977,7 +977,7 @@ class SimulationController:
                 print(f"Stop times (ps): {values}")
         finally:
             try:
-                if self.storage_visitor is not None:
+                if self.storage_visitor is not None and stopping_active:
                     self.storage_visitor.set_stop_times(self.stop_times)
                 for visitor in self.results_manager.visitors:
                     finalize = getattr(visitor, "finalize", None)

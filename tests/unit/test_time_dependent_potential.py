@@ -47,6 +47,8 @@ def test_step_potential_rotates_uniform_field_after_onset(method):
 
 def test_cap_remains_active_when_configured_potential_is_off():
     cfg = config()
+    cfg.grid.nx = cfg.grid.ny = 32
+    cfg.grid.lx = cfg.grid.ly = 32.0
     cfg.boundary_condition.absorption = "cap"
     run = SimulationController(cfg)
     cap = run.boundary_condition.before_step_action()
