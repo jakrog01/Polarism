@@ -9,3 +9,5 @@ class LabelledPeriodicGrid(PeriodicGrid):
     def __init__(self, cfg):
         super().__init__(cfg)
         self.label = cfg.extra.get("label", "example")
+
+POLARISM_PLUGIN_API = 2

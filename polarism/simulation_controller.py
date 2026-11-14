@@ -25,6 +25,9 @@ from polarism.grid.create_grid import create_grid
 from polarism.grid.simulation_grid import SimulationGrid
 from polarism.laser.laser_factory import LaserFactory
 from polarism.laser.pump_field import BatchedPumpField, PumpField
+from polarism.model import Model
+from polarism.config.batch_physics import BatchPhysics
+from polarism.noise import NoiseApplier
 from polarism.noise.stochastic import draw_seed
 from polarism.plugins import load_plugins
 from polarism.potential.create_potential import create_potential
@@ -82,14 +85,30 @@ def _compute_pump_field(**ctx):
 _fp64_notice_shown = False
 
 
+def _model_component(name: str) -> property:
+    """Expose a model component on the controller, kept in sync with the model."""
+    def get(self):
+        model = self.__dict__.get("model")
+        return getattr(model, name) if model is not None else self.__dict__[f"_{name}"]
+
+    def set(self, value):
+        model = self.__dict__.get("model")
+        if model is not None:
+            setattr(model, name, value)
+        self.__dict__[f"_{name}"] = value
+
+    return property(get, set)
+
+
 class SimulationController:
     """Set up and run a full simulation."""
     cfg: Config
     grid: SimulationGrid
-    boundary_condition: BoundaryCondition
-    potential: Union["np.ndarray", "cp.ndarray"]
+    boundary_condition: BoundaryCondition = _model_component("boundary")
+    potential: Union["np.ndarray", "cp.ndarray"] = _model_component("potential")
+    pump_field = _model_component("pump")
     lasers: list
-    reservoir: AbstractReservoir
+    reservoir: AbstractReservoir = _model_component("reservoir")
     state: SimulationState
     solver: AbstractSolver
     visualizer: RealTimeVisualization | None
@@ -211,8 +230,6 @@ class SimulationController:
                 k_cutoff_um=cfg.noise.initial_k_cutoff_um,
                 seed=cfg.noise.seed,
             )
-        self.solver = create_solver(cfg, self.grid, batch_physics=batch_physics,
-                                    noise_members=member_configs)
         self._batch_physics = batch_physics
         self.max_laser_power = self._compute_max_laser_power()
 
@@ -229,6 +246,8 @@ class SimulationController:
                 else real_dtype(self.xp, "single")
             )
             self.potential = self.potential.astype(target)
+        self.model = self._make_model()
+        self.solver = create_solver(cfg, self.grid, self.model)
         self.visualizer = None
         self.next_viz_time = 0.0
         self.results_manager = ResultsManager()
@@ -653,8 +672,22 @@ class SimulationController:
         self._resumed = True
         if field_k is not None:
             self.state.field_k = self.xp.asarray(field_k, dtype=dtype).copy()
-        self.solver = create_solver(self.cfg, self.grid, batch_physics=self._batch_physics,
-                                    noise_members=self._member_configs)
+        self.model = self._make_model()
+        self.solver = create_solver(self.cfg, self.grid, self.model)
+
+    def _make_model(self) -> Model:
+        """Collect solver inputs and optional stochastic noise."""
+        cfg = self.cfg
+        physics = BatchPhysics(cfg.physics, self._batch_physics, self.xp,
+                               cfg.solver.precision, ndim=self.grid.ndim)
+        noise = None
+        if cfg.noise.enabled and cfg.noise.stochastic == "wigner" and any(
+            member.noise.stochastic_strength > 0
+            for member in (self._member_configs or [cfg])
+        ):
+            noise = NoiseApplier(cfg, self.grid, self._member_configs)
+        return Model(self.grid, physics, cfg.solver.precision, self.potential,
+                     self.pump_field, self.reservoir, self.boundary_condition, noise)
 
     def run(self) -> None:
         """Run the simulation loop."""
@@ -710,15 +743,10 @@ class SimulationController:
                         end = min(end, ((step // interval) + 1) * interval)
                     if previous_handlers:
                         end = min(end, step + 64)
-                    self.solver.advance(
-                        self.potential, self.pump_field, self.reservoir,
-                        self.boundary_condition, self.state, step, end - step,
-                    )
+                    self.solver.advance(self.model, self.state, end - step)
                     progress.update(end - step)
-                    step = end
-                    self.state.step = step
-                    t_after = self.state.t0 + step * dt
-                    self.state.t = t_after
+                    step = self.state.step
+                    t_after = self.state.t
                     should_save = recording and step % save_steps == 0
                     should_viz = (
                         self.visualizer is not None and t_after >= self.next_viz_time

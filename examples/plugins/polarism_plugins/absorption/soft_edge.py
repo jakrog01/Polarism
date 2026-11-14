@@ -24,3 +24,5 @@ class SoftEdgeAbsorption(AbsorptionStrategy):
 
     def apply_absorption(self, psi):
         return psi * self.xp.exp(-0.5 * self.strength * self.dt * self.profile)
+
+POLARISM_PLUGIN_API = 2

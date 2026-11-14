@@ -2,6 +2,15 @@
 
 This page describes the main interchangeable building blocks used by the simulation controller.
 
+## Model passed to solvers
+
+`polarism.Model` groups the grid, `BatchPhysics`, precision, array backend,
+potential, pump callable, reservoir, boundary condition, and optional noise.
+The controller passes the same model to `SolverClass(config, grid, model)`,
+`step(model, state, dt)`, and `advance(model, state, n_steps)`.
+`model.rhs(field, reservoir_fields, t, out=None)` provides the finite difference
+reference derivative for simple solvers.
+
 ## Grid interface
 
 The grid layer is defined by the `SimulationGrid` protocol. Concrete grids must provide:
@@ -99,6 +108,7 @@ Reservoir models share the `AbstractReservoir` contract:
 | `single` | one effective active reservoir |
 | `double` | inactive plus active reservoir with transfer between them |
 | `quadratic-double` | inactive reservoir directly fed by the pump and active reservoir fed by quadratic transfer `kappa*nI^2` |
+| `none` | no reservoir fields or reservoir result nodes; active and inactive densities are zero, so an incoherent pump has no effect |
 
 In `quadratic-double`, the active density exposed to the condensate is `nR`.
 The inactive density `nI` is useful for pulsed excitation because it can retain

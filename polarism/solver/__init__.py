@@ -1,5 +1,5 @@
 """Public solver exports."""
-from polarism.solver.abstract_solver import AbstractSolver
+from polarism.solver.abstract_solver import AbstractSolver, StepReport, SolverCapabilities, ACCEPTED
 from polarism.solver.create_solver import create_solver
 from polarism.solver.split_step_fft_solver import SplitStepFFTSolver
 from polarism.solver.split_step_fft_cuda_solver import SplitStepFFTCudaSolver
@@ -23,5 +23,8 @@ __all__ = [
     "IFRK4FFTCudaSolver",
     "IFRKFFTCudaSolver",
     "AbstractSolver",
+    "StepReport",
+    "SolverCapabilities",
+    "ACCEPTED",
     "register_solver",
 ]

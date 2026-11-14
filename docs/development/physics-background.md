@@ -19,7 +19,8 @@ $$
 $$
 
 The exact reservoir structure depends on whether the simulation uses the single,
-double, or quadratic-double reservoir model.
+double, quadratic-double, or `none` reservoir model. With `none`, both reservoir
+densities are zero and there are no reservoir rate equations.
 
 For the double-reservoir model, the condensate equation keeps the same form but replaces `n_R` with the active density `n_A`, while the reservoir sector becomes:
 
@@ -138,6 +139,7 @@ The active reservoir density driving the term is model-dependent:
 | single            | nR                                |
 | double            | nA                                |
 | quadratic-double  | nR                                |
+| none              | 0                                 |
 
 The term defaults to zero (`kinetic_relaxation_eta: 0.0`) and is disabled unless
 explicitly set.  Backward compatibility is preserved.

@@ -44,6 +44,8 @@ class NoiseApplier:
         if compute_engine.use_gpu:
             total_n = int(field.size)
             dtype = self.xp.float32 if self.precision == "single" else self.xp.float64
+            if self.xp.ndim(active_density) == 0:
+                active_density = self.xp.zeros(field.shape, dtype=dtype)
             self._kernel(((total_n + 255) // 256,), (256,), (
                 field.view(dtype).ravel(), active_density.ravel(),
                 self._device_seeds, self._device_gamma, self._device_scattering,
@@ -58,7 +60,8 @@ class NoiseApplier:
             words = philox4x32(counter_words(np.arange(self.spatial_n), step),
                                int(self.seeds[member]))
             re, im = normal_pair(words, self.precision)
-            density = np.asarray(active_density[member, 0]).reshape(-1)
+            density = (0 if np.ndim(active_density) == 0 else
+                       np.asarray(active_density[member, 0]).reshape(-1))
             sigma = np.sqrt(real_dtype(self.strength[member]) *
                             (real_dtype(self.gamma[member])
                              + real_dtype(self.scattering[member]) * density)

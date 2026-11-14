@@ -10,6 +10,8 @@ from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine, has_cuda_device
 from polarism.config.simulation_parameters import ComputeEngineParameters, Config
 from polarism.config.simulation_parameters import PhysicsConstants
+from polarism.config.batch_physics import BatchPhysics
+from polarism.model import Model
 from polarism.grid.create_grid import create_grid
 from polarism.reservoir.create_reservoir import create_reservoir
 from polarism.simulation_state import SimulationState
@@ -48,7 +50,6 @@ def _run(cfg, amplitudes, batched, xp, *, advance=False, pump_style="array",
         state.psi = state.psi * amplitudes[0]
     reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid,
                                  batch_size=batch_size, precision=cfg.solver.precision)
-    solver = create_solver(cfg, grid)
     bc = BoundaryCondition(grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt)
     potential = (0.03 * xp.cos(grid.X * 0.4) + bc.before_step_action())
     if potential_style == "batched":
@@ -110,12 +111,14 @@ def _run(cfg, amplitudes, batched, xp, *, advance=False, pump_style="array",
 
             pump = TermOnlyPump()
 
+    model = Model(grid, BatchPhysics(cfg.physics, None, xp, cfg.solver.precision),
+                  cfg.solver.precision, potential, pump, reservoir, bc)
+    solver = create_solver(cfg, grid, model)
     if advance:
-        solver.advance(potential, pump, reservoir, bc, state, 0, 2)
+        solver.advance(model, state, 2)
     else:
         for k in range(2):
-            solver.step(potential, pump, reservoir, bc, state)
-            state.t = (k + 1) * cfg.solver.dt
+            solver.step(model, state, cfg.solver.dt)
     return xp.asarray(state.psi), tuple(xp.asarray(f) for f in reservoir.get_state())
 
 
@@ -413,8 +416,9 @@ def test_gpu_solver_accepts_strided_psi(method):
     state.psi = cp.asfortranarray(state.psi)
     reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid)
     bc = BoundaryCondition(grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt)
-    create_solver(cfg, grid).step(bc.before_step_action(), lambda t: 0.4 * grid.X ** 0,
-                                  reservoir, bc, state)
+    model = Model(grid, BatchPhysics(cfg.physics, None, cp), cfg.solver.precision,
+                  bc.before_step_action(), lambda t: 0.4 * grid.X ** 0, reservoir, bc)
+    create_solver(cfg, grid, model).step(model, state, cfg.solver.dt)
     assert bool(cp.all(cp.isfinite(state.psi)))
 
 
@@ -459,7 +463,6 @@ def _run_physics(cfg, values, xp, batched, *, advance=False):
     reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid,
                                  precision=cfg.solver.precision, batch_size=size,
                                  batch_physics=values if batched else None)
-    solver = create_solver(cfg, grid, batch_physics=values if batched else None)
     bc = BoundaryCondition(grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt,
                            batch_physics=values if batched else None)
     potential = 0.03 * xp.cos(grid.X * 0.4) + bc.before_step_action()
@@ -472,12 +475,15 @@ def _run_physics(cfg, values, xp, batched, *, advance=False):
             return profile, lambda t: 0.4 + 0.1 * t
 
     pump = Pump()
+    model = Model(grid, BatchPhysics(cfg.physics, values if batched else None, xp,
+                                     cfg.solver.precision), cfg.solver.precision,
+                  potential, pump, reservoir, bc)
+    solver = create_solver(cfg, grid, model)
     if advance:
-        solver.advance(potential, pump, reservoir, bc, state, 0, 2)
+        solver.advance(model, state, 2)
     else:
         for k in range(2):
-            solver.step(potential, pump, reservoir, bc, state)
-            state.t = (k + 1) * cfg.solver.dt
+            solver.step(model, state, cfg.solver.dt)
     return state.psi, reservoir.get_state()
 
 
@@ -502,15 +508,18 @@ def test_batch_physics_validation():
     cfg = _config("rk4-fdm", "single", "cap")
     grid = create_grid(cfg.grid)
     with pytest.raises(ValueError, match="non-float"):
-        create_solver(cfg, grid, {"noise_mode": [1, 2]})
+        BatchPhysics(cfg.physics, {"noise_mode": [1, 2]}, np)
     with pytest.raises(ValueError, match="length"):
-        create_solver(cfg, grid, {"hbar": [0.6, 0.7], "m_eff": [0.2]})
-    solver = create_solver(cfg, grid, {"hbar": [0.6, 0.7]})
+        BatchPhysics(cfg.physics, {"hbar": [0.6, 0.7], "m_eff": [0.2]}, np)
     state = SimulationState(grid)
     reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid)
     bc = BoundaryCondition(grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt)
+    model = Model(grid, BatchPhysics(cfg.physics, {"hbar": [0.6, 0.7]}, np),
+                  cfg.solver.precision, bc.before_step_action(),
+                  lambda t: grid.X * 0, reservoir, bc)
+    solver = create_solver(cfg, grid, model)
     with pytest.raises(ValueError, match="state batch size"):
-        solver.step(bc.before_step_action(), lambda t: grid.X * 0, reservoir, bc, state)
+        solver.step(model, state, cfg.solver.dt)
 
 
 def test_plugin_without_batch_physics_rejected():
@@ -522,8 +531,10 @@ def test_plugin_without_batch_physics_rejected():
     available_reservoirs["legacy-test"] = lambda config, physics, grid, precision: None
     try:
         cfg.solver.method = "legacy-test"
-        with pytest.raises(ValueError, match="Solver 'legacy-test'"):
-            create_solver(cfg, grid, {"hbar": [0.6, 0.7]})
+        model = Model(grid, BatchPhysics(cfg.physics, {"hbar": [0.6, 0.7]}, np),
+                      cfg.solver.precision, 0, lambda t: 0, None, None)
+        with pytest.raises(TypeError):
+            create_solver(cfg, grid, model)
         cfg.reservoir.reservoir_type = "legacy-test"
         with pytest.raises(ValueError, match="Reservoir 'legacy-test'"):
             create_reservoir(cfg.reservoir, cfg.physics, grid,

@@ -12,7 +12,7 @@ The full runtime configuration is held in `polarism.config.simulation_parameters
 | `boundary_condition` | Absorption type, profile, and mask width |
 | `potential` | External potential family and parameters |
 | `laser` | Pump definition for single or multiple sources |
-| `reservoir` | Single, double, or quadratic-double reservoir model |
+| `reservoir` | Single, double, quadratic-double, or no reservoir |
 | `solver` | Time step, total time, precision, and solver method |
 | `result` | Visualization and storage controls |
 | `compute_engine` | CPU versus GPU backend selection |

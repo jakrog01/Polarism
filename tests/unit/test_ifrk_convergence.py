@@ -32,8 +32,9 @@ def _trajectory(tableau, dt):
     envelope = 1 + 0.1 * np.cos(2 * np.pi * x / cfg.grid.lx)
     pump = lambda t: envelope * (1.5 + 0.7 * np.sin(3 * t) + 0.4 * np.cos(5 * t))
     steps = round(cfg.solver.total_time / dt)
-    controller.solver.advance(potential, pump, controller.reservoir,
-                              controller.boundary_condition, controller.state, 0, steps)
+    controller.model.potential = potential
+    controller.model.pump = pump
+    controller.solver.advance(controller.model, controller.state, steps)
     return np.concatenate([
         controller.state.psi.ravel(),
         *(field.ravel() for field in controller.reservoir.get_state()),

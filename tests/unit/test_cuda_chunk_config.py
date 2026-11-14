@@ -53,10 +53,7 @@ def test_controller_chunked_recording_matches_per_step_loop():
                  tuple(field.copy() for field in baseline.reservoir.get_state()))]
     baseline.pump_field.lasers = baseline.lasers
     for step in range(10):
-        baseline.solver.step(baseline.potential, baseline.pump_field,
-                             baseline.reservoir, baseline.boundary_condition,
-                             baseline.state)
-        baseline.state.t = (step + 1) * cfg.solver.dt
+        baseline.solver.step(baseline.model, baseline.state, cfg.solver.dt)
         if (step + 1) % round(cfg.result.save_every / cfg.solver.dt) == 0:
             expected.append((baseline.state.t, baseline.state.psi.copy(),
                              tuple(field.copy() for field in baseline.reservoir.get_state())))

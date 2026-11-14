@@ -6,10 +6,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from polarism.config.dtype_utils import complex_dtype, real_dtype
-from polarism.config.batch_physics import BatchPhysics
 from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
-from polarism.solver.abstract_solver import AbstractSolver
+from polarism.solver.abstract_solver import AbstractSolver, ACCEPTED, SolverCapabilities
 from polarism.solver.solver_registry import register_solver
 from polarism.solver.tableaus import TABLEAUS
 
@@ -23,13 +22,21 @@ if TYPE_CHECKING:
 @register_solver("ifrk-fft-cuda")
 class IFRKFFTCudaSolver(AbstractSolver):
     """Stage-coupled spectral Lawson RK with a CPU and plugin-compatible path."""
+    capabilities = SolverCapabilities(
+        components=frozenset({1}), ndim=frozenset({1, 2}),
+        grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double"}),
+        custom_reservoirs="quantitative", potential=True,
+        kinetic_relaxation=True, dispersion=frozenset({"parabolic"}),
+        noise=frozenset({"none", "wigner"}),
+        quantitative_reservoirs=frozenset({"single", "double", "quadratic-double"}),
+        description='FFT interaction-picture RK solver with selectable tableau. Stage-coupled reservoir and cuFFT fused stages for supported GPU cases. Evaluates kinetic_relaxation_eta in nonlinear RHS. Spectral production path for periodic grids; use a wide CAP absorber for open boundaries.',
+    )
 
-    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None) -> None:
-        super().__init__(config)
+    def __init__(self, config: Config, grid: SimulationGrid, model) -> None:
+        super().__init__(config, grid, model)
         self._ndim = grid.ndim
         self._fft = self.xp.fft.fft if grid.ndim == 1 else self.xp.fft.fft2
         self._ifft = self.xp.fft.ifft if grid.ndim == 1 else self.xp.fft.ifft2
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
         if grid.boundary != "periodic":
             raise ValueError(
                 f"{config.solver.method} requires grid_type='periodic', got '{grid.boundary}'. "
@@ -150,30 +157,39 @@ class IFRKFFTCudaSolver(AbstractSolver):
             res_new.append(xp.maximum(value, 0).astype(self._real_dtype, copy=False))
         reservoir.set_state(tuple(res_new))
 
-    def step(self, potential, pump, reservoir: AbstractReservoir,
-             boundary_condition: BoundaryCondition, state: SimulationState) -> None:
+    def step(self, model, state, dt):
+        potential = model.potential
+        pump = model.pump
+        reservoir = model.reservoir
+        boundary_condition = model.boundary
         self.batch_physics.check(state.field_k if state._field is None else state.field)
         fused = self._cuda(reservoir)
         if fused is None:
             self._generic_step(potential, pump, reservoir, boundary_condition, state)
         else:
-            fused.step(potential, pump, reservoir, boundary_condition, state)
+            fused.step(model, state)
+        state.step += 1
+        state.t = state.t0 + state.step * dt
+        return ACCEPTED
 
-    def advance(self, potential, pump, reservoir, boundary_condition, state,
-                start_step: int, n_steps: int) -> None:
+    def advance(self, model, state, n_steps: int) -> None:
+        potential = model.potential
+        pump = model.pump
+        reservoir = model.reservoir
+        boundary_condition = model.boundary
+        start_step = state.step
         self.batch_physics.check(state.field_k if state._field is None else state.field)
         if n_steps <= 0:
             return
         fused = self._cuda(reservoir)
-        if fused is None or not self._can_skip_after_step(boundary_condition) or hasattr(self, "noise"):
-            super().advance(potential, pump, reservoir, boundary_condition,
-                            state, start_step, n_steps)
+        if fused is None or not self._can_skip_after_step(boundary_condition) or model.noise is not None:
+            super().advance(model, state, n_steps)
         else:
-            fused.advance(potential, pump, reservoir, boundary_condition,
-                          state, start_step, n_steps)
+            fused.advance(model, state, n_steps)
 
 
 @register_solver("ifrk4-fft-cuda")
 class IFRK4FFTCudaSolver(IFRKFFTCudaSolver):
     """Use the RK4 tableau regardless of the generic solver's setting."""
+    capabilities = IFRKFFTCudaSolver.capabilities
     tableau_name = "rk4"

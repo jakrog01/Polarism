@@ -7,6 +7,7 @@ from polarism.config.simulation_parameters import ComputeEngineParameters
 from polarism.grid.create_grid import create_grid
 from polarism.reservoir.laplacian import real_laplacian
 from polarism.solver.rk4_cuda_solver import RK4CudaSolver
+from polarism.simulation_controller import SimulationController
 from tests.unit.conftest import small_config
 
 TOL_FDM_STENCIL = 3e-5  # Second-order stencil applied to a smooth field.
@@ -53,7 +54,7 @@ def test_isotropic_nine_point_direction_independence() -> None:
         solver__laplacian="isotropic-9pt",
     )
     grid = create_grid(cfg.grid)
-    solver = RK4CudaSolver(cfg, grid)
+    solver = SimulationController(cfg).solver
     x, y = grid.X, grid.Y
     k = 2.0 * np.pi / cfg.grid.lx
     axis = np.cos(k * x).astype(np.complex128)
@@ -80,4 +81,4 @@ def test_isotropic_nine_point_rejects_unequal_spacings() -> None:
         solver__laplacian="isotropic-9pt",
     )
     with np.testing.assert_raises_regex(ValueError, "requires dx == dy"):
-        RK4CudaSolver(cfg, create_grid(cfg.grid))
+        SimulationController(cfg)

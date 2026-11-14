@@ -4,10 +4,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.compute_engine import has_full_rate_fp64
-from polarism.config.batch_physics import BatchPhysics
 from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
-from polarism.solver.abstract_solver import AbstractSolver
+from polarism.solver.abstract_solver import AbstractSolver, ACCEPTED, SolverCapabilities
 from polarism.solver.solver_registry import register_solver
 
 if TYPE_CHECKING:
@@ -1292,11 +1291,19 @@ def _auto_tune_block_size(kern_rhs, _N: int) -> int:
 @register_solver("rk4-cuda")
 class RK4CudaSolver(AbstractSolver):
     """Generic fused RK4 CUDA solver with overridable kernel and launch hooks."""
+    capabilities = SolverCapabilities(
+        components=frozenset({1}), ndim=frozenset({1, 2}),
+        grid_types=frozenset({"periodic", "closed-interval"}), reservoirs=frozenset({"single", "double", "quadratic-double"}),
+        custom_reservoirs="unsupported", potential=True,
+        kinetic_relaxation=True, dispersion=frozenset({"parabolic"}),
+        noise=frozenset({"none", "wigner"}),
+        quantitative_reservoirs=frozenset({"single", "double", "quadratic-double"}),
+        description='GPU-fused CUDA RK4 solver. Stage-coupled reservoir. FDM production/reference path for periodic and closed-interval grids.',
+    )
 
-    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None):
+    def __init__(self, config: Config, grid: SimulationGrid, model):
         """Set up the rk 4 cuda solver."""
-        super().__init__(config)
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
+        super().__init__(config, grid, model)
         self.ndim = grid.ndim
         self.nx = grid.nx
         self.ny = grid.ny if grid.ndim == 2 else None
@@ -1829,15 +1836,18 @@ class RK4CudaSolver(AbstractSolver):
         self._graph_cache[length] = (graph, combiner if combiner is not None else pump_flat)
         return graph
 
-    def advance(self, potential, pump, reservoir, boundary_condition, state,
-                start_step: int, n_steps: int) -> None:
+    def advance(self, model, state, n_steps: int) -> None:
         """Run CUDA chunks; custom reservoirs or boundary actions need individual steps."""
+        potential = model.potential
+        pump = model.pump
+        reservoir = model.reservoir
+        boundary_condition = model.boundary
+        start_step = state.step
         if n_steps <= 0:
             return
         self.batch_physics.check(state.field)
         if not self._use_gpu:
-            return super().advance(potential, pump, reservoir, boundary_condition,
-                                   state, start_step, n_steps)
+            return super().advance(model, state, n_steps)
         self._activate_batch(state.field.shape, state.batched)
         from polarism.reservoir.single_reservoir import SingleReservoir
         from polarism.reservoir.double_reservoir import DoubleReservoir
@@ -1847,8 +1857,7 @@ class RK4CudaSolver(AbstractSolver):
                      "quadratic-double": QuadraticDoubleReservoir}
         if (type(reservoir) is not supported[self._reservoir_type]
                 or not getattr(boundary_condition.absorption, "after_step_is_noop", False)):
-            return super().advance(potential, pump, reservoir, boundary_condition,
-                                   state, start_step, n_steps)
+            return super().advance(model, state, n_steps)
 
         xp = self.xp
         shape = state.field.shape
@@ -1876,7 +1885,7 @@ class RK4CudaSolver(AbstractSolver):
             pump_flat = None
         graph_ok = (
             self.config.solver.cuda_graphs and not self._graphs_failed
-            and not hasattr(self, "noise")
+            and model.noise is None
             and (coefficient is not None or multi)
             and getattr(boundary_condition.absorption, "after_step_is_noop", False)
         )
@@ -1970,8 +1979,8 @@ class RK4CudaSolver(AbstractSolver):
                 self._step_gpu(work_psi[parity], work_res[parity], vr, vi,
                                pumps, factors, vi_scale,
                                work_psi[1 - parity], work_res[1 - parity])
-                if hasattr(self, "noise"):
-                    self.noise.apply_arrays(work_psi[1 - parity],
+                if model.noise is not None:
+                    model.noise.apply_arrays(work_psi[1 - parity],
                                             work_res[1 - parity][0], start_step + k)
                 if len(pending_hosts) >= 32:
                     stream.synchronize()
@@ -1983,7 +1992,8 @@ class RK4CudaSolver(AbstractSolver):
             reservoir.set_state(tuple(field.reshape(shape).copy()
                                       for field in work_res[final_index]))
             stream.synchronize()
-        state.t = state.t0 + (start_step + n_steps) * self._dt
+        state.step = start_step + n_steps
+        state.t = state.t0 + state.step * self._dt
 
     def _cpu_laplacian_9pt(self, psi, out) -> None:
         """Apply the 9-point isotropic CPU Laplacian (requires dx == dy)."""
@@ -2134,19 +2144,18 @@ class RK4CudaSolver(AbstractSolver):
             for r0, r1, r2, r3, r4 in zip(res0, k1r, k2r, k3r, k4r)
         ))
 
-    def step(
-        self,
-        potential: Union[np.ndarray, cp.ndarray],
-        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
-        reservoir: AbstractReservoir,
-        boundary_condition: BoundaryCondition,
-        state: SimulationState,
-    ) -> None:
+    def step(self, model, state, dt):
         """Advance with CUDA kernels or CuPy stages for a custom reservoir model."""
+        potential = model.potential
+        pump = model.pump
+        reservoir = model.reservoir
+        boundary_condition = model.boundary
         self.batch_physics.check(state.field)
         if not self._use_gpu:
             self._step_cpu(potential, pump, reservoir, boundary_condition, state)
-            return
+            state.step += 1
+            state.t = state.t0 + state.step * dt
+            return ACCEPTED
         from polarism.reservoir.single_reservoir import SingleReservoir
         from polarism.reservoir.double_reservoir import DoubleReservoir
         from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
@@ -2155,7 +2164,9 @@ class RK4CudaSolver(AbstractSolver):
                      "quadratic-double": QuadraticDoubleReservoir}
         if type(reservoir) is not supported[self._reservoir_type]:
             self._step_cpu(potential, pump, reservoir, boundary_condition, state)
-            return
+            state.step += 1
+            state.t = state.t0 + state.step * dt
+            return ACCEPTED
         self._activate_batch(state.field.shape, state.batched)
 
         shape = state.field.shape
@@ -2217,3 +2228,6 @@ class RK4CudaSolver(AbstractSolver):
         )
         state.field = boundary_condition.after_step_action(psi_out.reshape(shape))
         reservoir.set_state(tuple(field.reshape(shape) for field in reservoir_out))
+        state.step += 1
+        state.t = state.t0 + state.step * dt
+        return ACCEPTED

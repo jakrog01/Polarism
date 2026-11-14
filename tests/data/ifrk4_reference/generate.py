@@ -49,10 +49,8 @@ def run_cases():
                     - 0.003j * (1 + np.sin(2 * np.pi * y / cfg.grid.ly)), dtype=dtype
                 )
                 for step in range(5):
-                    controller.state.t = step * cfg.solver.dt
-                    controller.solver.step(controller.potential, controller.pump_field,
-                                           controller.reservoir, controller.boundary_condition,
-                                           controller.state)
+                    controller.solver.step(controller.model, controller.state,
+                                           cfg.solver.dt)
                 key = f"{precision}_{reservoir_type}_eta{eta:g}"
                 output[key + "_psi"] = np.asarray(controller.state.psi)
                 for index, field in enumerate(controller.reservoir.get_state()):

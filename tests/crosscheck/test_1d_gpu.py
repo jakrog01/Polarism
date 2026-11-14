@@ -35,10 +35,8 @@ def configuration(method, reservoir, boundary, gpu):
 
 def evolve(controller, steps=3):
     for _ in range(steps):
-        controller.solver.step(controller.potential, controller.pump_field,
-                               controller.reservoir, controller.boundary_condition,
-                               controller.state)
-        controller.state.t += controller.cfg.solver.dt
+        controller.solver.step(controller.model, controller.state,
+                               controller.cfg.solver.dt)
     return (controller.xp.asnumpy(controller.state.psi) if controller.cfg.compute_engine.use_gpu
             else np.asarray(controller.state.psi).copy())
 
@@ -71,13 +69,11 @@ def test_1d_gpu_batch_matches_separate(method):
     cfg = configuration(method, "single", "periodic", True)
     members = [{}, {}]
     batch = SimulationController(cfg, members=members)
-    batch.solver.advance(batch.potential, batch.pump_field, batch.reservoir,
-                         batch.boundary_condition, batch.state, 0, 3)
+    batch.solver.advance(batch.model, batch.state, 3)
     actual = batch.xp.asnumpy(batch.state.psi)
     assert actual.shape == (2, 64)
     for i in range(2):
         single = SimulationController(configuration(method, "single", "periodic", True))
-        single.solver.advance(single.potential, single.pump_field, single.reservoir,
-                              single.boundary_condition, single.state, 0, 3)
+        single.solver.advance(single.model, single.state, 3)
         np.testing.assert_allclose(actual[i], single.xp.asnumpy(single.state.psi),
                                    rtol=1e-10, atol=1e-11)

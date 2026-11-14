@@ -49,8 +49,9 @@ def test_pure_decay_rate_fit() -> None:
     controller = SimulationController(cfg); controller.state.psi.fill(1.0 + 0j)
     norms, times = [], []
     for _ in range(20):
-        controller.solver.step(controller.potential, lambda t: np.zeros_like(controller.grid.X), controller.reservoir, controller.boundary_condition, controller.state)
-        controller.state.t += cfg.solver.dt; times.append(controller.state.t); norms.append(float(np.sum(np.abs(controller.state.psi) ** 2)))
+        controller.model.pump = lambda t: np.zeros_like(controller.grid.X)
+        controller.solver.step(controller.model, controller.state, cfg.solver.dt)
+        times.append(controller.state.t); norms.append(float(np.sum(np.abs(controller.state.psi) ** 2)))
     slope = np.polyfit(times, np.log(norms), 1)[0]
     assert abs(slope + cfg.physics.gamma_C) < TOL_DECAY_FIT
 
@@ -129,14 +130,8 @@ def test_free_wave_packet_broadens_analytically() -> None:
     pump = np.zeros_like(controller.grid.X)
     n_steps = int(total_time / cfg.solver.dt)
     for step in range(n_steps):
-        controller.solver.step(
-            controller.potential,
-            lambda t: pump,
-            controller.reservoir,
-            controller.boundary_condition,
-            controller.state,
-        )
-        controller.state.t += cfg.solver.dt
+        controller.model.pump = lambda t: pump
+        controller.solver.step(controller.model, controller.state, cfg.solver.dt)
         if (step + 1) % 30 == 0 or step + 1 == n_steps:
             times.append(controller.state.t)
             widths.append(width_sq())

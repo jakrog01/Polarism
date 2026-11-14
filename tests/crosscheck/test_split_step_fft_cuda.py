@@ -117,9 +117,7 @@ def _run_crosscheck(ctl, steps=3):
         p2 = cp.asnumpy(ctl.pump_field(t + 3 * cfg.solver.dt / 4))
         psi, fields = reference_step(psi, fields, potential, p1, p2,
                                      cfg, ctl.grid, mask)
-        ctl.solver.step(ctl.potential, ctl.pump_field, ctl.reservoir,
-                        ctl.boundary_condition, ctl.state)
-        ctl.state.t += cfg.solver.dt
+        ctl.solver.step(ctl.model, ctl.state, cfg.solver.dt)
     tolerance = 1e-5 if cfg.solver.precision == "single" else 1e-10
     actual = cp.asnumpy(ctl.state.psi)
     assert np.linalg.norm(actual - psi) / np.linalg.norm(psi) < tolerance
@@ -181,9 +179,7 @@ def test_bitwise_determinism():
     for _ in range(2):
         ctl = _controller("quadratic-double", "cap", 1)
         for n in range(4):
-            ctl.solver.step(ctl.potential, ctl.pump_field, ctl.reservoir,
-                            ctl.boundary_condition, ctl.state)
-            ctl.state.t += ctl.cfg.solver.dt
+            ctl.solver.step(ctl.model, ctl.state, ctl.cfg.solver.dt)
         results.append((cp.asnumpy(ctl.state.psi_k),
                         tuple(cp.asnumpy(x) for x in ctl.reservoir.get_state())))
     assert np.array_equal(results[0][0], results[1][0])
@@ -210,14 +206,12 @@ def test_small_dt_agreement_with_existing_split_step():
         cfg.laser.sigma_space = 8.0
         ctl = SimulationController(cfg)
         if method == "split-step-fft":
-            ctl.solver = SplitStepFFTSolver(ctl.cfg, ctl.grid)
+            ctl.solver = SplitStepFFTSolver(ctl.cfg, ctl.grid, ctl.model)
         X, Y = cp.asarray(ctl.grid.X), cp.asarray(ctl.grid.Y)
         ctl.state.psi = (20.0 * cp.exp(-0.5 * (X**2 + Y**2) / 6.0**2)
                          * cp.exp(1j * 1.5 * X)).astype(ctl.state.psi.dtype)
         for _ in range(round(0.8 / dt)):
-            ctl.solver.step(ctl.potential, ctl.pump_field, ctl.reservoir,
-                            ctl.boundary_condition, ctl.state)
-            ctl.state.t += dt
+            ctl.solver.step(ctl.model, ctl.state, dt)
         return cp.asnumpy(ctl.state.psi)
 
     # Both schemes are second-order Strang splittings with different error
@@ -234,4 +228,4 @@ def test_requires_gpu():
     cfg = Config()
     cfg.solver.method = "split-step-fft-cuda"
     with pytest.raises(RuntimeError, match="requires CuPy and an active CUDA GPU"):
-        SplitStepFFTCudaSolver(cfg, create_grid(cfg.grid))
+        SimulationController(cfg)

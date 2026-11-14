@@ -40,8 +40,7 @@ def _controller(method: str, size: int, precision: str, reservoir: str,
 
 
 def _arguments(controller):
-    return (controller.potential, controller.pump_field, controller.reservoir,
-            controller.boundary_condition, controller.state)
+    return (controller.model, controller.state)
 
 
 def _time_run(method, size, precision, reservoir, steps, chunked, cp,
@@ -55,7 +54,7 @@ def _time_run(method, size, precision, reservoir, steps, chunked, cp,
             done = 0
             while done < steps:
                 length = min(64, steps - done)
-                controller.solver.advance(*args, first_step + done, length)
+                controller.solver.advance(*args, length)
                 done += length
 
         # The untimed pass captures every graph length the timed pass uses.
@@ -64,16 +63,16 @@ def _time_run(method, size, precision, reservoir, steps, chunked, cp,
         start = time.perf_counter()
         chunks(steps)
     else:
-        noise_applier = getattr(controller.solver, "noise", None)
+        noise_applier = controller.model.noise
         for k in range(4):
-            controller.solver.step(*args)
+            controller.solver.step(*args, dt)
             if noise_applier is not None:
                 noise_applier.apply_to_state(controller.state, controller.reservoir, k)
             controller.state.t = (k + 1) * dt
         cp.cuda.Device().synchronize()
         start = time.perf_counter()
         for k in range(steps):
-            controller.solver.step(*args)
+            controller.solver.step(*args, dt)
             if noise_applier is not None:
                 noise_applier.apply_to_state(controller.state, controller.reservoir, k + 4)
             controller.state.t = (k + 5) * dt
@@ -85,10 +84,10 @@ def _time_batched(method, size, precision, reservoir, steps, batch, cp,
                   tableau="rk4", ndim=2, noise="none"):
     def timed_advance(controller):
         args = _arguments(controller)
-        controller.solver.advance(*args, 0, steps)
+        controller.solver.advance(*args, steps)
         cp.cuda.Device().synchronize()
         start = time.perf_counter()
-        controller.solver.advance(*args, steps, steps)
+        controller.solver.advance(*args, steps)
         cp.cuda.Device().synchronize()
         return time.perf_counter() - start
 

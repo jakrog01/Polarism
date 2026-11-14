@@ -6,6 +6,8 @@ from polarism.reservoir.double_reservoir import DoubleReservoir
 from polarism.reservoir.single_reservoir import SingleReservoir
 from polarism.solver.rk4_fdm_solver import RK4FDMSolver
 from polarism.solver.split_step_fft_solver import SplitStepFFTSolver
+from polarism.model import Model
+from polarism.config.batch_physics import BatchPhysics
 
 from tests._helpers import (
     GridCfg,
@@ -30,7 +32,6 @@ def test_zero_pump_exponential_decay(solver_cls, reservoir_cls, output_dir):
     physics = make_physics_default(g_C=0.0, g_R=0.0, R=0.0)
     cfg = make_config(dt=0.02, physics=physics)
 
-    solver = solver_cls(cfg, grid)
     reservoir = reservoir_cls(make_reservoir_cfg(False), physics, grid)
     bc = NoBoundaryCondition()
 
@@ -39,13 +40,16 @@ def test_zero_pump_exponential_decay(solver_cls, reservoir_cls, output_dir):
 
     V = potential_zero(grid.X)
     P = pump_zero(grid.X)
+    model = Model(grid, BatchPhysics(physics, None, np), "double",
+                  V, lambda t: P, reservoir, bc)
+    solver = solver_cls(cfg, grid, model)
 
     rec = Recorder()
     t = 0.0
     norm0 = float(np.sum(np.abs(state.psi) ** 2))
 
     for _ in range(1200):
-        solver.step(V, lambda t: P, reservoir, bc, state)
+        solver.step(model, state, cfg.solver.dt)
         t += cfg.solver.dt
 
         norm = float(np.sum(np.abs(state.psi) ** 2))

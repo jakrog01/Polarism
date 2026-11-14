@@ -6,6 +6,8 @@ from polarism.reservoir.double_reservoir import DoubleReservoir
 from polarism.reservoir.single_reservoir import SingleReservoir
 from polarism.solver.rk4_fdm_solver import RK4FDMSolver
 from polarism.solver.split_step_fft_solver import SplitStepFFTSolver
+from polarism.model import Model
+from polarism.config.batch_physics import BatchPhysics
 from tests._helpers import (
     GridCfg,
     NoBoundaryCondition,
@@ -34,7 +36,6 @@ def test_uniform_pump_does_not_create_spatial_structure(
     physics = make_physics_default()
     cfg = make_config(dt=0.02, physics=physics)
 
-    solver = solver_cls(cfg, grid)
     reservoir = reservoir_cls(make_reservoir_cfg(False), physics, grid)
     bc = NoBoundaryCondition()
 
@@ -43,12 +44,15 @@ def test_uniform_pump_does_not_create_spatial_structure(
 
     V = potential_zero(grid.X)
     P = pump_uniform(0.01, grid.X)
+    model = Model(grid, BatchPhysics(physics, None, np), "double",
+                  V, lambda t: P, reservoir, bc)
+    solver = solver_cls(cfg, grid, model)
 
     rec = Recorder()
     t = 0.0
 
     for _ in range(5000):
-        solver.step(V, lambda t: P, reservoir, bc, state)
+        solver.step(model, state, cfg.solver.dt)
         t += cfg.solver.dt
 
         ux = uniformity_error(state.psi)

@@ -5,10 +5,9 @@ import math
 from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.config.dtype_utils import complex_dtype
-from polarism.config.batch_physics import BatchPhysics
 from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
-from polarism.solver.abstract_solver import AbstractSolver
+from polarism.solver.abstract_solver import AbstractSolver, ACCEPTED, SolverCapabilities
 from polarism.solver.solver_registry import register_solver
 
 if TYPE_CHECKING:
@@ -29,12 +28,20 @@ _PHI_TAYLOR_TERMS = 10
 @register_solver("etd-rk2")
 class ETDRK2Solver(AbstractSolver):
     """Solve the model with ETD-RK2."""
-    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None):
+    capabilities = SolverCapabilities(
+        components=frozenset({1}), ndim=frozenset({1, 2}),
+        grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
+        custom_reservoirs="quantitative", potential=True,
+        kinetic_relaxation=False, dispersion=frozenset({"parabolic"}),
+        noise=frozenset({"none", "wigner"}),
+        quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
+        description='ETD-RK2 spectral solver. FFT-only, periodic grid only. Reservoir advanced between predictor and corrector using a midpoint condensate estimate (psi_n + a)/2, giving O(dt²) psi↔reservoir coupling (measured p≈2.00 on quadratic-double, per convergence study). Does not evaluate kinetic_relaxation_eta.',
+    )
+    def __init__(self, config: Config, grid: SimulationGrid, model):
         """Set up the etdrk 2 solver."""
-        super().__init__(config)
+        super().__init__(config, grid, model)
         self._fft = self.xp.fft.fft if grid.ndim == 1 else self.xp.fft.fft2
         self._ifft = self.xp.fft.ifft if grid.ndim == 1 else self.xp.fft.ifft2
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
         dt = self.config.solver.dt
         hbar = self.batch_physics.get("hbar")
         m_eff = self.batch_physics.get("m_eff")
@@ -100,15 +107,12 @@ class ETDRK2Solver(AbstractSolver):
 
         return (-1j / hbar) * eff_energy * psi + gain_loss * psi
 
-    def step(
-        self,
-        potential: Union[np.ndarray, cp.ndarray],
-        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
-        reservoir: AbstractReservoir,
-        boundary_condition: BoundaryCondition,
-        state: SimulationState,
-    ) -> None:
+    def step(self, model, state, dt):
         """Advance the solver by one time step."""
+        potential = model.potential
+        pump = model.pump
+        reservoir = model.reservoir
+        boundary_condition = model.boundary
         self.batch_physics.check(state.field)
         dt = self.config.solver.dt
 
@@ -137,3 +141,6 @@ class ETDRK2Solver(AbstractSolver):
         state.field = self._ifft(psi_new_k)
 
         state.field = boundary_condition.after_step_action(state.field)
+        state.step += 1
+        state.t = state.t0 + state.step * dt
+        return ACCEPTED

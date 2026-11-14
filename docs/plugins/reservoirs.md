@@ -5,6 +5,10 @@
 Write a reservoir when you need a new rate equation or state layout beyond
 the built-in single, double, and quadratic-double models. A reservoir supplies
 densities to the condensate equation and evolves one or more real fields.
+Select `reservoir_type: none` when the condensate has no incoherent reservoir.
+It returns an empty state tuple and no reservoir result nodes; its active and
+inactive densities are scalar zero. With `none`, an incoherent pump feeds no
+field, and validation warns when a laser has nonzero power.
 
 ## Contract
 

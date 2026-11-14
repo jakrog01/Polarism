@@ -34,6 +34,7 @@ def _multi_lasers(controller, precision):
     controller.lasers = [LaserFactory.create_laser(cfg, X, Y, precision)[0]
                          for cfg in configs]
     controller.pump_field = PumpField(controller.lasers, controller.grid, precision)
+    controller.model.pump = controller.pump_field
 
 
 def _assert_multi_matches(actual, expected, precision, long_run=False):
@@ -77,14 +78,11 @@ def test_multi_laser_advance_matches_steps(method, tableau, path, precision, gra
         fast.solver._use_tiled = True
     elif path == "staged":
         fast.solver._use_tiled = False
-    args = (fast.potential, fast.pump_field, fast.reservoir,
-            fast.boundary_condition, fast.state)
+    args = (fast.model, fast.state)
     for start, length in ((0, 1), (1, 5)):
-        fast.solver.advance(*args, start, length)
+        fast.solver.advance(*args, length)
         for k in range(start, start + length):
-            old.solver.step(old.potential, old.pump_field, old.reservoir,
-                            old.boundary_condition, old.state)
-            old.state.t = (k + 1) * cfg.solver.dt
+            old.solver.step(old.model, old.state, cfg.solver.dt)
         _assert_multi_matches(fast, old, precision)
         assert fast.state.t == old.state.t
     owner = fast.solver._fused if method == "ifrk-fft-cuda" else fast.solver
@@ -111,14 +109,11 @@ def test_multi_laser_graph_chunks_match_steps(method):
     old = SimulationController(cfg)
     for controller in (fast, old):
         _multi_lasers(controller, "double")
-    args = (fast.potential, fast.pump_field, fast.reservoir,
-            fast.boundary_condition, fast.state)
+    args = (fast.model, fast.state)
     for start, length in ((0, 150), (150, 37)):
-        fast.solver.advance(*args, start, length)
+        fast.solver.advance(*args, length)
         for k in range(start, start + length):
-            old.solver.step(old.potential, old.pump_field, old.reservoir,
-                            old.boundary_condition, old.state)
-            old.state.t = (k + 1) * cfg.solver.dt
+            old.solver.step(old.model, old.state, cfg.solver.dt)
         _assert_multi_matches(fast, old, "double", long_run=True)
     owner = fast.solver._fused if method == "ifrk-fft-cuda" else fast.solver
     assert owner._graph_cache
@@ -146,18 +141,15 @@ def test_advance_matches_steps(method, precision, model):
     old = SimulationController(cfg)
     fast.pump_field.lasers = fast.lasers
     old.pump_field.lasers = old.lasers
-    args = (fast.potential, fast.pump_field, fast.reservoir,
-            fast.boundary_condition, fast.state)
-    fast.solver.advance(*args, 0, 6)
+    args = (fast.model, fast.state)
+    fast.solver.advance(*args, 6)
     psi_reference = fast.state.psi
     field_references = fast.reservoir.get_state()
     saved_psi = psi_reference.copy()
     saved_fields = tuple(field.copy() for field in field_references)
-    fast.solver.advance(*args, 6, 2)
+    fast.solver.advance(*args, 2)
     for k in range(8):
-        old.solver.step(old.potential, old.pump_field, old.reservoir,
-                        old.boundary_condition, old.state)
-        old.state.t = (k + 1) * cfg.solver.dt
+        old.solver.step(old.model, old.state, cfg.solver.dt)
     _assert_matches_steps(fast.state.psi, old.state.psi, method, precision)
     for field, other in zip(fast.reservoir.get_state(), old.reservoir.get_state()):
         _assert_matches_steps(field, other, method, precision)
@@ -188,14 +180,11 @@ def test_multiple_graph_lengths_and_odd_remainder_match_steps(method, precision)
     for controller in (fast, old):
         controller.pump_field.lasers = controller.lasers
 
-    args = (fast.potential, fast.pump_field, fast.reservoir,
-            fast.boundary_condition, fast.state)
+    args = (fast.model, fast.state)
     for start, length in ((0, 150), (150, 37)):
-        fast.solver.advance(*args, start, length)
+        fast.solver.advance(*args, length)
         for k in range(start, start + length):
-            old.solver.step(old.potential, old.pump_field, old.reservoir,
-                            old.boundary_condition, old.state)
-            old.state.t = (k + 1) * cfg.solver.dt
+            old.solver.step(old.model, old.state, cfg.solver.dt)
         _assert_matches_steps(fast.state.psi, old.state.psi, method, precision,
                               long_run=True)
         for field, other in zip(fast.reservoir.get_state(), old.reservoir.get_state()):
@@ -235,13 +224,11 @@ def test_advance_fallback_matches_steps(method, case):
             )[0])
             controller.pump_field = PumpField(controller.lasers, controller.grid,
                                               cfg.solver.precision)
+            controller.model.pump = controller.pump_field
         controller.pump_field.lasers = controller.lasers
-    fast.solver.advance(fast.potential, fast.pump_field, fast.reservoir,
-                        fast.boundary_condition, fast.state, 0, 4)
+    fast.solver.advance(fast.model, fast.state, 4)
     for k in range(4):
-        old.solver.step(old.potential, old.pump_field, old.reservoir,
-                        old.boundary_condition, old.state)
-        old.state.t = (k + 1) * cfg.solver.dt
+        old.solver.step(old.model, old.state, cfg.solver.dt)
     _assert_matches_steps(fast.state.psi, old.state.psi, method, "single")
     for field, other in zip(fast.reservoir.get_state(), old.reservoir.get_state()):
         _assert_matches_steps(field, other, method, "single")
@@ -280,12 +267,9 @@ def test_advance_boundary_and_diffusion_matches_steps(method, case):
     old = SimulationController(cfg)
     for controller in (fast, old):
         controller.pump_field.lasers = controller.lasers
-    fast.solver.advance(fast.potential, fast.pump_field, fast.reservoir,
-                        fast.boundary_condition, fast.state, 0, 4)
+    fast.solver.advance(fast.model, fast.state, 4)
     for k in range(4):
-        old.solver.step(old.potential, old.pump_field, old.reservoir,
-                        old.boundary_condition, old.state)
-        old.state.t = (k + 1) * cfg.solver.dt
+        old.solver.step(old.model, old.state, cfg.solver.dt)
     _assert_matches_steps(fast.state.psi, old.state.psi, method, "double")
     for field, other in zip(fast.reservoir.get_state(), old.reservoir.get_state()):
         _assert_matches_steps(field, other, method, "double")

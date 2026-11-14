@@ -9,6 +9,8 @@ from polarism.grid.create_grid import create_grid
 from polarism.reservoir.create_reservoir import create_reservoir
 from polarism.simulation_state import SimulationState
 from polarism.solver.create_solver import create_solver
+from polarism.model import Model
+from polarism.config.batch_physics import BatchPhysics
 
 
 def _case(method, batch, xp):
@@ -28,16 +30,18 @@ def _case(method, batch, xp):
     def pump(t):
         return xp.full((grid.ny, grid.nx), 0.1, dtype=xp.float64)
 
-    return create_solver(cfg, grid), (potential, pump, reservoir, boundary, state)
+    model = Model(grid, BatchPhysics(cfg.physics, None, xp), cfg.solver.precision,
+                  potential, pump, reservoir, boundary)
+    return create_solver(cfg, grid, model), (model, state)
 
 
 def _run(solver, args, method):
     if method == "split-step-fft-cuda":
-        solver.advance(*args, 0, 1)
+        solver.advance(*args, 1)
     else:
-        solver.step(*args)
+        solver.step(*args, solver.config.solver.dt)
     state = args[-1]
-    reservoir = args[2]
+    reservoir = args[0].reservoir
     return (compute_engine.xp.asnumpy(state.psi) if compute_engine.use_gpu else state.psi.copy(),
             *(compute_engine.xp.asnumpy(field) if compute_engine.use_gpu else field.copy()
               for field in reservoir.get_state()))

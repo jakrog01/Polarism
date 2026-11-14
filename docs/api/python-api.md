@@ -17,6 +17,9 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - create_reservoir
         - create_solver
         - AbstractSolver
+        - Model
+        - StepReport
+        - SolverCapabilities
         - LaserFactory
         - load_plugins
         - RealTimeVisualization
@@ -63,6 +66,12 @@ For constructor calls and working extension examples, see the [plugin guide](../
 ::: polarism.simulation_controller.SimulationController
 
 ::: polarism.solver.AbstractSolver
+
+::: polarism.model.Model
+
+::: polarism.solver.StepReport
+
+::: polarism.solver.SolverCapabilities
 
 ::: polarism.solver.register_solver
 

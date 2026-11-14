@@ -4,10 +4,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.config.dtype_utils import complex_dtype, real_dtype
-from polarism.config.batch_physics import BatchPhysics
 from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
-from polarism.solver.abstract_solver import AbstractSolver
+from polarism.solver.abstract_solver import AbstractSolver, ACCEPTED, SolverCapabilities
 from polarism.solver.solver_registry import register_solver
 
 if TYPE_CHECKING:
@@ -23,12 +22,20 @@ if TYPE_CHECKING:
 @register_solver("ip-rk4")
 class IPRK4Solver(AbstractSolver):
     """Solve the model with interaction-picture RK4."""
-    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None):
+    capabilities = SolverCapabilities(
+        components=frozenset({1}), ndim=frozenset({1, 2}),
+        grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
+        custom_reservoirs="quantitative", potential=True,
+        kinetic_relaxation=True, dispersion=frozenset({"parabolic"}),
+        noise=frozenset({"none", "wigner"}),
+        quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
+        description="Interaction-picture RK4. Stage-coupled reservoir. FFT-only, periodic grid only. Evaluates kinetic_relaxation_eta spectrally via _forward/_inverse. For GPU-native spectral production use 'ifrk4-fft-cuda'.",
+    )
+    def __init__(self, config: Config, grid: SimulationGrid, model):
         """Set up the iprk 4 solver."""
-        super().__init__(config)
+        super().__init__(config, grid, model)
         self._fft = self.xp.fft.fft if grid.ndim == 1 else self.xp.fft.fft2
         self._ifft = self.xp.fft.ifft if grid.ndim == 1 else self.xp.fft.ifft2
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
         dt = self.config.solver.dt
         hbar = self.batch_physics.get("hbar")
         m_eff = self.batch_physics.get("m_eff")
@@ -77,15 +84,12 @@ class IPRK4Solver(AbstractSolver):
 
         return rhs
 
-    def step(
-        self,
-        potential: Union[np.ndarray, cp.ndarray],
-        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
-        reservoir: AbstractReservoir,
-        boundary_condition: BoundaryCondition,
-        state: SimulationState,
-    ) -> None:
+    def step(self, model, state, dt):
         """Advance the solver by one time step."""
+        potential = model.potential
+        pump = model.pump
+        reservoir = model.reservoir
+        boundary_condition = model.boundary
         self.batch_physics.check(state.field)
         dt = self.config.solver.dt
         t = state.t
@@ -148,3 +152,6 @@ class IPRK4Solver(AbstractSolver):
             for r0, k1, k2, k3, k4 in zip(res0, k1_res, k2_res, k3_res, k4_res)
         )
         reservoir.set_state(tuple(self.xp.maximum(x, 0) for x in res_new))
+        state.step += 1
+        state.t = state.t0 + state.step * dt
+        return ACCEPTED

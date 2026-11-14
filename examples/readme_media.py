@@ -91,8 +91,7 @@ def main():
     frames = []
     step = 0
     for i in range(FIRST_FRAME + N_FRAMES):
-        sim.solver.advance(sim.potential, sim.pump_field, sim.reservoir,
-                           sim.boundary_condition, sim.state, step, FRAME_EVERY)
+        sim.solver.advance(sim.model, sim.state, FRAME_EVERY)
         step += FRAME_EVERY
         if i >= FIRST_FRAME:
             frames.append(render(cp.asnumpy(sim.state.psi)))

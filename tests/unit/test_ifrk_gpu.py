@@ -71,7 +71,8 @@ def test_fused_matches_generic(tableau, reservoir_type, precision, eta):
             args = (controller.potential, controller.pump_field, controller.reservoir,
                     controller.boundary_condition, controller.state)
             if use_fused:
-                controller.solver.step(*args)
+                controller.solver.step(controller.model, controller.state,
+                                       controller.cfg.solver.dt)
             else:
                 controller.solver._generic_step(*args)
     _compare(_output(fused), _output(generic), precision)
@@ -85,11 +86,10 @@ def test_graph_chunk_matches_repeated_steps(tableau):
     steps = _case(tableau, "quadratic-double", "double", 0.04, pulse_width=0.3)
     args = (chunk.potential, chunk.pump_field, chunk.reservoir,
             chunk.boundary_condition, chunk.state)
-    chunk.solver.advance(*args, 0, 131)
+    chunk.solver.advance(chunk.model, chunk.state, 131)
     for index in range(131):
         steps.state.t = index * steps.cfg.solver.dt
-        steps.solver.step(steps.potential, steps.pump_field, steps.reservoir,
-                          steps.boundary_condition, steps.state)
+        steps.solver.step(steps.model, steps.state, steps.cfg.solver.dt)
     cp.cuda.Device().synchronize()
     assert chunk.solver._fused._graph_cache
     assert not chunk.solver._fused._graphs_failed
@@ -106,9 +106,8 @@ def test_alias_matches_old_reference(precision, reservoir_type, eta):
     assert controller.solver.tableau.name == "rk4"
     for step in range(5):
         controller.state.t = step * controller.cfg.solver.dt
-        controller.solver.step(controller.potential, controller.pump_field,
-                               controller.reservoir, controller.boundary_condition,
-                               controller.state)
+        controller.solver.step(controller.model, controller.state,
+                               controller.cfg.solver.dt)
     key = f"{precision}_{reservoir_type}_eta{eta:g}"
     path = Path(__file__).parents[1] / "data/ifrk4_reference/reference.npz"
     with np.load(path) as data:

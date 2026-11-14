@@ -12,6 +12,7 @@ from polarism.reservoir.double_reservoir import DoubleReservoir
 from polarism.reservoir.quadratic_double_reservoir import QuadraticDoubleReservoir
 from polarism.reservoir.reservoir_registry import available_reservoirs
 from polarism.reservoir.single_reservoir import SingleReservoir
+from polarism.reservoir.no_reservoir import NoReservoir
 from polarism.grid.simulation_grid import SimulationGrid
 
 

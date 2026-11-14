@@ -465,7 +465,11 @@ class FusedIFRK:
         if self._zero_pump is None:
             self._zero_pump = self.xp.zeros(self.shape, dtype=self.real)
 
-    def step(self, potential, pump, reservoir, boundary_condition, state):
+    def step(self, physical_model, state):
+        potential = physical_model.potential
+        pump = physical_model.pump
+        reservoir = physical_model.reservoir
+        boundary_condition = physical_model.boundary
         self._activate_shape(state)
         model = self._model(reservoir)
         self._ensure(model)
@@ -518,8 +522,12 @@ class FusedIFRK:
         self._graph_cache[length] = graph
         return graph
 
-    def advance(self, potential, pump, reservoir, boundary_condition, state,
-                start_step, n_steps):
+    def advance(self, physical_model, state, n_steps):
+        potential = physical_model.potential
+        pump = physical_model.pump
+        reservoir = physical_model.reservoir
+        boundary_condition = physical_model.boundary
+        start_step = state.step
         self._activate_shape(state)
         model = self._model(reservoir)
         self._ensure(model)
@@ -617,4 +625,5 @@ class FusedIFRK:
                 state.field_k = self._fft_forward(state.field, plan=self._plan)
                 reservoir.set_state(tuple(field.copy() for field in res[index]))
             stream.synchronize()
-        state.t = state.t0+(start_step+n_steps)*self.host_dt
+        state.step = start_step + n_steps
+        state.t = state.t0 + state.step * self.host_dt

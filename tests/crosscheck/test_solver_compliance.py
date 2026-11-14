@@ -18,6 +18,8 @@ from polarism.solver.rk4_cuda_solver import RK4CudaSolver
 from polarism.solver.rk4_fdm_fused_solver import RK4FDMFusedSolver
 from polarism.solver.rk4_fdm_solver import RK4FDMSolver
 from polarism.solver.split_step_fft_solver import SplitStepFFTSolver
+from polarism.model import Model
+from polarism.config.batch_physics import BatchPhysics
 from tests._helpers import (
     GridCfg,
     NoBoundaryCondition,
@@ -60,7 +62,6 @@ def _run_solver(solver_cls, grid_cfg, physics, dt, n_steps, P0):
     """Run solver."""
     grid = make_grid(grid_cfg)
     cfg = make_config(dt=dt, physics=physics, grid_type=grid_cfg.grid_type)
-    solver = solver_cls(cfg, grid)
     reservoir = SingleReservoir(make_reservoir_cfg(False), physics, grid)
     bc = NoBoundaryCondition()
 
@@ -68,12 +69,15 @@ def _run_solver(solver_cls, grid_cfg, physics, dt, n_steps, P0):
     state = State(psi0)
     V = potential_zero(grid.X)
     P = pump_uniform(P0, grid.X)
+    model = Model(grid, BatchPhysics(physics, None, np), "double",
+                  V, lambda t: P, reservoir, bc)
+    solver = solver_cls(cfg, grid, model)
 
     sample_stride = max(1, n_steps // 50)
     times = []
     rho_max = []
     for step in range(n_steps):
-        solver.step(V, lambda t: P, reservoir, bc, state)
+        solver.step(model, state, dt)
         if (step + 1) % sample_stride == 0:
             times.append((step + 1) * dt)
             rho_max.append(float(np.max(np.abs(state.psi) ** 2)))

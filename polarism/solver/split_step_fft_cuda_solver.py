@@ -8,10 +8,9 @@ import re
 
 from polarism.compute_engine import compute_engine
 from polarism.config.dtype_utils import complex_dtype, real_dtype
-from polarism.config.batch_physics import BatchPhysics
 from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
-from polarism.solver.abstract_solver import AbstractSolver
+from polarism.solver.abstract_solver import AbstractSolver, ACCEPTED, SolverCapabilities
 from polarism.solver.solver_registry import register_solver
 
 if TYPE_CHECKING:
@@ -145,10 +144,18 @@ def kernel_source(precision: str, model: str, batched: bool = False,
 @register_solver("split-step-fft-cuda")
 class SplitStepFFTCudaSolver(AbstractSolver):
     """K-outer Strang split with two planned cuFFT transforms per step."""
+    capabilities = SolverCapabilities(
+        components=frozenset({1}), ndim=frozenset({1, 2}),
+        grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double"}),
+        custom_reservoirs="quantitative", potential=True,
+        kinetic_relaxation=False, dispersion=frozenset({"parabolic"}),
+        noise=frozenset({"none", "wigner"}),
+        quantitative_reservoirs=frozenset({"single", "double", "quadratic-double"}),
+        description='GPU-only, two-transform spectral Strang splitting with symmetric reservoir half-steps. Periodic grids only; no kinetic relaxation.',
+    )
 
-    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None) -> None:
-        super().__init__(config)
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
+    def __init__(self, config: Config, grid: SimulationGrid, model) -> None:
+        super().__init__(config, grid, model)
         if not compute_engine.use_gpu or getattr(self.xp, "__name__", "") != "cupy":
             raise RuntimeError("split-step-fft-cuda requires CuPy and an active CUDA GPU; use split-step-fft on CPU")
         if grid.boundary != "periodic":
@@ -438,15 +445,18 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             if hasattr(self, "_zero_pump"):
                 del self._zero_pump
 
-    def advance(self, potential, pump, reservoir, boundary_condition, state,
-                start_step: int, n_steps: int) -> None:
+    def advance(self, model, state, n_steps: int) -> None:
         """Run supported periodic chunks with planned FFTs and optional graphs."""
+        potential = model.potential
+        pump = model.pump
+        reservoir = model.reservoir
+        boundary_condition = model.boundary
+        start_step = state.step
         self.batch_physics.check(state.field_k if state._field is None else state.field)
         if n_steps <= 0:
             return
-        if hasattr(self, "noise"):
-            return super().advance(potential, pump, reservoir, boundary_condition,
-                                   state, start_step, n_steps)
+        if model.noise is not None:
+            return super().advance(model, state, n_steps)
         self._activate_shape(state)
         from polarism.reservoir.single_reservoir import SingleReservoir
         from polarism.reservoir.double_reservoir import DoubleReservoir
@@ -454,14 +464,13 @@ class SplitStepFFTCudaSolver(AbstractSolver):
 
         models = {SingleReservoir: "single", DoubleReservoir: "double",
                   QuadraticDoubleReservoir: "quadratic-double"}
-        model = models.get(type(reservoir))
+        reservoir_model = models.get(type(reservoir))
         diffusion = any(reservoir.batch_physics.any_nonzero(name) for name in
                         ("reservoir_diffusion_R", "reservoir_diffusion_A",
-                         "reservoir_diffusion_I")) if model is not None else False
+                         "reservoir_diffusion_I")) if reservoir_model is not None else False
         absorption = getattr(boundary_condition, "absorption", None)
-        if model is None or diffusion or not getattr(absorption, "after_step_is_noop", False):
-            return super().advance(potential, pump, reservoir, boundary_condition,
-                                   state, start_step, n_steps)
+        if reservoir_model is None or diffusion or not getattr(absorption, "after_step_is_noop", False):
+            return super().advance(model, state, n_steps)
 
         xp = self.xp
         terms = pump.separable_terms() if hasattr(pump, "separable_terms") else None
@@ -521,7 +530,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                         remaining = n_steps - done
                         length = min(64, remaining - remaining % 2)
                         graph = self._graph_for(
-                            length, model, potential, envelope, pump_flat, combiner
+                            length, reservoir_model, potential, envelope, pump_flat, combiner
                         )
                         times = [time for k in range(length) for time in (
                             state.t0 + (start_step + done + k) * self.config.solver.dt
@@ -573,7 +582,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
                     else:
                         pumps = (pump_flat, pump_flat)
                         factors = tuple(self._scalar(coefficient(time)) for time in times)
-                    self._launch_into(model, local, res[parity], potential, pumps,
+                    self._launch_into(reservoir_model, local, res[parity], potential, pumps,
                                       factors, out, res[1 - parity])
                     plan.fft(out, spec[1 - parity], cufft.CUFFT_FORWARD)
                     if len(pending_hosts) >= 32:
@@ -586,11 +595,15 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             state.field_k = spec[final_index].copy()
             reservoir.set_state(tuple(field.copy() for field in res[final_index]))
             stream.synchronize()
-        state.t = state.t0 + (start_step + n_steps) * self.config.solver.dt
+        state.step = start_step + n_steps
+        state.t = state.t0 + state.step * self.config.solver.dt
 
-    def step(self, potential, pump, reservoir: AbstractReservoir,
-             boundary_condition: BoundaryCondition, state: SimulationState) -> None:
+    def step(self, model, state, dt):
         """Advance K(dt/2) [R(dt/2) N(dt) R(dt/2)] K(dt/2)."""
+        potential = model.potential
+        pump = model.pump
+        reservoir = model.reservoir
+        boundary_condition = model.boundary
         self.batch_physics.check(state.field_k if state._field is None else state.field)
         self._activate_shape(state)
         from polarism.reservoir.single_reservoir import SingleReservoir
@@ -638,3 +651,6 @@ class SplitStepFFTCudaSolver(AbstractSolver):
             state.field = boundary_condition.after_step_action(materialized)
             psi = self.xp.ascontiguousarray(state.field)
             state.field_k = self._fft_forward(psi, plan=self._plan(psi))
+        state.step += 1
+        state.t = state.t0 + state.step * dt
+        return ACCEPTED

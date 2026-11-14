@@ -3,10 +3,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Union
 
-from polarism.config.batch_physics import BatchPhysics
 from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
-from polarism.solver.abstract_solver import AbstractSolver
+from polarism.solver.abstract_solver import AbstractSolver, ACCEPTED, SolverCapabilities
 from polarism.solver.solver_registry import register_solver
 
 if TYPE_CHECKING:
@@ -21,12 +20,20 @@ if TYPE_CHECKING:
 
 @register_solver("rk4-fdm-fused")
 class RK4FDMFusedSolver(AbstractSolver):
+    capabilities = SolverCapabilities(
+        components=frozenset({1}), ndim=frozenset({1, 2}),
+        grid_types=frozenset({"periodic", "closed-interval"}), reservoirs=frozenset({"single", "double", "quadratic-double"}),
+        custom_reservoirs="quantitative", potential=True,
+        kinetic_relaxation=True, dispersion=frozenset({"parabolic"}),
+        noise=frozenset({"none", "wigner"}),
+        quantitative_reservoirs=frozenset({"single", "double", "quadratic-double"}),
+        description='Optimized FDM RK4 with pre-allocated buffers. Stage-coupled reservoir; numerically equivalent to rk4-fdm.',
+    )
 
     """Solve the model with fused finite-difference RK4."""
-    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None):
+    def __init__(self, config: Config, grid: SimulationGrid, model):
         """Set up the fused RK4 solver."""
-        super().__init__(config)
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
+        super().__init__(config, grid, model)
         self.dx = grid.dx
         self.dy = grid.dy if grid.ndim == 2 else None
         self.nx = grid.nx
@@ -216,20 +223,17 @@ class RK4FDMFusedSolver(AbstractSolver):
             out=self._psi_next,
         )
 
-    def step(
-        self,
-        potential: Union[np.ndarray, cp.ndarray],
-        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
-        reservoir: AbstractReservoir,
-        boundary_condition: BoundaryCondition,
-        state: SimulationState,
-    ) -> None:
+    def step(self, model, state, dt):
         """Advance the solver by one time step.
 
         Note: ``state.field`` is rebound to an internal buffer that is overwritten
         on the next call. Consumers that need to persist ``psi`` across steps
         must copy it.
         """
+        potential = model.potential
+        pump = model.pump
+        reservoir = model.reservoir
+        boundary_condition = model.boundary
         self.batch_physics.check(state.field)
         dt = self._dt
         t = state.t
@@ -281,3 +285,6 @@ class RK4FDMFusedSolver(AbstractSolver):
             for r0, k1, k2, k3, k4 in zip(res0, k1_res, k2_res, k3_res, k4_res)
         )
         reservoir.set_state(res_new)
+        state.step += 1
+        state.t = state.t0 + state.step * dt
+        return ACCEPTED

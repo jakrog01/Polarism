@@ -1,47 +1,29 @@
 # Solvers
 
-All solver backends implement the `AbstractSolver` interface: they accept a configured system state and advance it by one timestep.
+All built-in solvers implement `AbstractSolver(config, grid, model)` and
+`step(model, state, dt) -> StepReport`. The controller builds one `Model` and
+calls `advance(model, state, n_steps)` for each output chunk. Each accepted
+step updates `state.step` and computes `state.t = state.t0 + state.step * dt`.
+The inherited `advance` applies `model.noise` after every accepted step.
 
-## Solver interface
+The model holds `grid`, batched `physics`, `precision`, `xp`, `potential`,
+`pump`, `reservoir`, `boundary`, and optional `noise`. Its
+`rhs(field, reservoir_fields, t, out=None)` evaluates the finite difference
+reference derivative. Built-in fused solvers use their specialized stage code.
+Solver classes publish a frozen `SolverCapabilities` declaration, which
+validation reads through the solver registry. See [Solver plugins](../plugins/solvers.md)
+for the full contract.
 
-At the abstraction level, every solver must:
+Fields and reservoir state tuples use `(B, 1, *S)` arrays. Public `state.psi`
+and `state.psi_k` omit the component axis, and omit the member axis in an
+unbatched run. `S` is `(nx,)` in 1D or `(ny, nx)` in 2D. A shared potential or
+pump array uses `grid.shape`; batched inputs use `(B, 1, *S)`.
 
-- be constructible from the simulation config and grid
-- implement `step(potential, pump, reservoir, boundary_condition, state)`
-- consume the current potential, pump callable, reservoir, boundary condition, and simulation state
-
-`pump` is a callable `pump(t) -> array`, returning the pump field at the
-requested time. The step starts at `state.t` and advances the fields by
-`config.solver.dt`; the caller updates `state.t` afterward.
-Solvers read and write `state.field` and `state.field_k` as
-`(B, 1, *S)` arrays. Public `state.psi` and `state.psi_k` omit the
-component axis and also omit the member axis for unbatched runs.
-`S` is `(nx,)` in 1D or `(ny, nx)` in 2D.
-
-RK4 solvers evaluate the pump once at each of `t`, `t + dt/2`, and `t + dt`,
-using the midpoint value for both middle stages. `etd-rk2` passes
-`pump(t + dt/2)` to `reservoir.step`. `split-step-fft` advances the reservoir
-in two half-steps, sampling the pump at `t + dt/4` and `t + 3dt/4`. The
-reservoir interface still accepts an array. For a constant field, pass
-`lambda t: pump_array`. Treat the returned array as read-only.
-`ifrk-fft-cuda` samples once for each distinct stage time `t + c_i dt` in its
-selected tableau.
-
-`SimulationController` passes a `PumpField` (`polarism.laser.pump_field`).
-Besides `pump(t)`, it offers `separable_term()`, which returns
-`(envelope, coefficient)` when there is exactly one built-in laser. `rk4-cuda`
-then scales the cached envelope inside its kernels instead of building three
-pump arrays per step. Any other callable falls back to `pump(t)`.
-In 2D, `rk4-cuda` uses one tiled CUDA kernel per step in single precision and on GPUs
-classified as full-rate FP64 in double precision. The tile includes a stencil halo
-in shared memory. Other double-precision GPUs, and devices without enough shared
-memory for a tile, use staged kernels. Tiled and staged results agree to rounding
-level.
-In 1D it uses flat left/right staged kernels with coalesced memory access.
-
-This replaces the former pump-array argument and intentionally breaks the
-plugin solver interface. Plugin solvers must evaluate the callable at their
-integration stage times.
+The RK4 methods sample `model.pump` at `t`, `t + dt/2`, and `t + dt`.
+`etd-rk2` uses `t + dt/2`; split-step methods use `t + dt/4` and
+`t + 3dt/4`. `ifrk-fft-cuda` samples each distinct tableau stage time.
+A `PumpField` may expose separable spatial and temporal terms, allowing fused
+CUDA solvers to scale a cached envelope inside kernels.
 
 ## Available solver methods
 
@@ -68,6 +50,8 @@ The package includes explicit compatibility checks and warnings. In practice:
 - for `closed-interval` grids use the FDM family: `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`
 - `etd-rk2` advances the reservoir between predictor and corrector using a midpoint condensate estimate, retaining second-order coupling for all supported reservoir types
 - CUDA solvers are meaningful only when the GPU backend is actually active
+- `reservoir_type: none` is supported by `rk4-fdm`, `split-step-fft`,
+  `ip-rk4`, and `etd-rk2` on NumPy or CuPy; fused solvers reject it at validation
 
 `split-step-fft-cuda` keeps the wavefunction in Fourier space between steps and
 uses two cuFFT transforms per step. Its local kernel combines two reservoir RK2

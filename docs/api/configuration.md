@@ -112,7 +112,7 @@ total pulse dose.
 
 | Field | Meaning | Main options |
 | --- | --- | --- |
-| `reservoir_type` | reservoir-model selection | `single`, `double`, `quadratic-double` |
+| `reservoir_type` | reservoir-model selection | `single`, `double`, `quadratic-double`, `none` |
 | `expose_results` | publish reservoir fields and scalars to result visitors | boolean |
 
 `quadratic-double` uses an inactive reservoir directly fed by the pump and an

@@ -128,6 +128,8 @@ class State:
         self.field_k = None
         self.batched = False
         self.t = 0.0
+        self.t0 = 0.0
+        self.step = 0
 
     @property
     def psi(self):

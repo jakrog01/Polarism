@@ -195,12 +195,11 @@ class Sweep:
         def timer(size, steps):
             controller = SimulationController(probe_cfg, members=overrides[:size])
             solver = controller.solver
-            args = (controller.potential, controller.pump_field, controller.reservoir,
-                    controller.boundary_condition, controller.state)
-            solver.advance(*args, 0, steps)
+            args = (controller.model, controller.state)
+            solver.advance(*args, steps)
             cp.cuda.Stream.null.synchronize()
             start = time.perf_counter()
-            solver.advance(*args, steps, steps)
+            solver.advance(*args, steps)
             cp.cuda.Stream.null.synchronize()
             return max(time.perf_counter() - start, 1e-12)
 

@@ -124,8 +124,8 @@ def _validate_noise(cfg: Config) -> None:
 
 def _validate_solver(cfg: Config) -> None:
     s = cfg.solver
-    from polarism.solver.solver_compatibility import _SOLVER_CAPABILITIES
-    if cfg.grid.ndim not in _SOLVER_CAPABILITIES.get(s.method, {}).get("ndim", {2}):
+    from polarism.solver.solver_compatibility import solver_capabilities
+    if cfg.grid.ndim not in solver_capabilities(s.method).ndim:
         raise ConfigValidationError(f"solver.method={s.method!r} does not support grid.ndim={cfg.grid.ndim}")
     if cfg.grid.ndim == 1 and s.laplacian == "isotropic-9pt":
         raise ConfigValidationError("solver.laplacian='isotropic-9pt' is not supported in 1D")
@@ -220,6 +220,9 @@ def _validate_boundary(cfg: Config) -> None:
 
 def _validate_laser(cfg: Config) -> None:
     laser = cfg.laser
+    if cfg.reservoir.reservoir_type == "none" and (laser.P0 != 0 or laser.n_pulses > 0 or laser.mode == "multiple"):
+        warnings.warn("Incoherent laser pump has no reservoir to feed when reservoir_type='none'.",
+                      UserWarning, stacklevel=2)
     if laser.sigma_space <= 0.0:
         raise ConfigValidationError(
             f"laser.sigma_space must be > 0, got {laser.sigma_space}"

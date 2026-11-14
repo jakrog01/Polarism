@@ -78,7 +78,7 @@ def test_1d_validation():
         with pytest.raises(ConfigValidationError, match="visualization of 1D runs is not supported yet"):
             validate_config(invalid)
     cfg.solver.method = "custom-plugin-solver"
-    with pytest.raises(ConfigValidationError, match="does not support grid.ndim"):
+    with pytest.raises(ValueError, match="Unknown solver"):
         validate_config(cfg)
 
 
@@ -141,10 +141,11 @@ def test_1d_matches_y_uniform_2d(method, reservoir, boundary):
         profile = 0.02 + np.linspace(0, 0.01, 32)
         pump = lambda t, shape=controller.grid.shape: np.broadcast_to(profile, shape)
         potential = np.broadcast_to(np.linspace(-0.001, 0.001, 32), controller.grid.shape)
+        controller.model.potential = potential
+        controller.model.pump = pump
         for _ in range(4):
-            controller.solver.step(potential, pump, controller.reservoir,
-                                   controller.boundary_condition, controller.state)
-            controller.state.t += controller.cfg.solver.dt
+            controller.solver.step(controller.model, controller.state,
+                                   controller.cfg.solver.dt)
     one, two = controllers
     np.testing.assert_allclose(one.state.psi, two.state.psi[0], rtol=1e-12, atol=1e-12)
     for a, b in zip(one.reservoir.get_state(), two.reservoir.get_state()):
@@ -167,9 +168,7 @@ def test_1d_batch_members_match_separate(method):
         separate.append(SimulationController(single_cfg))
     for run in (batch, *separate):
         for _ in range(3):
-            run.solver.step(run.potential, run.pump_field, run.reservoir,
-                            run.boundary_condition, run.state)
-            run.state.t += run.cfg.solver.dt
+            run.solver.step(run.model, run.state, run.cfg.solver.dt)
     for i, run in enumerate(separate):
         np.testing.assert_allclose(batch.state.psi[i], run.state.psi, rtol=1e-12, atol=1e-12)
 

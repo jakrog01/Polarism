@@ -14,8 +14,8 @@ def test_batch_mode_warms_both_paths_with_timed_step_count(monkeypatch, capsys):
 
     def controller(method, size, precision, reservoir, tableau="rk4", batch=1,
                    ndim=2, noise="none"):
-        solver = SimpleNamespace(advance=lambda *args: calls.append((batch, args[-2:])))
-        return SimpleNamespace(solver=solver, potential=None, pump_field=None,
+        solver = SimpleNamespace(advance=lambda *args: calls.append((batch, args[-1])))
+        return SimpleNamespace(solver=solver, model=None, potential=None, pump_field=None,
                                reservoir=None, boundary_condition=None, state=None)
 
     ticks = iter(range(6))
@@ -32,9 +32,7 @@ def test_batch_mode_warms_both_paths_with_timed_step_count(monkeypatch, capsys):
 
     assert benchmark.main(["--methods", "rk4-cuda", "--grid-sizes", "4",
                            "--precisions", "single", "--steps", "7", "--batch", "2"]) == 0
-    assert calls == [(2, (0, 7)), (2, (7, 7)),
-                     (1, (0, 7)), (1, (7, 7)),
-                     (1, (0, 7)), (1, (7, 7))]
+    assert calls == [(2, 7), (2, 7), (1, 7), (1, 7), (1, 7), (1, 7)]
     record = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert record["speedup"] == 2
     assert record["ns_per_member_element_step"] == pytest.approx(1e9 / (2 * 4 * 4 * 7))

@@ -55,6 +55,7 @@ For pulsed Gaussian studies:
 | `single` | one effective active reservoir is enough for the physics you want to resolve | cleanest baseline model |
 | `double` | you need to separate inactive and active reservoir populations | adds inter-reservoir transfer timescales and more stiffness risk |
 | `quadratic-double` | you model pulsed nonresonant excitation with delayed inactive-to-active feeding | uses `kappa*nI^2` transfer and can retain pulse-train memory |
+| `none` | you model condensate evolution without an incoherent reservoir | no reservoir state or result datasets; the incoherent pump has no effect |
 
 ## Solver method
 

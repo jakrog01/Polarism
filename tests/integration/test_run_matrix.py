@@ -8,16 +8,16 @@ import pytest
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import ComputeEngineParameters
 from polarism.simulation_controller import SimulationController
-from polarism.solver.solver_compatibility import _SOLVER_CAPABILITIES
+from polarism.solver.solver_registry import available_solvers
 from tests.unit.conftest import small_config
 
 TOL_INTEG_FINITE = 1e-12  # No NaN/Inf; buffer arithmetic identity.
 CASES = [
     pytest.param(solver, grid_type, reservoir,
                  marks=pytest.mark.gpu if solver == "split-step-fft-cuda" else ())
-    for solver, caps in _SOLVER_CAPABILITIES.items()
-    for grid_type in caps["grid_types"]
-    for reservoir in caps["reservoir_types"]
+    for solver, component in available_solvers.items()
+    for grid_type in component.capabilities.grid_types
+    for reservoir in component.capabilities.reservoirs
 ]
 
 
@@ -40,3 +40,7 @@ def test_solver_run_matrix(tmp_path, solver: str, grid_type: str, reservoir: str
         expected_steps = np.arange(0, int(cfg.solver.total_time / cfg.solver.dt) + 1, round(cfg.result.save_every / cfg.solver.dt))
         assert result["time"].shape[0] == len(expected_steps)
         np.testing.assert_allclose(result["time"][:], expected_steps * cfg.solver.dt)
+        if reservoir == "none":
+            assert not any(name.startswith("nR") or name.startswith("nA") or name.startswith("nI")
+                           for group in ("fields", "scalars", "static")
+                           for name in result[group])

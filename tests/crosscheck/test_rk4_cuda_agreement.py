@@ -140,14 +140,9 @@ def test_fused_pump_matches_array_path_bitwise(absorption: str, precision: str) 
     start = fused.lasers[0].phase
     for step in range(3):
         fused.state.t = array.state.t = start + step * cfg.solver.dt
-        fused.solver.step(
-            fused.potential, fused.pump_field, fused.reservoir,
-            fused.boundary_condition, fused.state,
-        )
-        array.solver.step(
-            array.potential, lambda t: array.pump_field(t), array.reservoir,
-            array.boundary_condition, array.state,
-        )
+        fused.solver.step(fused.model, fused.state, cfg.solver.dt)
+        array.model.pump = lambda t: array.pump_field(t)
+        array.solver.step(array.model, array.state, cfg.solver.dt)
 
     np.testing.assert_array_equal(
         compute_engine.to_cpu(fused.state.psi), compute_engine.to_cpu(array.state.psi)
@@ -168,19 +163,13 @@ def test_rk4_cuda_does_not_alias_previous_state(reservoir_type: str) -> None:
         compute_engine=ComputeEngineParameters(use_gpu=True),
     )
     controller = SimulationController(cfg)
-    controller.solver.step(
-        controller.potential, controller._compute_total_pump,
-        controller.reservoir, controller.boundary_condition, controller.state,
-    )
+    controller.model.pump = controller._compute_total_pump
+    controller.solver.step(controller.model, controller.state, cfg.solver.dt)
     before = controller.state.psi
     saved = before.copy()
     reservoir_before = controller.reservoir.get_state()
     reservoir_saved = tuple(field.copy() for field in reservoir_before)
-    controller.state.t += cfg.solver.dt
-    controller.solver.step(
-        controller.potential, controller._compute_total_pump,
-        controller.reservoir, controller.boundary_condition, controller.state,
-    )
+    controller.solver.step(controller.model, controller.state, cfg.solver.dt)
     assert np.array_equal(compute_engine.to_cpu(before), compute_engine.to_cpu(saved))
     for previous, copy in zip(reservoir_before, reservoir_saved):
         assert np.array_equal(compute_engine.to_cpu(previous), compute_engine.to_cpu(copy))

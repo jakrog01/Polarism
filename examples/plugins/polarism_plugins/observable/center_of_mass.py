@@ -17,3 +17,5 @@ def center_of_mass_x(controller):
         cmap=None, scaling=None, clim=None, expose=True, save=True,
         cut=None, is_field=False,
     )
+
+POLARISM_PLUGIN_API = 2

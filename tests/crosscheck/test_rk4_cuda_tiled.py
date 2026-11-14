@@ -187,10 +187,8 @@ def test_tiled_1d_matches_staged_to_rounding_level(
     for step in range(3):
         for controller in (tiled, staged):
             controller.state.t = step * cfg.solver.dt
-            controller.solver.step(
-                potential, controller.pump_field, controller.reservoir,
-                controller.boundary_condition, controller.state,
-            )
+            controller.model.potential = potential
+            controller.solver.step(controller.model, controller.state, cfg.solver.dt)
         _assert_rounding_agreement(tiled.state.psi, staged.state.psi, precision)
         for left, right in zip(tiled.reservoir.get_state(), staged.reservoir.get_state()):
             _assert_rounding_agreement(left, right, precision)
@@ -217,10 +215,7 @@ def test_tiled_1d_graph_matches_staged(batched):
     tiled.solver._use_tiled = True
     staged.solver._use_tiled = False
     for controller in (tiled, staged):
-        controller.solver.advance(
-            controller.potential, controller.pump_field, controller.reservoir,
-            controller.boundary_condition, controller.state, 0, 2,
-        )
+        controller.solver.advance(controller.model, controller.state, 2)
         assert controller.solver._graph_cache
         assert not controller.solver._graphs_failed
     _assert_rounding_agreement(tiled.state.psi, staged.state.psi, "single")
@@ -287,10 +282,8 @@ def test_tiled_matches_staged_to_rounding_level(
     for step in range(3):
         for controller in (tiled, staged):
             controller.state.t = step * cfg.solver.dt
-            controller.solver.step(
-                potential, controller.pump_field, controller.reservoir,
-                controller.boundary_condition, controller.state,
-            )
+            controller.model.potential = potential
+            controller.solver.step(controller.model, controller.state, cfg.solver.dt)
         _assert_rounding_agreement(tiled.state.psi, staged.state.psi, precision)
         for left, right in zip(tiled.reservoir.get_state(), staged.reservoir.get_state()):
             _assert_rounding_agreement(left, right, precision)
@@ -310,10 +303,7 @@ def test_tiled_large_square_matches_staged():
     tiled.solver._use_tiled = True
     staged.solver._use_tiled = False
     for controller in (tiled, staged):
-        controller.solver.step(
-            controller.potential, controller.pump_field, controller.reservoir,
-            controller.boundary_condition, controller.state,
-        )
+        controller.solver.step(controller.model, controller.state, cfg.solver.dt)
     _assert_rounding_agreement(tiled.state.psi, staged.state.psi, "single")
     for left, right in zip(tiled.reservoir.get_state(), staged.reservoir.get_state()):
         _assert_rounding_agreement(left, right, "single")

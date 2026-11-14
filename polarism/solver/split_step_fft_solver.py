@@ -3,10 +3,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Union
 
-from polarism.config.batch_physics import BatchPhysics
 from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
-from polarism.solver.abstract_solver import AbstractSolver
+from polarism.solver.abstract_solver import AbstractSolver, ACCEPTED, SolverCapabilities
 from polarism.solver.solver_registry import register_solver
 
 if TYPE_CHECKING:
@@ -22,14 +21,22 @@ if TYPE_CHECKING:
 @register_solver("split-step-fft")
 class SplitStepFFTSolver(AbstractSolver):
     """Solve the model with split-step FFT."""
+    capabilities = SolverCapabilities(
+        components=frozenset({1}), ndim=frozenset({1, 2}),
+        grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
+        custom_reservoirs="quantitative", potential=True,
+        kinetic_relaxation=False, dispersion=frozenset({"parabolic"}),
+        noise=frozenset({"none", "wigner"}),
+        quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
+        description='Spectral Strang splitting, second order in time. Reservoir advances in two half-steps around the condensate step. FFT-only, periodic grid only. Does not evaluate kinetic_relaxation_eta.',
+    )
     _kinetic_propagator_half: Union[np.ndarray, cp.ndarray]
 
-    def __init__(self, config: Config, grid: SimulationGrid, batch_physics=None):
+    def __init__(self, config: Config, grid: SimulationGrid, model):
         """Set up the split step fft solver."""
-        super().__init__(config)
+        super().__init__(config, grid, model)
         self._fft = self.xp.fft.fft if grid.ndim == 1 else self.xp.fft.fft2
         self._ifft = self.xp.fft.ifft if grid.ndim == 1 else self.xp.fft.ifft2
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"), ndim=grid.ndim)
 
         self._kinetic_propagator_half = self.xp.exp(
             -1j
@@ -47,15 +54,12 @@ class SplitStepFFTSolver(AbstractSolver):
         psi_k *= self._kinetic_propagator_half
         return self._ifft(psi_k)
 
-    def step(
-        self,
-        potential: Union[np.ndarray, cp.ndarray],
-        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
-        reservoir: AbstractReservoir,
-        boundary_condition: BoundaryCondition,
-        state: SimulationState,
-    ) -> None:
+    def step(self, model, state, dt):
         """Advance the solver by one time step."""
+        potential = model.potential
+        pump = model.pump
+        reservoir = model.reservoir
+        boundary_condition = model.boundary
         self.batch_physics.check(state.field)
         dt = self.config.solver.dt
         hbar = self.batch_physics.get("hbar")
@@ -91,3 +95,6 @@ class SplitStepFFTSolver(AbstractSolver):
 
         reservoir.step(dt / 2, state.field, evaluate_pump(pump, state.t + 3 * dt / 4))
         state.field = boundary_condition.after_step_action(state.field)
+        state.step += 1
+        state.t = state.t0 + state.step * dt
+        return ACCEPTED

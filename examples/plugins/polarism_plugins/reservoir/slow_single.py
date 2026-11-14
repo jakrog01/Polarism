@@ -48,3 +48,5 @@ class SlowSingleReservoir(AbstractReservoir):
 
     def make_result_nodes(self):
         return []
+
+POLARISM_PLUGIN_API = 2
