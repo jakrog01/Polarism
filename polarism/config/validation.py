@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING
 from polarism.boundary_conditions.absorption.absorption_registry import (
     available_absorptions,
 )
+from polarism.dispersion import available_dispersions
 from polarism.grid.create_grid import grid_boundary
+from polarism.model_terms import available_terms
 from polarism.results.observable_registry import available_observables
 from polarism.results.storage import available_storages
 
@@ -47,6 +49,7 @@ def validate_config(cfg: Config) -> None:
     """Raise ConfigValidationError for invalid values; warn for instability risk."""
     _validate_grid(cfg)
     _validate_physics(cfg)
+    _validate_terms(cfg)
     _validate_noise(cfg)
     _validate_solver(cfg)
     _validate_result(cfg)
@@ -93,6 +96,24 @@ def _validate_physics(cfg: Config) -> None:
                 f"physics.{name} must be >= 0 (interaction/relaxation/diffusion coefficients cannot be negative), "
                 f"got {val}"
             )
+
+    try:
+        available_dispersions.lookup(p.dispersion)
+    except ValueError as exc:
+        raise ConfigValidationError(f"physics.dispersion: {exc}") from exc
+
+
+def _validate_terms(cfg: Config) -> None:
+    if not isinstance(cfg.terms, dict):
+        raise ConfigValidationError("terms must map term names to parameter mappings")
+    for name, params in cfg.terms.items():
+        try:
+            available_terms.lookup(name)
+        except ValueError as exc:
+            raise ConfigValidationError(f"terms: {exc}") from exc
+        if not isinstance(params, dict):
+            raise ConfigValidationError(f"terms.{name} must be a mapping of parameters")
+
 
 def _validate_noise(cfg: Config) -> None:
     n = cfg.noise

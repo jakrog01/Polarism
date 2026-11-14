@@ -14,7 +14,7 @@ from polarism.solver.solver_compatibility import check_solver_compatibility
 
 _LASER_ENTRY = re.compile(r"lasers\[(\d+)\]\.(.+)\Z")
 _GROUP_SECTIONS = {"grid", "solver", "reservoir", "boundary_condition",
-                   "compute_engine", "result", "checkpoint", "sweep"}
+                   "compute_engine", "result", "checkpoint", "sweep", "terms"}
 
 
 def override_kind(path):
@@ -31,7 +31,7 @@ def override_kind(path):
     if section == "physics":
         from polarism.config.simulation_parameters import PhysicsConstants
         if field in {item.name for item in fields(PhysicsConstants)}:
-            return "batch"
+            return "group" if field == "dispersion" else "batch"
     if section == "noise":
         from polarism.config.simulation_parameters import NoiseParameters
         if field in {item.name for item in fields(NoiseParameters)}:
@@ -73,6 +73,12 @@ def apply_overrides(cfg, overrides, *, allow_groups=False):
             result._laser_entry_overrides = changes
             continue
         section, field = path.split(".", 1)
+        if section == "terms":
+            name, _, key = field.partition(".")
+            if key not in result.terms.get(name, {}):
+                raise ValueError(f"Unknown sweep path {path!r}; term parameter is absent")
+            result.terms[name][key] = value
+            continue
         target = getattr(result, section)
         if field.startswith("extra."):
             key = field[6:]

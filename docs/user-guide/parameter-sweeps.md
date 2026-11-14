@@ -33,13 +33,15 @@ disabled, it returns an ordered list of dictionaries containing final `psi`
 and a `reservoir` tuple of final density arrays. A signal stop returns `None`;
 resume with `sweep.run(resume=sweep.run_directory)`.
 
-Override paths include `physics.*`, `noise.*`, `laser.*`, `laser.extra.*`, and
-`potential.*`. In `laser.mode="multiple"`, use zero-based `lasers[i].*`, such
+Override paths include `physics.*`, `noise.*`, `laser.*`, `laser.extra.*`,
+`potential.*`, and `terms.<name>.<parameter>` for a parameter already present
+in `cfg.terms`. In `laser.mode="multiple"`, use zero-based `lasers[i].*`, such
 as `lasers[1].delay` or `lasers[1].extra.name`, for entries in the laser YAML
 file. Extra keys must already exist in the configuration or laser entry.
 Physics, laser, potential, `noise.seed`, `noise.initial*`, and
 `noise.stochastic_strength` can vary inside a batch. `noise.enabled` and
-`noise.stochastic` form separate groups. Grid, solver,
+`noise.stochastic` form separate groups, as do `physics.dispersion` and all
+`terms.*` parameters. Grid, solver,
 reservoir type, boundary condition, compute engine, result, checkpoint, and
 sweep settings form separate groups. These settings control array shapes,
 component construction, step counts, or output behavior, which must agree

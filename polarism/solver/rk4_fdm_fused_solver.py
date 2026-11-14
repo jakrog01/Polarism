@@ -24,7 +24,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         components=frozenset({1}), ndim=frozenset({1, 2}),
         grid_types=frozenset({"periodic", "closed-interval"}), reservoirs=frozenset({"single", "double", "quadratic-double"}),
         custom_reservoirs="quantitative", potential=True,
-        kinetic_relaxation=True, dispersion=frozenset({"parabolic"}),
+        kinetic_relaxation=True, dispersion=frozenset({"parabolic"}), terms=False,
         noise=frozenset({"none", "wigner"}),
         quantitative_reservoirs=frozenset({"single", "double", "quadratic-double"}),
         description='Optimized FDM RK4 with pre-allocated buffers. Stage-coupled reservoir; numerically equivalent to rk4-fdm.',

@@ -40,6 +40,7 @@ class SolverCapabilities:
     potential: bool = True
     kinetic_relaxation: bool = False
     dispersion: frozenset[str] = frozenset({"parabolic"})
+    terms: bool = True
     noise: frozenset[str] = frozenset({"none", "wigner"})
     adaptive: bool = False
     coherent_drive: bool = False

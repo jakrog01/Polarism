@@ -32,7 +32,7 @@ class ETDRK2Solver(AbstractSolver):
         components=frozenset({1}), ndim=frozenset({1, 2}),
         grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         custom_reservoirs="quantitative", potential=True,
-        kinetic_relaxation=False, dispersion=frozenset({"parabolic"}),
+        kinetic_relaxation=False, dispersion=frozenset({"*"}),
         noise=frozenset({"none", "wigner"}),
         quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         description='ETD-RK2 spectral solver. FFT-only, periodic grid only. Reservoir advanced between predictor and corrector using a midpoint condensate estimate (psi_n + a)/2, giving O(dt²) psi↔reservoir coupling (measured p≈2.00 on quadratic-double, per convergence study). Does not evaluate kinetic_relaxation_eta.',
@@ -56,7 +56,10 @@ class ETDRK2Solver(AbstractSolver):
                 f"Consider using 'rk4-fdm' solver for non-periodic grids.",
                 UserWarning,
             )
-        self._L = -1j * hbar * grid.k_squared / (2 * m_eff)
+        if model.dispersion.kind == "parabolic":
+            self._L = -1j * hbar * grid.k_squared / (2 * m_eff)
+        else:
+            self._L = -1j * model.dispersion.energy(grid, self.batch_physics) / hbar
         L_dt = self._L * dt
 
         # Coefficients are evaluated in float64, then stored in solver precision.
@@ -123,6 +126,8 @@ class ETDRK2Solver(AbstractSolver):
         psi_k = self._fft(state.field)
 
         N_n = self._nonlinear_rhs(state.field, nR, nI, potential)
+        if model.terms:
+            N_n = N_n + model.extra_rhs(state.field, res_state, state.t)
         N_n_k = self._fft(N_n)
 
         a_k = self._exp_L * psi_k + self._phi1 * N_n_k * dt
@@ -135,6 +140,8 @@ class ETDRK2Solver(AbstractSolver):
         nI_new = reservoir.get_inactive_density(res_new)
 
         N_a = self._nonlinear_rhs(a, nR_new, nI_new, potential)
+        if model.terms:
+            N_a = N_a + model.extra_rhs(a, res_new, state.t + dt)
         N_a_k = self._fft(N_a)
 
         psi_new_k = a_k + self._phi2 * (N_a_k - N_n_k) * dt

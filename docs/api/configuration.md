@@ -10,6 +10,7 @@
 | `boundary_condition` | absorbing boundary settings |
 | `potential` | external potential type and parameters |
 | `physics` | driven-dissipative GPE and reservoir coefficients |
+| `terms` | extra [term plugins](../plugins/terms.md) added to the condensate equation |
 | `noise` | initial and stochastic condensate noise |
 | `laser` | pump mode and pump-shape parameters |
 | `reservoir` | reservoir model selection |
@@ -37,6 +38,8 @@ configurations.  Checks include:
   `gamma_A`, `R`, `R_IA`, `R_AI`, `kappa`) are `>= 0`
 - all interaction, relaxation, and diffusion coefficients (`g_C`, `g_R`,
   `g_I`, `kinetic_relaxation_eta`, `reservoir_diffusion_I/A/R`) are `>= 0`
+- `physics.dispersion` and every key of `terms` must be registered, and each
+  `terms` value must be a mapping
 - `noise.initial_amplitude >= 0`; `noise.initial` is a recognised value;
   `noise.initial_k_cutoff_um > 0` is required for filtered initial fields;
   `noise.seed` is a non-negative int64 or `null`; `noise.stochastic_strength >= 0`
@@ -225,6 +228,15 @@ The remaining fields belong to `physics`:
 | `reservoir_diffusion_I` | inactive-reservoir diffusion coefficient | nonnegative float, default `0.0` |
 | `reservoir_diffusion_A` | active-density diffusion coefficient for `double` | nonnegative float, default `0.0` |
 | `reservoir_diffusion_R` | active-density diffusion coefficient for `single` and `quadratic-double` | nonnegative float, default `0.0` |
+| `dispersion` | registered [dispersion](../plugins/dispersion.md) of the kinetic energy; non-parabolic kinds need a solver that declares them | name, default `parabolic` |
+
+## Terms block
+
+`terms` maps registered [term](../plugins/terms.md) names to their parameter
+dictionaries, for example `terms: {nonlinear-loss: {alpha: 0.01}}`. The default
+is an empty mapping, which leaves the equation unchanged. Validation rejects
+unknown names and non-mapping parameters; solver compatibility rejects terms on
+solvers that do not support them.
 
 The default `initial` is `complex_gaussian_zero_mean`. The legacy mode (the
 default before 0.7) is kept only to reproduce old runs: its non-zero mean seeds

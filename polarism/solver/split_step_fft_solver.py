@@ -25,7 +25,7 @@ class SplitStepFFTSolver(AbstractSolver):
         components=frozenset({1}), ndim=frozenset({1, 2}),
         grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         custom_reservoirs="quantitative", potential=True,
-        kinetic_relaxation=False, dispersion=frozenset({"parabolic"}),
+        kinetic_relaxation=False, dispersion=frozenset({"*"}),
         noise=frozenset({"none", "wigner"}),
         quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         description='Spectral Strang splitting, second order in time. Reservoir advances in two half-steps around the condensate step. FFT-only, periodic grid only. Does not evaluate kinetic_relaxation_eta.',
@@ -38,13 +38,21 @@ class SplitStepFFTSolver(AbstractSolver):
         self._fft = self.xp.fft.fft if grid.ndim == 1 else self.xp.fft.fft2
         self._ifft = self.xp.fft.ifft if grid.ndim == 1 else self.xp.fft.ifft2
 
-        self._kinetic_propagator_half = self.xp.exp(
-            -1j
-            * self.batch_physics.get("hbar")
-            * grid.k_squared
-            * (self.config.solver.dt / 2)
-            / (2 * self.batch_physics.get("m_eff"))
-        )
+        if model.dispersion.kind == "parabolic":
+            self._kinetic_propagator_half = self.xp.exp(
+                -1j
+                * self.batch_physics.get("hbar")
+                * grid.k_squared
+                * (self.config.solver.dt / 2)
+                / (2 * self.batch_physics.get("m_eff"))
+            )
+        else:
+            self._kinetic_propagator_half = self.xp.exp(
+                -1j
+                * model.dispersion.energy(grid, self.batch_physics)
+                * (self.config.solver.dt / 2)
+                / self.batch_physics.get("hbar")
+            )
 
     def _kinetic_half_step_fft(
         self, psi: Union[np.ndarray, cp.ndarray]
@@ -90,6 +98,11 @@ class SplitStepFFTSolver(AbstractSolver):
             + g_C * rho * phase_time
         ) / hbar
         state.field = state.field * self.xp.exp(gain_loss * dt - 1j * phase)
+        if model.terms:
+            extra_energy, extra_rate = model.extra_coefficients(
+                state.field, res_state, state.t + dt / 2
+            )
+            state.field = state.field * self.xp.exp((extra_rate - 1j * extra_energy / hbar) * dt)
 
         state.field = self._kinetic_half_step_fft(state.field)
 

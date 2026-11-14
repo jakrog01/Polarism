@@ -21,11 +21,13 @@ from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine, has_full_rate_fp64
 from polarism.config.dtype_utils import complex_dtype, real_dtype
 from polarism.config.validation import _validate_time_multiple, validate_config
+from polarism.dispersion import available_dispersions
 from polarism.grid.create_grid import create_grid
 from polarism.grid.simulation_grid import SimulationGrid
 from polarism.laser.laser_factory import LaserFactory
 from polarism.laser.pump_field import BatchedPumpField, PumpField
 from polarism.model import Model
+from polarism.model_terms import available_terms
 from polarism.config.batch_physics import BatchPhysics
 from polarism.noise import NoiseApplier
 from polarism.noise.stochastic import draw_seed
@@ -686,8 +688,12 @@ class SimulationController:
             for member in (self._member_configs or [cfg])
         ):
             noise = NoiseApplier(cfg, self.grid, self._member_configs)
+        terms = tuple(available_terms.lookup(name)(params, self.grid, physics)
+                      for name, params in cfg.terms.items())
+        dispersion = available_dispersions.lookup(cfg.physics.dispersion)()
         return Model(self.grid, physics, cfg.solver.precision, self.potential,
-                     self.pump_field, self.reservoir, self.boundary_condition, noise)
+                     self.pump_field, self.reservoir, self.boundary_condition, noise,
+                     terms, dispersion)
 
     def run(self) -> None:
         """Run the simulation loop."""

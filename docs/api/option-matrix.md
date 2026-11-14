@@ -71,6 +71,14 @@ For pulsed Gaussian studies:
 | `etd-rk2` | second-order exponential time differencing on a periodic grid | periodic only; second-order midpoint reservoir coupling; does not evaluate `kinetic_relaxation_eta` |
 | `ip-rk4` | spectral-style RK4 reference | requires `periodic`; stage-coupled reservoir; for GPU production use `ifrk4-fft-cuda` |
 
+## Dispersion and extra terms
+
+| Option | Use when | Notes |
+| --- | --- | --- |
+| `physics.dispersion = "parabolic"` | the standard effective-mass kinetic energy is enough | default; accepted by every solver |
+| `physics.dispersion = <plugin name>` | you need another E(k) | only `split-step-fft`, `ip-rk4`, and `etd-rk2`; see [Dispersion plugins](../plugins/dispersion.md) |
+| `terms = {<name>: {...}}` | you need an extra loss, nonlinearity, or energy shift | only `rk4-fdm`, `split-step-fft`, `ip-rk4`, and `etd-rk2`; see [Term plugins](../plugins/terms.md) |
+
 ## RK4 CUDA Laplacian
 
 | Option | Use when | Notes |

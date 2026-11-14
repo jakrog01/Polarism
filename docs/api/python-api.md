@@ -17,7 +17,9 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - create_reservoir
         - create_solver
         - AbstractSolver
+        - Dispersion
         - Model
+        - Term
         - StepReport
         - SolverCapabilities
         - LaserFactory
@@ -78,9 +80,18 @@ For constructor calls and working extension examples, see the [plugin guide](../
 ## Model component extension
 
 The [laser](../plugins/lasers.md), [reservoir](../plugins/reservoirs.md),
-[solver](../plugins/solvers.md), [grid](../plugins/grids.md), and
+[solver](../plugins/solvers.md), [term](../plugins/terms.md),
+[dispersion](../plugins/dispersion.md), [grid](../plugins/grids.md), and
 [absorption](../plugins/absorption.md) guides explain these bases and
 registration decorators in context.
+
+::: polarism.model_terms.Term
+
+::: polarism.model_terms.register_term
+
+::: polarism.dispersion.Dispersion
+
+::: polarism.dispersion.register_dispersion
 
 ::: polarism.laser.abstract_laser.AbstractLaser
 

@@ -5,11 +5,18 @@ This page describes the main interchangeable building blocks used by the simulat
 ## Model passed to solvers
 
 `polarism.Model` groups the grid, `BatchPhysics`, precision, array backend,
-potential, pump callable, reservoir, boundary condition, and optional noise.
+potential, pump callable, reservoir, boundary condition, optional noise,
+the instantiated extra `terms` (a tuple, empty by default), and the
+`dispersion` object (`parabolic` by default).
 The controller passes the same model to `SolverClass(config, grid, model)`,
 `step(model, state, dt)`, and `advance(model, state, n_steps)`.
 `model.rhs(field, reservoir_fields, t, out=None)` provides the finite difference
-reference derivative for simple solvers.
+reference derivative for simple solvers; it includes the extra terms.
+`model.extra_coefficients(field, reservoir_fields, t)` returns their summed
+`(energy, rate)` coefficients and `model.extra_rhs(...)` their contribution to
+the derivative; call them only when `model.terms` is not empty. See
+[Term plugins](../plugins/terms.md) and
+[Dispersion plugins](../plugins/dispersion.md).
 
 ## Grid interface
 

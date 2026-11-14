@@ -39,6 +39,7 @@ class PhysicsConstants:
     reservoir_diffusion_I: float = 0.0
     reservoir_diffusion_A: float = 0.0
     reservoir_diffusion_R: float = 0.0
+    dispersion: str = "parabolic"
 
 
 @dataclass
@@ -179,6 +180,7 @@ class Config:
     )
     potential: PotentialParameters = field(default_factory=PotentialParameters)
     physics: PhysicsConstants = field(default_factory=PhysicsConstants)
+    terms: dict[str, Any] = field(default_factory=dict)
     noise: NoiseParameters = field(default_factory=NoiseParameters)
     laser: LaserParameters = field(default_factory=LaserParameters)
     reservoir: ReservoirParameters = field(default_factory=ReservoirParameters)
@@ -206,6 +208,9 @@ class Config:
                 raise ValueError(f"Unknown config key '{section}'")
             if not isinstance(values, dict):
                 raise ValueError(f"Config section '{section}' must be a mapping")
+            if section == "terms":
+                cfg.terms = values
+                continue
             target = getattr(cfg, section)
             known = {item.name for item in fields(target)}
             for name, value in values.items():

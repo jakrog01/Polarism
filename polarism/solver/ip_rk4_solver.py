@@ -26,7 +26,7 @@ class IPRK4Solver(AbstractSolver):
         components=frozenset({1}), ndim=frozenset({1, 2}),
         grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         custom_reservoirs="quantitative", potential=True,
-        kinetic_relaxation=True, dispersion=frozenset({"parabolic"}),
+        kinetic_relaxation=True, dispersion=frozenset({"*"}),
         noise=frozenset({"none", "wigner"}),
         quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         description="Interaction-picture RK4. Stage-coupled reservoir. FFT-only, periodic grid only. Evaluates kinetic_relaxation_eta spectrally via _forward/_inverse. For GPU-native spectral production use 'ifrk4-fft-cuda'.",
@@ -45,7 +45,10 @@ class IPRK4Solver(AbstractSolver):
         precision = getattr(config.solver, "precision", "double")
         cdtype = complex_dtype(self.xp, precision)
         self._L_eig = grid.k_squared.astype(real_dtype(self.xp, precision))
-        self._L = -1j * hbar * grid.k_squared / (2 * m_eff)
+        if model.dispersion.kind == "parabolic":
+            self._L = -1j * hbar * grid.k_squared / (2 * m_eff)
+        else:
+            self._L = -1j * model.dispersion.energy(grid, self.batch_physics) / hbar
 
         # Propagators follow the solver precision so float32 runs stay float32.
         self._exp_L_half = self.xp.exp(self._L * (dt / 2)).astype(cdtype)
@@ -104,6 +107,8 @@ class IPRK4Solver(AbstractSolver):
         nR_0 = reservoir.get_active_density(res0)
         nI_0 = reservoir.get_inactive_density(res0)
         N1 = self._nonlinear_rhs(psi0, nR_0, nI_0, potential, psi0_k)
+        if model.terms:
+            N1 = N1 + model.extra_rhs(psi0, res0, t)
         N1_k = self._forward(N1)
         k1_u = N1_k
         k1_res = reservoir.get_derivatives(psi0, p0, res0)
@@ -115,6 +120,8 @@ class IPRK4Solver(AbstractSolver):
         nR_mid = reservoir.get_active_density(res_mid)
         nI_mid = reservoir.get_inactive_density(res_mid)
         N2 = self._nonlinear_rhs(psi_mid, nR_mid, nI_mid, potential, psi_mid_k)
+        if model.terms:
+            N2 = N2 + model.extra_rhs(psi_mid, res_mid, t + 0.5 * dt)
         N2_k = self._forward(N2)
         k2_u = self._exp_L_neg_half * N2_k
         k2_res = reservoir.get_derivatives(psi_mid, p_half, res_mid)
@@ -126,6 +133,8 @@ class IPRK4Solver(AbstractSolver):
         nR_mid2 = reservoir.get_active_density(res_mid2)
         nI_mid2 = reservoir.get_inactive_density(res_mid2)
         N3 = self._nonlinear_rhs(psi_mid2, nR_mid2, nI_mid2, potential, psi_mid2_k)
+        if model.terms:
+            N3 = N3 + model.extra_rhs(psi_mid2, res_mid2, t + 0.5 * dt)
         N3_k = self._forward(N3)
         k3_u = self._exp_L_neg_half * N3_k
         k3_res = reservoir.get_derivatives(psi_mid2, p_half, res_mid2)
@@ -137,6 +146,8 @@ class IPRK4Solver(AbstractSolver):
         nR_end = reservoir.get_active_density(res_end)
         nI_end = reservoir.get_inactive_density(res_end)
         N4 = self._nonlinear_rhs(psi_end, nR_end, nI_end, potential, psi_end_k)
+        if model.terms:
+            N4 = N4 + model.extra_rhs(psi_end, res_end, t + dt)
         N4_k = self._forward(N4)
         k4_u = self._exp_L_neg_full * N4_k
         k4_res = reservoir.get_derivatives(psi_end, p1, res_end)

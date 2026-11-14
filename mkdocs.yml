@@ -34,6 +34,8 @@ nav:
           - Potentials: plugins/potentials.md
           - Reservoirs: plugins/reservoirs.md
           - Solvers: plugins/solvers.md
+          - Terms: plugins/terms.md
+          - Dispersion: plugins/dispersion.md
           - Grids: plugins/grids.md
           - Absorption strategies: plugins/absorption.md
           - Storage formats: plugins/storage.md

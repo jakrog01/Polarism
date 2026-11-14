@@ -39,6 +39,29 @@ CUDA solvers to scale a cached envelope inside kernels.
 | `ifrk-fft-cuda` | selectable-order Lawson interaction-picture RK | periodic spectral solver with stage-coupled reservoirs |
 | `ifrk4-fft-cuda` | Lawson RK4 alias | equivalent to `ifrk-fft-cuda` with `tableau: rk4` |
 
+## Extra terms and dispersion
+
+Capabilities `terms` and `dispersion` decide which solvers accept
+[extra terms](../plugins/terms.md) and non-parabolic
+[dispersion](../plugins/dispersion.md); validation rejects other combinations.
+With no extra terms and `parabolic` dispersion every solver runs its unchanged
+code path.
+
+| `solver.method` | Extra terms | Dispersion |
+| --- | --- | --- |
+| `rk4-fdm` | yes | `parabolic` |
+| `rk4-fdm-fused` | no | `parabolic` |
+| `rk4-cuda` | no | `parabolic` |
+| `split-step-fft` | yes | any registered |
+| `split-step-fft-cuda` | no | `parabolic` |
+| `etd-rk2` | yes | any registered |
+| `ip-rk4` | yes | any registered |
+| `ifrk-fft-cuda`, `ifrk4-fft-cuda` | no | `parabolic` |
+
+`split-step-fft` multiplies the field by `exp((G - iE/hbar) dt)` after its local
+step, so field-dependent terms are first order in `dt` there. The other
+supporting solvers add the terms to their stage right-hand sides.
+
 ## Compatibility guidance
 
 The package includes explicit compatibility checks and warnings. In practice:

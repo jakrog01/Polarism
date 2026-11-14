@@ -1,7 +1,7 @@
 # Plugins
 
 A plugin is a Python module that registers a laser, potential, reservoir,
-solver, grid, absorption strategy, storage format, or observable under a configuration name. Start with
+solver, extra term, dispersion, grid, absorption strategy, storage format, or observable under a configuration name. Start with
 [Your first plugin](first-plugin.md) for a complete run before using the
 component-specific contracts below.
 
@@ -32,6 +32,8 @@ component-specific contracts below.
 | [Potential](potentials.md) | `polarism.potential.register_potential` | `cfg.potential.potential_type` | `potential_fn(X, Y, potential_config)` |
 | [Reservoir](reservoirs.md) | `polarism.reservoir.register_reservoir` | `cfg.reservoir.reservoir_type` | `ReservoirClass(reservoir_config, physics, grid, precision)` |
 | [Solver](solvers.md) | `polarism.solver.register_solver` | `cfg.solver.method` | `SolverClass(config, grid, model)` |
+| [Term](terms.md) | `polarism.model_terms.register_term` | keys of `cfg.terms` | `TermClass(params, grid, physics)` |
+| [Dispersion](dispersion.md) | `polarism.dispersion.register_dispersion` | `cfg.physics.dispersion` | `DispersionClass()` |
 | [Grid](grids.md) | `polarism.grid.register_grid` | `cfg.grid.grid_type` | `GridClass(grid_config)` |
 | [Absorption](absorption.md) | `polarism.boundary_conditions.absorption.register_absorption` | `cfg.boundary_condition.absorption` | `StrategyClass(grid, boundary_config, physics)` |
 | [Storage format](storage.md) | `polarism.results.storage.register_storage` | `cfg.result.formats` | `StorageClass(output_dir, batch_size, config, x, y)` |
@@ -44,7 +46,8 @@ In `multiple` laser mode, the factory calls the same laser constructor once per 
 1. `SimulationController` configures NumPy or CuPy, loads plugins, validates
    the config, and checks known solver compatibility rules.
 2. It creates the grid, boundary absorption strategy, potential, lasers,
-   `PumpField`, reservoir, `SimulationState`, `Model`, and solver, in that order.
+   `PumpField`, reservoir, `SimulationState`, `Model` (with the configured extra
+   terms and dispersion), and solver, in that order.
 3. It adds the strategy's `get_potential_distribution()` to the external
    potential. If outputs are enabled or a visitor is added, it builds result nodes; the reservoir's
    `make_result_nodes()` contributes optional nodes.

@@ -8,6 +8,7 @@ The full runtime configuration is held in `polarism.config.simulation_parameters
 | --- | --- |
 | `grid` | Spatial resolution, box size, and grid topology |
 | `physics` | Material constants, interaction strengths, and decay rates |
+| `terms` | Optional extra terms added to the condensate equation |
 | `noise` | Initial field, seed, and stochastic Wigner increments |
 | `boundary_condition` | Absorption type, profile, and mask width |
 | `potential` | External potential family and parameters |
@@ -61,6 +62,7 @@ The `physics` block controls decay, interaction, and reservoir coupling paramete
 - `hbar`
 - `kinetic_relaxation_eta`
 - `reservoir_diffusion_I`, `reservoir_diffusion_A`, `reservoir_diffusion_R`
+- `dispersion`, the name of the kinetic-energy relation (`parabolic` by default; see [Dispersion plugins](../plugins/dispersion.md))
 
 These values directly enter the nonlinear GPE-reservoir dynamics. Keep units consistent across the full configuration; the package does not perform unit conversion for you.
 

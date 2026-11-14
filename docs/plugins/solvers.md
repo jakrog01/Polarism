@@ -51,8 +51,8 @@ step. Pump samples come from `model.pump(t)` at the method's stage times.
 
 `model.rhs(field, reservoir_fields, t, out=None)` is the finite difference
 reference derivative. It includes the configured potential, interactions,
-reservoir blueshifts and gain, decay, kinetic relaxation, and reservoir
-rates. A simple plugin can use it directly. A solver with fused kernels can
+reservoir blueshifts and gain, decay, kinetic relaxation, configured extra
+[terms](terms.md), and reservoir rates. A simple plugin can use it directly. A solver with fused kernels can
 read model components and use its own stage implementation.
 
 ## Capabilities
@@ -69,6 +69,15 @@ fields accept plain sets. Declare only modes that your solver actually
 implements. A plugin with no declaration receives a
 warning and conservative defaults: one component, 2D periodic grid, generic
 reservoir interface, parabolic dispersion, no kinetic relaxation.
+
+`terms` (default `True`) says whether the solver adds the [extra
+terms](terms.md) from `cfg.terms`; a solver that integrates with `model.rhs`
+gets them automatically, and a solver with its own kernels declares
+`terms=False` until it implements them. `dispersion` lists the
+[dispersion](dispersion.md) names the solver accepts, or `{"*"}` when it builds
+its kinetic propagator from `model.dispersion.energy(grid, model.physics)` for
+every registered kind. Validation rejects a configuration outside either
+declaration.
 
 `custom_reservoirs` is `"quantitative"`, `"diagnostic"`, or `"unsupported"`.
 The `quantitative_reservoirs` set identifies built-in reservoirs appropriate

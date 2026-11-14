@@ -148,7 +148,7 @@ class SplitStepFFTCudaSolver(AbstractSolver):
         components=frozenset({1}), ndim=frozenset({1, 2}),
         grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double"}),
         custom_reservoirs="quantitative", potential=True,
-        kinetic_relaxation=False, dispersion=frozenset({"parabolic"}),
+        kinetic_relaxation=False, dispersion=frozenset({"parabolic"}), terms=False,
         noise=frozenset({"none", "wigner"}),
         quantitative_reservoirs=frozenset({"single", "double", "quadratic-double"}),
         description='GPU-only, two-transform spectral Strang splitting with symmetric reservoir half-steps. Periodic grids only; no kinetic relaxation.',

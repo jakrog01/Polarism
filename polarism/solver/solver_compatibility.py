@@ -57,6 +57,17 @@ def check_solver_compatibility(cfg) -> None:
             f"Solver '{solver}' does not support reservoir_type='{reservoir_type}'. "
             f"Supported: {sorted(caps.reservoirs)}. Hint: {caps.description}"
         )
+    dispersion = cfg.physics.dispersion
+    if "*" not in caps.dispersion and dispersion not in caps.dispersion:
+        raise SolverCompatibilityError(
+            f"Solver '{solver}' does not support physics.dispersion='{dispersion}'. "
+            f"Supported: {sorted(caps.dispersion)}. Hint: {caps.description}"
+        )
+    if cfg.terms and not caps.terms:
+        raise SolverCompatibilityError(
+            f"Solver '{solver}' does not support extra terms {sorted(cfg.terms)}. "
+            f"Hint: {caps.description}"
+        )
     if cfg.noise.enabled and cfg.noise.stochastic not in caps.noise:
         raise SolverCompatibilityError(
             f"Solver '{solver}' does not support noise.stochastic='{cfg.noise.stochastic}'"

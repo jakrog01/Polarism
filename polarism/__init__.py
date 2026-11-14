@@ -23,7 +23,9 @@ from polarism.results import (
     VisualizationVisitor,
 )
 from polarism.simulation_controller import SimulationController
+from polarism.dispersion import Dispersion
 from polarism.model import Model
+from polarism.model_terms import Term
 from polarism.sweep import Sweep
 from polarism.grid.simulation_grid import SimulationGrid
 from polarism.simulation_state import SimulationState
@@ -39,7 +41,9 @@ __all__ = [
     "create_reservoir",
     "create_solver",
     "AbstractSolver",
+    "Dispersion",
     "Model",
+    "Term",
     "StepReport",
     "SolverCapabilities",
     "LaserFactory",

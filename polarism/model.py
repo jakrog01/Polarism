@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 from polarism.compute_engine import compute_engine
+from polarism.dispersion import ParabolicDispersion
 
 
 class Model:
     """Collect the physical components passed to a solver."""
 
     def __init__(self, grid, physics, precision, potential, pump, reservoir,
-                 boundary, noise=None):
+                 boundary, noise=None, terms=(), dispersion=None):
         self.grid = grid
         self.physics = physics
         self.precision = precision
@@ -18,7 +19,28 @@ class Model:
         self.reservoir = reservoir
         self.boundary = boundary
         self.noise = noise
+        self.terms = tuple(terms)
+        self.dispersion = ParabolicDispersion() if dispersion is None else dispersion
         self._laplacian_buf = None
+
+    def extra_coefficients(self, field, reservoir_fields, t):
+        """Sum the extra terms into ``(energy, rate)`` coefficients.
+
+        Call only when ``terms`` is not empty.
+        """
+        energy = rate = 0
+        for term in self.terms:
+            value = term.coefficient(field, self.reservoir, reservoir_fields, t)
+            if term.category == "energy":
+                energy = energy + value
+            else:
+                rate = rate + value
+        return energy, rate
+
+    def extra_rhs(self, field, reservoir_fields, t):
+        """Return the extra terms' contribution to ``d field / dt``."""
+        energy, rate = self.extra_coefficients(field, reservoir_fields, t)
+        return (-1j / self.physics.get("hbar")) * energy * field + rate * field
 
     def rhs(self, field, reservoir_fields, t, out=None):
         """Evaluate the finite-difference reference right-hand side."""
@@ -52,6 +74,8 @@ class Model:
         dfield = (-1j / physics.get("hbar")) * (
             kinetic + eff_energy * field
         ) + gain_loss * field + eta * n_active * hbar_over_2m * lap
+        if self.terms:
+            dfield = dfield + self.extra_rhs(field, reservoir_fields, t)
         return dfield, res_derivs
 
     def _laplacian(self, field, out):
