@@ -89,13 +89,13 @@ a `Results` object. Its `time`, `fields`, `scalars`, `scalar_groups`, `static`,
 `config`, `x`, `y`, and `attrs` properties provide the saved values. HDF5 fields
 are read when accessed. Use it as a context manager or call `close()` when done.
 Built-in names are ASCII: `density`, `norm`, and `pump`; their display labels
-remain `|ψ|²`, `N(t)`, and `Pump`. Older HDF5 files are read with these names
-mapped automatically.
+remain `|ψ|²`, `N(t)`, and `Pump`. Result readers accept format v3 files.
 
-HDF5 format version 2 records `format_version` and `polarism_version` at the
-root, 1-D coordinates in `grid/x` and `grid/y`, and dataset labels. Time uses
-ps and coordinates use µm. NPY output writes the coordinates as `grid_x.npy`
-and `grid_y.npy` with `metadata.json` holding the same metadata.
+HDF5 format version 3 records `format_version`, `polarism_version`, `ndim`,
+`grid_type`, `components`, and coordinate units at the root. Field datasets
+have a scalar component axis and each dataset has `dims` and `units` attributes.
+Time uses ps and coordinates use µm. NPY and JSON output keep public field
+shapes and record dimensions and units in `metadata.json`.
 
 The user-facing result configuration exposes these main storage choices:
 
@@ -109,17 +109,17 @@ The user-facing result configuration exposes these main storage choices:
 | `real_time_view` | interactive visualization during a run |
 | `animate` | stream an online animation during the run |
 
-The reusable storage module also exports append-only HDF5 helpers used by batch pipelines:
+## Built-in observables
 
-| Symbol | Role |
-| --- | --- |
-| `AppendableHDF5Writer` | abstract append-only writer contract |
-| `CpuBufferedHDF5Writer` | CPU-oriented batched HDF5 writer |
-| `GpuAsyncHDF5Writer` | GPU-oriented double-buffered HDF5 writer |
-| `compute_batch_size` | GPU-memory-aware batch-depth heuristic |
-| `create_hdf5_writer` | backend-selection factory for CPU vs GPU runs |
-
-These helpers are separate from the visitor-based `cfg.result` path.
+`polarism.results.builtin_observables` registers `angular-momentum`,
+`center-of-mass`, `current`, `momentum-density` and `vortices` in the observable
+registry. They produce the nodes `angular_momentum`, `center_x`, `center_y`,
+`current_x`, `current_y`, `momentum_density`, `vortex_charge` (`int8`) and
+`vortex_count`, computed on the active backend and batch-aware (scalars have
+one value per member, fields keep the member axis). The always-present `norm`
+node is reused rather than repeated. `angular-momentum` and `vortices` need a
+2D grid. Formulas, units and the vortex detection rule are in
+[Output and Visualization](../user-guide/output-and-visualization.md#built-in-observables).
 
 See [storage plugins](../plugins/storage.md) and [observable plugins](../plugins/observables.md)
 for the result extension contracts, including custom visitors.

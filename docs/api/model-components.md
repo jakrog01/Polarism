@@ -2,14 +2,31 @@
 
 This page describes the main interchangeable building blocks used by the simulation controller.
 
+## Model passed to solvers
+
+`polarism.Model` groups the grid, `BatchPhysics`, precision, array backend,
+potential, pump callable, reservoir, boundary condition, optional noise,
+the instantiated extra `terms` (a tuple, empty by default), and the
+`dispersion` object (`parabolic` by default).
+The controller passes the same model to `SolverClass(config, grid, model)`,
+`step(model, state, dt)`, and `advance(model, state, n_steps)`.
+`model.rhs(field, reservoir_fields, t, out=None)` provides the finite difference
+reference derivative for simple solvers; it includes the extra terms.
+`model.extra_coefficients(field, reservoir_fields, t)` returns their summed
+`(energy, rate)` coefficients and `model.extra_rhs(...)` their contribution to
+the derivative; call them only when `model.terms` is not empty. See
+[Term plugins](../plugins/terms.md) and
+[Dispersion plugins](../plugins/dispersion.md).
+
 ## Grid interface
 
-The grid layer is defined by the `SimulationGrid2D` protocol. Concrete grids must provide:
+The grid layer is defined by the `SimulationGrid` protocol. Concrete grids must provide:
 
-- domain sizes and resolution: `nx`, `ny`, `lx`, `ly`
-- real-space coordinates: `X`, `Y`
-- spacings: `dx`, `dy`
-- spectral coordinates: `kx`, `ky`, `KX`, `KY`, `k_squared`
+- spatial dimension `ndim` (1 or 2), `shape`, `spacing`, and `lengths` in array axis order
+- x-axis fields `nx`, `lx`, `dx`, `X`, `kx`, and `KX`
+- `boundary`, `grid_type`, and `k_squared` with shape `grid.shape`
+
+2D grids also provide `ny`, `ly`, `dy`, `Y`, `ky`, and `KY`. A 1D grid has no y-axis attributes. `PeriodicGrid` and `ClosedIntervalGrid` implement both dimensions.
 
 ### Supported grid types
 
@@ -82,11 +99,14 @@ the 1/e radial decay length should use `continuous-exp-length`, which evaluates
 
 Reservoir models share the `AbstractReservoir` contract:
 
-- store the current reservoir state
+- store current state tuples as `(B, 1, *S)` arrays
 - expose the active density that couples to the condensate
 - compute reservoir derivatives
 - advance the reservoir in time
 - optionally expose result nodes for storage and visualization
+
+`get_reservoir_density()` and result nodes expose public spatial `(*S)` or
+`(B, *S)` arrays, where `S` is `(nx,)` or `(ny, nx)`.
 
 ### Supported reservoir types
 
@@ -95,6 +115,7 @@ Reservoir models share the `AbstractReservoir` contract:
 | `single` | one effective active reservoir |
 | `double` | inactive plus active reservoir with transfer between them |
 | `quadratic-double` | inactive reservoir directly fed by the pump and active reservoir fed by quadratic transfer `kappa*nI^2` |
+| `none` | no reservoir fields or reservoir result nodes; active and inactive densities are zero, so an incoherent pump has no effect |
 
 In `quadratic-double`, the active density exposed to the condensate is `nR`.
 The inactive density `nI` is useful for pulsed excitation because it can retain

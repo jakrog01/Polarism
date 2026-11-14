@@ -17,6 +17,11 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - create_reservoir
         - create_solver
         - AbstractSolver
+        - Dispersion
+        - Model
+        - Term
+        - StepReport
+        - SolverCapabilities
         - LaserFactory
         - load_plugins
         - RealTimeVisualization
@@ -25,7 +30,7 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - SimulationController
         - Sweep
         - SweepResults
-        - SimulationGrid2D
+        - SimulationGrid
         - SimulationState
         - Results2D
         - ResultScalar
@@ -44,11 +49,14 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - PhysicsConstants
         - BoundaryConditionParameters
         - PotentialParameters
+        - DriveParameters
+        - InitialConditionParameters
         - LaserParameters
         - ReservoirParameters
         - SolverParameters
         - ResultParameters
         - ComputeEngineParameters
+        - StopParameters
         - SweepParameters
         - Config
 
@@ -64,14 +72,29 @@ For constructor calls and working extension examples, see the [plugin guide](../
 
 ::: polarism.solver.AbstractSolver
 
+::: polarism.model.Model
+
+::: polarism.solver.StepReport
+
+::: polarism.solver.SolverCapabilities
+
 ::: polarism.solver.register_solver
 
 ## Model component extension
 
 The [laser](../plugins/lasers.md), [reservoir](../plugins/reservoirs.md),
-[solver](../plugins/solvers.md), [grid](../plugins/grids.md), and
+[solver](../plugins/solvers.md), [term](../plugins/terms.md),
+[dispersion](../plugins/dispersion.md), [grid](../plugins/grids.md), and
 [absorption](../plugins/absorption.md) guides explain these bases and
 registration decorators in context.
+
+::: polarism.model_terms.Term
+
+::: polarism.model_terms.register_term
+
+::: polarism.dispersion.Dispersion
+
+::: polarism.dispersion.register_dispersion
 
 ::: polarism.laser.abstract_laser.AbstractLaser
 
@@ -89,4 +112,4 @@ registration decorators in context.
 
 ## Batched state and reservoir API
 
-`SimulationState(grid, eps=1e-3, precision="double", *, mode="legacy_positive_uniform", k_cutoff_um=None, seed=None, batch_size=None)` creates identical seeded initial fields along the batch axis. `create_reservoir(reservoir_config, physics, grid, precision="double", *, batch_size=None)` creates matching zero density fields. Built-in reservoirs support `reset(batch_size=None)` to clear and resize their density fields. See [Batched simulations](../user-guide/time-evolution.md#batched-simulations) for a working pattern.
+`SimulationState(grid, eps=1e-3, precision="double", *, mode="complex_gaussian_zero_mean", k_cutoff_um=None, seed=None, batch_size=None)` creates identical seeded initial fields along the batch axis. `create_reservoir(reservoir_config, physics, grid, precision="double", *, batch_size=None)` creates matching zero density fields. Built-in reservoirs support `reset(batch_size=None)` to clear and resize their density fields. See [Batched simulations](../user-guide/time-evolution.md#batched-simulations) for a working pattern.

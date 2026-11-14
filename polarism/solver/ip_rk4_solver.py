@@ -4,10 +4,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.config.dtype_utils import complex_dtype, real_dtype
-from polarism.config.batch_physics import BatchPhysics
 from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
-from polarism.solver.abstract_solver import AbstractSolver
+from polarism.solver.abstract_solver import AbstractSolver, ACCEPTED, SolverCapabilities
 from polarism.solver.solver_registry import register_solver
 
 if TYPE_CHECKING:
@@ -16,17 +15,30 @@ if TYPE_CHECKING:
 
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
 
 
 @register_solver("ip-rk4")
 class IPRK4Solver(AbstractSolver):
     """Solve the model with interaction-picture RK4."""
-    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None):
+    capabilities = SolverCapabilities(
+        components=frozenset({1}), ndim=frozenset({1, 2}),
+        grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
+        custom_reservoirs="quantitative", potential=True,
+        kinetic_relaxation=True, dispersion=frozenset({"*"}),
+        coherent_drive=True, time_dependent_potential=True,
+        noise=frozenset({"none", "wigner"}),
+        quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
+        description="Interaction-picture RK4. Stage-coupled reservoir. FFT-only, periodic grid only. Evaluates kinetic_relaxation_eta spectrally via _forward/_inverse. For GPU-native spectral production use 'ifrk4-fft-cuda'.",
+    )
+    def __init__(self, config: Config, grid: SimulationGrid, model):
         """Set up the iprk 4 solver."""
-        super().__init__(config)
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
+        super().__init__(config, grid, model)
+        self._has_drive = model.drive is not None
+        self._time_dependent_potential = model.time_dependent_potential
+        self._fft = self.xp.fft.fft if grid.ndim == 1 else self.xp.fft.fft2
+        self._ifft = self.xp.fft.ifft if grid.ndim == 1 else self.xp.fft.ifft2
         dt = self.config.solver.dt
         hbar = self.batch_physics.get("hbar")
         m_eff = self.batch_physics.get("m_eff")
@@ -36,7 +48,10 @@ class IPRK4Solver(AbstractSolver):
         precision = getattr(config.solver, "precision", "double")
         cdtype = complex_dtype(self.xp, precision)
         self._L_eig = grid.k_squared.astype(real_dtype(self.xp, precision))
-        self._L = -1j * hbar * grid.k_squared / (2 * m_eff)
+        if model.dispersion.kind == "parabolic":
+            self._L = -1j * hbar * grid.k_squared / (2 * m_eff)
+        else:
+            self._L = -1j * model.dispersion.energy(grid, self.batch_physics) / hbar
 
         # Propagators follow the solver precision so float32 runs stay float32.
         self._exp_L_half = self.xp.exp(self._L * (dt / 2)).astype(cdtype)
@@ -47,11 +62,11 @@ class IPRK4Solver(AbstractSolver):
 
     def _forward(self, psi):
         """Transform psi to spectral space."""
-        return self.xp.fft.fft2(psi)
+        return self._fft(psi)
 
     def _inverse(self, psi_k):
         """Transform from spectral space back to real space."""
-        return self.xp.fft.ifft2(psi_k)
+        return self._ifft(psi_k)
 
     def _nonlinear_rhs(self, psi, nR, nI, potential, psi_k=None):
         """Compute the nonlinear right-hand side."""
@@ -75,29 +90,32 @@ class IPRK4Solver(AbstractSolver):
 
         return rhs
 
-    def step(
-        self,
-        potential: Union[np.ndarray, cp.ndarray],
-        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
-        reservoir: AbstractReservoir,
-        boundary_condition: BoundaryCondition,
-        state: SimulationState,
-    ) -> None:
+    def step(self, model, state, dt):
         """Advance the solver by one time step."""
-        self.batch_physics.check(state.psi)
+        potential = model.potential
+        pump = model.pump
+        reservoir = model.reservoir
+        boundary_condition = model.boundary
+        self.batch_physics.check(state.field)
         dt = self.config.solver.dt
         t = state.t
         p0 = evaluate_pump(pump, t)
         p_half = evaluate_pump(pump, t + 0.5 * dt)
         p1 = evaluate_pump(pump, t + dt)
 
-        psi0 = state.psi
+        psi0 = state.field
         res0 = reservoir.get_state()
 
         psi0_k = self._forward(psi0)
         nR_0 = reservoir.get_active_density(res0)
         nI_0 = reservoir.get_inactive_density(res0)
+        if self._time_dependent_potential:
+            potential = model.potential_at(t)
         N1 = self._nonlinear_rhs(psi0, nR_0, nI_0, potential, psi0_k)
+        if model.terms:
+            N1 = N1 + model.extra_rhs(psi0, res0, t)
+        if self._has_drive:
+            N1 = N1 + model.drive_contribution(psi0, t)
         N1_k = self._forward(N1)
         k1_u = N1_k
         k1_res = reservoir.get_derivatives(psi0, p0, res0)
@@ -108,7 +126,13 @@ class IPRK4Solver(AbstractSolver):
         res_mid = tuple(r + 0.5 * dt * k for r, k in zip(res0, k1_res))
         nR_mid = reservoir.get_active_density(res_mid)
         nI_mid = reservoir.get_inactive_density(res_mid)
+        if self._time_dependent_potential:
+            potential = model.potential_at(t + 0.5 * dt)
         N2 = self._nonlinear_rhs(psi_mid, nR_mid, nI_mid, potential, psi_mid_k)
+        if model.terms:
+            N2 = N2 + model.extra_rhs(psi_mid, res_mid, t + 0.5 * dt)
+        if self._has_drive:
+            N2 = N2 + model.drive_contribution(psi_mid, t + 0.5 * dt)
         N2_k = self._forward(N2)
         k2_u = self._exp_L_neg_half * N2_k
         k2_res = reservoir.get_derivatives(psi_mid, p_half, res_mid)
@@ -119,7 +143,13 @@ class IPRK4Solver(AbstractSolver):
         res_mid2 = tuple(r + 0.5 * dt * k for r, k in zip(res0, k2_res))
         nR_mid2 = reservoir.get_active_density(res_mid2)
         nI_mid2 = reservoir.get_inactive_density(res_mid2)
+        if self._time_dependent_potential:
+            potential = model.potential_at(t + 0.5 * dt)
         N3 = self._nonlinear_rhs(psi_mid2, nR_mid2, nI_mid2, potential, psi_mid2_k)
+        if model.terms:
+            N3 = N3 + model.extra_rhs(psi_mid2, res_mid2, t + 0.5 * dt)
+        if self._has_drive:
+            N3 = N3 + model.drive_contribution(psi_mid2, t + 0.5 * dt)
         N3_k = self._forward(N3)
         k3_u = self._exp_L_neg_half * N3_k
         k3_res = reservoir.get_derivatives(psi_mid2, p_half, res_mid2)
@@ -130,19 +160,28 @@ class IPRK4Solver(AbstractSolver):
         res_end = tuple(r + dt * k for r, k in zip(res0, k3_res))
         nR_end = reservoir.get_active_density(res_end)
         nI_end = reservoir.get_inactive_density(res_end)
+        if self._time_dependent_potential:
+            potential = model.potential_at(t + dt)
         N4 = self._nonlinear_rhs(psi_end, nR_end, nI_end, potential, psi_end_k)
+        if model.terms:
+            N4 = N4 + model.extra_rhs(psi_end, res_end, t + dt)
+        if self._has_drive:
+            N4 = N4 + model.drive_contribution(psi_end, t + dt)
         N4_k = self._forward(N4)
         k4_u = self._exp_L_neg_full * N4_k
         k4_res = reservoir.get_derivatives(psi_end, p1, res_end)
 
         u_new = psi0_k + (dt / 6.0) * (k1_u + 2 * k2_u + 2 * k3_u + k4_u)
         psi_new_k = self._exp_L_full * u_new
-        state.psi = self._inverse(psi_new_k)
+        state.field = self._inverse(psi_new_k)
 
-        state.psi = boundary_condition.after_step_action(state.psi)
+        state.field = boundary_condition.after_step_action(state.field)
 
         res_new = tuple(
             r0 + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
             for r0, k1, k2, k3, k4 in zip(res0, k1_res, k2_res, k3_res, k4_res)
         )
         reservoir.set_state(tuple(self.xp.maximum(x, 0) for x in res_new))
+        state.step += 1
+        state.t = state.t0 + state.step * dt
+        return ACCEPTED

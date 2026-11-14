@@ -14,6 +14,7 @@ class GridParameters:
     lx: float = 100.0
     ly: float = 100.0
     grid_type: str = "periodic"
+    ndim: int = 2
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -38,10 +39,35 @@ class PhysicsConstants:
     reservoir_diffusion_I: float = 0.0
     reservoir_diffusion_A: float = 0.0
     reservoir_diffusion_R: float = 0.0
-    init_eps: float = 1e-3
-    init_mode: str = "legacy_positive_uniform"
-    init_k_cutoff_um: float | None = None
-    init_seed: int | None = None
+    dispersion: str = "parabolic"
+
+
+@dataclass
+class NoiseParameters:
+    """Control initial and per-step condensate noise."""
+    enabled: bool = True
+    seed: int | None = None
+    initial: str = "complex_gaussian_zero_mean"
+    initial_amplitude: float = 1e-3
+    initial_k_cutoff_um: float | None = None
+    stochastic: str = "none"
+    stochastic_strength: float = 1.0
+
+
+@dataclass
+class InitialConditionParameters:
+    """Select the deterministic part of the initial wavefunction."""
+    type: str = "zero"
+    amplitude: float = 1.0
+    x0: float = 0.0
+    y0: float = 0.0
+    kx: float = 0.0
+    ky: float = 0.0
+    charge: int = 1
+    core_width: float = 1.0
+    path: str | None = None
+    frame: int = -1
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -58,6 +84,8 @@ class PotentialParameters:
     """Store potential settings."""
     expose_results: bool = True
     potential_type: str = "zero"
+    profile: dict[str, Any] = field(default_factory=dict)
+    envelope: dict[str, Any] = field(default_factory=lambda: {"type": "constant"})
     x1: float = -2.0
     y1: float = 0.0
     x2: float = 2.0
@@ -76,6 +104,8 @@ class LaserParameters:
     mode: str = "single"
     config_file: str | None = None
     laser_type: str = "pulse-gaussian"
+    profile: dict[str, Any] = field(default_factory=dict)
+    envelope: dict[str, Any] = field(default_factory=lambda: {"type": "constant"})
     P0: float = 0.4
     Pmax: float = 1.2
     x0: float = 0.0
@@ -88,6 +118,18 @@ class LaserParameters:
     n_pulses: int = 0
     power_definition: str = "peak_amplitude"
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DriveParameters:
+    """Store the coherent source and its rotating-frame energy."""
+    enabled: bool = False
+    amplitude: float = 0.0
+    energy: float = 0.0
+    kx: float = 0.0
+    ky: float = 0.0
+    profile: dict[str, Any] = field(default_factory=lambda: {"type": "uniform"})
+    envelope: dict[str, Any] = field(default_factory=lambda: {"type": "constant"})
 
 
 @dataclass
@@ -125,7 +167,7 @@ class ResultParameters:
     compression: str = "none"
     compression_level: int = 4
     save_psi: bool = False
-    save_interval: int = 1
+    save_every: float | None = None
     batch_size: int = 1000
     output_directory: str = "simulation_results"
     animate: bool = False
@@ -147,10 +189,19 @@ class ComputeEngineParameters:
 @dataclass
 class CheckpointParameters:
     """Control periodic and signal-triggered checkpoints."""
-    every_steps: int = 0
+    every: float = 0.0
     path: str | None = None
     resume_from: str | None = None
     on_signal: bool = True
+
+
+@dataclass
+class StopParameters:
+    """Control optional steady-state stopping."""
+    steady_state: bool = False
+    rtol: float = 1e-6
+    check_every: float = 10.0
+    min_time: float = 0.0
 
 
 @dataclass
@@ -169,7 +220,13 @@ class Config:
         default_factory=BoundaryConditionParameters
     )
     potential: PotentialParameters = field(default_factory=PotentialParameters)
+    drive: DriveParameters = field(default_factory=DriveParameters)
     physics: PhysicsConstants = field(default_factory=PhysicsConstants)
+    terms: dict[str, Any] = field(default_factory=dict)
+    noise: NoiseParameters = field(default_factory=NoiseParameters)
+    initial_condition: InitialConditionParameters = field(
+        default_factory=InitialConditionParameters
+    )
     laser: LaserParameters = field(default_factory=LaserParameters)
     reservoir: ReservoirParameters = field(default_factory=ReservoirParameters)
     solver: SolverParameters = field(default_factory=SolverParameters)
@@ -178,6 +235,7 @@ class Config:
         default_factory=ComputeEngineParameters
     )
     checkpoint: CheckpointParameters = field(default_factory=CheckpointParameters)
+    stop: StopParameters = field(default_factory=StopParameters)
     sweep: SweepParameters = field(default_factory=SweepParameters)
 
     @classmethod
@@ -196,6 +254,9 @@ class Config:
                 raise ValueError(f"Unknown config key '{section}'")
             if not isinstance(values, dict):
                 raise ValueError(f"Config section '{section}' must be a mapping")
+            if section == "terms":
+                cfg.terms = values
+                continue
             target = getattr(cfg, section)
             known = {item.name for item in fields(target)}
             for name, value in values.items():

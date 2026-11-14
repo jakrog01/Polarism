@@ -10,11 +10,15 @@
 | `boundary_condition` | absorbing boundary settings |
 | `potential` | external potential type and parameters |
 | `physics` | driven-dissipative GPE and reservoir coefficients |
+| `terms` | extra [term plugins](../plugins/terms.md) added to the condensate equation |
+| `noise` | initial and stochastic condensate noise |
+| `initial_condition` | deterministic start field added to the initial noise |
 | `laser` | pump mode and pump-shape parameters |
 | `reservoir` | reservoir model selection |
 | `solver` | time integrator and timestep settings |
 | `result` | storage, visualization, and output cadence |
 | `checkpoint` | periodic checkpoints, restart source, and signal handling |
+| `stop` | steady-state stopping controls |
 | `compute_engine` | CPU/GPU backend selection |
 
 ## Grid options
@@ -36,8 +40,14 @@ configurations.  Checks include:
   `gamma_A`, `R`, `R_IA`, `R_AI`, `kappa`) are `>= 0`
 - all interaction, relaxation, and diffusion coefficients (`g_C`, `g_R`,
   `g_I`, `kinetic_relaxation_eta`, `reservoir_diffusion_I/A/R`) are `>= 0`
-- `init_eps >= 0`; `init_mode` is a recognised value; `init_k_cutoff_um > 0`
-  is required when `init_mode='filtered_complex_gaussian'`
+- `physics.dispersion` and every key of `terms` must be registered, and each
+  `terms` value must be a mapping
+- `noise.initial_amplitude >= 0`; `noise.initial` is a recognised value;
+  `noise.initial_k_cutoff_um > 0` is required for filtered initial fields;
+  `noise.seed` is a non-negative int64 or `null`; `noise.stochastic_strength >= 0`
+- `initial_condition.type` must be registered; `amplitude >= 0`; `core_width > 0`;
+  `amplitude`, `x0`, `y0`, `kx`, `ky` are finite; `charge` and `frame` are
+  integers; `path` is required for `file`; `vortex` requires a 2D grid
 - `boundary_condition.strength >= 0`; `mask_width_percent` in `[0, 0.5]`;
   `absorption` must be a registered strategy; `profile_type` is in
   `{'sin2', 'parabolic'}` when absorption is active
@@ -72,7 +82,8 @@ coefficient so that the corrective action is unambiguous.
 
 | Field | Meaning | Main options |
 | --- | --- | --- |
-| `potential_type` | external potential model | `zero`, `double-well-supergaussian` |
+| `potential_type` | external potential model | `zero`, `double-well-supergaussian`, `profile` |
+| `profile` | [spatial profile](../user-guide/profiles-and-envelopes.md) spec; required for `potential_type: profile`, with amplitude in meV | mapping, default `{}` |
 | `x1`, `y1`, `x2`, `y2` | feature positions for structured potentials | floats |
 | `V1`, `V2` | potential amplitudes | floats |
 | `w1`, `w2` | characteristic widths | positive floats |
@@ -85,7 +96,9 @@ coefficient so that the corrective action is unambiguous.
 | --- | --- | --- |
 | `mode` | single or multi-pump setup | `single`, `multiple` |
 | `config_file` | YAML file for multi-pump setups | path string |
-| `laser_type` | pump-profile selection | `uniform`, `continuous-gaussian`, `continuous-exp`, `continuous-exp-length`, `pulse-gaussian` |
+| `laser_type` | pump-profile selection | `uniform`, `continuous-gaussian`, `continuous-exp`, `continuous-exp-length`, `pulse-gaussian`, `profile` |
+| `profile` | [spatial profile](../user-guide/profiles-and-envelopes.md) spec; required for `laser_type: profile` | mapping, default `{}` |
+| `envelope` | temporal envelope for `laser_type: profile` | mapping, default `{type: constant}` |
 | `P0`, `Pmax` | pump strength parameters; for `pulse-gaussian`, their physical meaning is set by `power_definition` | floats |
 | `power_definition` | interpretation of `P0`, `Pmax`, and per-laser `power` for `pulse-gaussian` | `peak_amplitude`, `pulse_energy` |
 | `x0`, `y0` | pump center | floats |
@@ -96,6 +109,10 @@ coefficient so that the corrective action is unambiguous.
 | `delay` | start delay before pump turns on; for `pulse-gaussian`, the first peak occurs later at `delay + cutoff_sigma * sigma_time` | nonnegative float |
 | `n_pulses` | finite pulse-train length for pulsed lasers; `0` means an unbounded pulse train | nonnegative integer |
 | `expose_results` | publish the total pump field and per-laser scalar group to result visitors | boolean |
+
+`laser_type: profile` requires `power_definition: peak_amplitude`; its pump is
+`P0 × profile(r) × envelope(t − delay)` after the delay. Both mappings also work
+in entries of a multiple-laser YAML file.
 
 `power_definition` is currently used by `pulse-gaussian`.  In
 `peak_amplitude` mode, `P0` is the local peak source density at the pump
@@ -110,7 +127,7 @@ total pulse dose.
 
 | Field | Meaning | Main options |
 | --- | --- | --- |
-| `reservoir_type` | reservoir-model selection | `single`, `double`, `quadratic-double` |
+| `reservoir_type` | reservoir-model selection | `single`, `double`, `quadratic-double`, `none` |
 | `expose_results` | publish reservoir fields and scalars to result visitors | boolean |
 
 `quadratic-double` uses an inactive reservoir directly fed by the pump and an
@@ -150,9 +167,9 @@ with reduced grid-direction anisotropy.
 | `save_results` | enable result processing | boolean |
 | `save_hdf5`, `save_json`, `save_npy` | storage backends | booleans |
 | `formats` | additional registered storage formats, combined with enabled `save_*` options | tuple of names, default `()` |
-| `observables` | registered observable factories that add result nodes | tuple of names, default `()` |
-| `save_interval` | number of solver steps between writes after the initial state | positive integer |
-| `batch_size` | buffered result chunk size | positive integer |
+| `observables` | registered observable factories that add result nodes; built in: `angular-momentum`, `center-of-mass`, `current`, `momentum-density`, `vortices` (the first and last are 2D only) | tuple of names, default `()` |
+| `save_every` | time in ps between writes after the initial state; defaults to one `solver.dt` | positive multiple of `solver.dt` |
+| `batch_size` | maximum frames buffered before a write; a batch is also written once its fields reach 256 MiB | positive integer |
 | `compression` | compression for every HDF5 dataset | `none` (default), `lzf`, `gzip` |
 | `compression_level` | gzip level, used only when `compression="gzip"` | integer from 0 to 9; default `4` |
 | `save_psi` | store the complex condensate field as `psi` | boolean, default `False` |
@@ -173,14 +190,28 @@ only the movie stream, while storage visitors remain fatal by default.
 
 | Field | Meaning | Default |
 | --- | --- | --- |
-| `every_steps` | write at these absolute step boundaries and at the run end; zero disables periodic writes | `0` |
+| `every` | checkpoint cadence in ps and at the run end; zero disables periodic writes | `0` |
 | `path` | checkpoint destination; defaults to `checkpoint.h5` in the run directory | `None` |
 | `resume_from` | load a checkpoint before running to the absolute `solver.total_time` | `None` |
 | `on_signal` | checkpoint and stop after the current chunk on SIGTERM or SIGUSR1 | `True` |
 
-`every_steps` must be a nonnegative integer, both paths must be nonempty strings
+`every` must be zero or a positive multiple of `solver.dt`, both paths must be nonempty strings
 or `None`, and `on_signal` must be a boolean. A run directory is created even
 when result storage is disabled if periodic checkpointing is enabled.
+
+## Stop options
+
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `steady_state` | stop after two consecutive checks satisfy the convergence rule | `False` |
+| `rtol` | upper bound on relative norm and density L2 changes | `1e-6` |
+| `check_every` | interval between checks in ps; a positive multiple of `solver.dt` when enabled | `10.0` |
+| `min_time` | earliest time in ps at which a stop can be recorded | `0.0` |
+
+`rtol` must be positive and finite; `min_time` must be nonnegative and finite.
+The norm threshold `N < 1e-30` counts as steady at a comparison check.
+See [Stopping early](../user-guide/time-evolution.md#stopping-early) for the
+Python event API and batched stop-time metadata.
 
 ## Compute-engine options
 
@@ -198,27 +229,60 @@ The `physics` block stores the scalar coefficients entering the condensate and r
 - `g_C`, `g_R`, `g_I`
 - `R`, `R_IA`, `R_AI`
 - `kappa` for the `quadratic-double` reservoir
-- `init_eps`, `init_mode`, `init_k_cutoff_um`, `init_seed`
 - `kinetic_relaxation_eta`
 - `reservoir_diffusion_I`, `reservoir_diffusion_A`, `reservoir_diffusion_R`
 
 These values are model parameters, not high-level feature flags, so they should be changed with physical units and stability constraints in mind.
 
-Initial-condition options:
+Noise options in the separate `noise` block:
 
 | Field | Meaning | Main options |
 | --- | --- | --- |
-| `init_eps` | amplitude scale of the initial condensate seed | positive float |
-| `init_mode` | initial seed generator | `legacy_positive_uniform`, `complex_gaussian_zero_mean`, `filtered_complex_gaussian` |
-| `init_k_cutoff_um` | radial cutoff in rad/um for `filtered_complex_gaussian` | positive float, required for filtered mode |
-| `init_seed` | optional RNG seed; noise is drawn with NumPy on the host, so CPU and GPU runs with the same seed start from the same field | integer or `null` |
+| `enabled` | master switch; false makes the initial field exactly zero and disables increments | boolean |
+| `seed` | resolved and recorded seed; `null` draws from OS entropy | non-negative int64 or `null` |
+| `initial` | initial field generator | `none`, `legacy_positive_uniform`, `complex_gaussian_zero_mean`, `filtered_complex_gaussian` |
+| `initial_amplitude` | amplitude scale of the initial condensate field | non-negative float |
+| `initial_k_cutoff_um` | radial cutoff in rad/um for `filtered_complex_gaussian` | positive float, required for filtered mode |
+| `stochastic` | per-step noise model | `none` or `wigner` |
+| `stochastic_strength` | multiplier of stochastic variance | non-negative float |
+
+The `initial_condition` block sets the deterministic part of the start field
+(see [Initial conditions](../user-guide/grid-and-parameters.md#initial-conditions)):
+
+| Field | Meaning | Main options |
+| --- | --- | --- |
+| `type` | registered [initial condition](../plugins/initial-conditions.md) | `zero` (default), `plane-wave`, `vortex`, `file` |
+| `amplitude` | field amplitude (not applied by `file`) | non-negative float, default `1.0` |
+| `x0`, `y0` | vortex centre in µm | floats, default `0.0` |
+| `kx`, `ky` | plane-wave wave vector in rad/µm | floats, default `0.0` |
+| `charge` | vortex winding number | integer, default `1` |
+| `core_width` | vortex healing length in µm | positive float, default `1.0` |
+| `path` | source of `file`: `.npy`, results `.h5` or checkpoint | path, default `null` |
+| `frame` | frame read from a results file | integer, default `-1` |
+| `extra` | free-form keys for plugin conditions | mapping, default `{}` |
+
+The remaining fields belong to `physics`:
+
+| Field | Meaning | Main options |
+| --- | --- | --- |
 | `kinetic_relaxation_eta` | condensate kinetic-energy relaxation strength | nonnegative float, default `0.0` |
 | `reservoir_diffusion_I` | inactive-reservoir diffusion coefficient | nonnegative float, default `0.0` |
 | `reservoir_diffusion_A` | active-density diffusion coefficient for `double` | nonnegative float, default `0.0` |
 | `reservoir_diffusion_R` | active-density diffusion coefficient for `single` and `quadratic-double` | nonnegative float, default `0.0` |
+| `dispersion` | registered [dispersion](../plugins/dispersion.md) of the kinetic energy; non-parabolic kinds need a solver that declares them | name, default `parabolic` |
 
-The legacy mode is kept for reproducibility.  For geometry-sensitive runs, prefer
-zero-mean or filtered seeds and record the cutoff in run metadata.
+## Terms block
+
+`terms` maps registered [term](../plugins/terms.md) names to their parameter
+dictionaries, for example `terms: {nonlinear-loss: {alpha: 0.01}}`. The default
+is an empty mapping, which leaves the equation unchanged. Validation rejects
+unknown names and non-mapping parameters; solver compatibility rejects terms on
+solvers that do not support them.
+
+The default `initial` is `complex_gaussian_zero_mean`. The legacy mode (the
+default before 0.7) is kept only to reproduce old runs: its non-zero mean seeds
+a uniform k = 0 component. For geometry-sensitive runs, prefer the filtered
+mode and record the cutoff in run metadata.
 
 Relaxation and diffusion are model terms, not visualization filters.  They are
 disabled by default and should be enabled only with a stated physical rationale

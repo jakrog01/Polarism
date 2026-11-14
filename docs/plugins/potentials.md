@@ -13,11 +13,13 @@ function and calls it once.
 
 | Name and signature | Caller and timing | Return or state | Status |
 | --- | --- | --- | --- |
-| `potential_fn(X, Y, potential_config)` | `create_potential`, once during setup | NumPy/CuPy array of shape `(ny, nx)` | Required |
+| `potential_fn(X, Y, potential_config)` | `create_potential`, once during setup | NumPy/CuPy array of shape `grid.shape` | Required |
 | `@register_potential("name")` | Module import | Registers the function under `name` | Required |
 
 `X` and `Y` already use the active backend. The controller calls `.astype` on
 the potential in single precision, so a plain Python scalar is insufficient.
+For a 1D grid, both arrays have shape `(nx,)` and `Y` is all zeros. The plugin
+therefore evaluates its profile along y = 0. In 2D they have shape `(ny, nx)`.
 `PotentialParameters` has fields such as `V1`, `V2`, positions, widths, and
 order; it has no `extra` dictionary.
 
@@ -66,7 +68,7 @@ check, so test it with your potential explicitly.
 cfg.potential.potential_type = "example-parabolic-trap"
 cfg.potential.V1 = 0.001
 run = SimulationController(cfg)
-assert run.potential.shape == (cfg.grid.ny, cfg.grid.nx)
+assert run.potential.shape == run.grid.shape
 assert np.isfinite(run.potential).all()
 ```
 

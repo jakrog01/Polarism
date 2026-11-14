@@ -12,8 +12,8 @@ def small_config(**overrides) -> Config:
     """Return a real, inexpensive simulation configuration."""
     cfg = Config()
     cfg.grid = GridParameters(nx=16, ny=16, lx=20.0, ly=20.0)
-    cfg.physics.init_mode = "complex_gaussian_zero_mean"
-    cfg.physics.init_seed = 0
+    cfg.noise.initial = "complex_gaussian_zero_mean"
+    cfg.noise.seed = 0
     cfg.laser.laser_type = "continuous-gaussian"
     cfg.reservoir.reservoir_type = "single"
     cfg.solver.dt = 0.01

@@ -14,7 +14,7 @@ from polarism.config.simulation_parameters import (
     BoundaryConditionParameters,
     PhysicsConstants,
 )
-from polarism.grid.simulation_grid_2d import SimulationGrid2D
+from polarism.grid.simulation_grid import SimulationGrid
 
 
 @register_absorption("cap")
@@ -22,18 +22,18 @@ class AbsorptionCapStrategy(AbsorptionStrategy):
     """Apply boundary absorption with a complex cap."""
     after_step_is_noop = True
 
-    grid: SimulationGrid2D
+    grid: SimulationGrid
     absorption_cfg: BoundaryConditionParameters
     physics_constants: PhysicsConstants
 
     def __init__(
         self,
-        grid: SimulationGrid2D,
+        grid: SimulationGrid,
         absorption_cfg: BoundaryConditionParameters,
         physics_constants: PhysicsConstants,
     ):
         """Set up the absorption cap strategy."""
-        self.absorption_profile = create_absorption_profile(grid.ny, grid.nx, absorption_cfg)
+        self.absorption_profile = create_absorption_profile(grid.shape, absorption_cfg)
         self.potential_dist = (
             -0.5j
             * physics_constants.hbar

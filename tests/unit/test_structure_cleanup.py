@@ -8,6 +8,7 @@ import pytest
 from polarism.boundary_conditions.absorption.absorption_registry import available_absorptions, register_absorption
 from polarism.config import Config
 from polarism.grid.grid_registry import available_grids, register_grid
+from polarism.initial_condition import available_initial_conditions, register_initial_condition
 from polarism.laser.laser_registry import available_lasers, register_laser
 from polarism.potential.potential_registry import available_potentials, register_potential
 from polarism.reservoir.reservoir_registry import available_reservoirs, register_reservoir
@@ -19,6 +20,7 @@ from polarism.solver.solver_registry import available_solvers, register_solver
 REGISTRIES = [
     ("absorption", available_absorptions, register_absorption),
     ("grid", available_grids, register_grid),
+    ("initial condition", available_initial_conditions, register_initial_condition),
     ("laser", available_lasers, register_laser),
     ("potential", available_potentials, register_potential),
     ("reservoir", available_reservoirs, register_reservoir),

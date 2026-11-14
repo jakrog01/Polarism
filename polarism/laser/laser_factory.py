@@ -24,6 +24,7 @@ class LaserFactory:
         Y: Union[np.ndarray, cp.ndarray],
         precision: str = "double",
         entry_overrides=None,
+        grid=None,
     ) -> list[AbstractLaser]:
         """Create one or more lasers from the config."""
         if laser_config.mode == "multiple":
@@ -32,9 +33,9 @@ class LaserFactory:
                     "config_file must be provided for multiple laser mode."
                 )
 
-            return LaserFactory._create_multiple_lasers(laser_config, X, Y, precision, entry_overrides)
+            return LaserFactory._create_multiple_lasers(laser_config, X, Y, precision, entry_overrides, grid)
 
-        return LaserFactory._create_single_laser(laser_config, X, Y, precision)
+        return LaserFactory._create_single_laser(laser_config, X, Y, precision, grid)
 
     @staticmethod
     def _create_single_laser(
@@ -42,10 +43,14 @@ class LaserFactory:
         X: Union[np.ndarray, cp.ndarray],
         Y: Union[np.ndarray, cp.ndarray],
         precision: str = "double",
+        grid=None,
     ) -> list[AbstractLaser]:
         """Create one laser from the config."""
         laser_type = laser_config.laser_type
-        return [available_lasers.lookup(laser_type)(laser_config, X, Y, precision)]
+        laser_class = available_lasers.lookup(laser_type)
+        if laser_type == "profile":
+            return [laser_class(laser_config, X, Y, precision, grid)]
+        return [laser_class(laser_config, X, Y, precision)]
 
     @staticmethod
     def _create_multiple_lasers(
@@ -54,6 +59,7 @@ class LaserFactory:
         Y: Union[np.ndarray, cp.ndarray],
         precision: str = "double",
         entry_overrides=None,
+        grid=None,
     ) -> list[AbstractLaser]:
         """Create all lasers listed in the config file."""
         with open(laser_config.config_file, "r") as f:
@@ -69,6 +75,14 @@ class LaserFactory:
                         item[key] = value
                     else:
                         item["extra"] = {**item.get("extra", {}), key: value}
+                elif field.startswith(("profile.", "envelope.")):
+                    mapping, key = field.split(".", 1)
+                    current = item.get(mapping, getattr(laser_config, mapping))
+                    if key == "type":
+                        from polarism.sweep_config import _mapping_with_type
+                        item[mapping] = _mapping_with_type(current, value, mapping)
+                    else:
+                        item[mapping] = {**current, key: value}
                 else:
                     item[field] = value
             laser_type = item.get("laser_type")
@@ -94,14 +108,8 @@ class LaserFactory:
                 **{k: v for k, v in item.items() if k in known},
                 "extra": extra,
             })
-            lasers.append(laser_class(individual_config, X, Y, precision))
+            if laser_type == "profile":
+                lasers.append(laser_class(individual_config, X, Y, precision, grid))
+            else:
+                lasers.append(laser_class(individual_config, X, Y, precision))
         return lasers
-
-
-def normalize_config(cfg: LaserParameters | dict) -> dict:
-    """Return the laser config as a plain dict."""
-    if isinstance(cfg, dict):
-        return cfg
-    if hasattr(cfg, "__dict__"):
-        return vars(cfg)
-    raise TypeError("Unsupported laser config format")

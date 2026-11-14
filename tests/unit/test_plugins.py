@@ -134,17 +134,17 @@ class PluginReservoir(SingleReservoir):
 
 GRID_PLUGIN = """
 from polarism.grid import register_grid
-from polarism.grid.periodic_simulation_grid_2d import PeriodicSimulationGrid2D
-from polarism.grid.closed_interval_simulation_grid_2d import ClosedIntervalSimulationGrid2D
+from polarism.grid.periodic_grid import PeriodicGrid
+from polarism.grid.closed_interval_grid import ClosedIntervalGrid
 
 
 @register_grid("plugin-periodic")
-class PluginPeriodicGrid(PeriodicSimulationGrid2D):
+class PluginPeriodicGrid(PeriodicGrid):
     pass
 
 
 @register_grid("plugin-closed")
-class PluginClosedGrid(ClosedIntervalSimulationGrid2D):
+class PluginClosedGrid(ClosedIntervalGrid):
     pass
 """
 

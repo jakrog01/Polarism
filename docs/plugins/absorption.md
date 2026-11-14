@@ -18,12 +18,13 @@ arguments, but the factory passes those three objects.
 | --- | --- | --- | --- |
 | `__init__(grid, boundary_config, physics)` | Factory, once | Store profile and parameters | Required |
 | `set_time_step(dt)` | `BoundaryCondition`, after construction | Store `dt` if per-step damping needs it | Optional override |
-| `get_potential_distribution()` | Controller setup, once | Scalar or `(ny, nx)` potential term | Abstract |
-| `apply_absorption(psi)` | Solver after a step | Updated real-space field `(ny, nx)` | Abstract |
+| `get_potential_distribution()` | Controller setup, once | Scalar or `grid.shape` potential term | Abstract |
+| `apply_absorption(psi)` | Solver after a step | Updated real-space field with trailing `grid.shape` | Abstract |
 | `after_step_is_noop` | CUDA chunk eligibility | True only if `apply_absorption` leaves `psi` unchanged | Optional class attribute |
 
-`create_absorption_profile(ny, nx, boundary_config)` builds a configured
-edge profile. A strategy can use that helper or construct another profile.
+`create_absorption_profile(grid.shape, boundary_config)` builds a configured
+edge profile. It measures distance from both x walls in 1D and from all x and
+y walls in 2D. A strategy can use that helper or construct another profile.
 
 ## Step-by-step
 
@@ -78,7 +79,7 @@ potential in `get_potential_distribution`, leave `psi` unchanged in
 ```python
 cfg.boundary_condition.absorption = "example-soft-edge"
 run = SimulationController(cfg)
-field = np.ones((cfg.grid.ny, cfg.grid.nx), dtype=np.complex128)
+field = np.ones(run.grid.shape, dtype=np.complex128)
 damped = run.boundary_condition.after_step_action(field)
 assert np.abs(damped).max() <= 1.0
 ```

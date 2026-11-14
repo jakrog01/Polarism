@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 PLUGIN_PACKAGE = "polarism_plugins"
+PLUGIN_API = 2
 
 
 def load_plugins(root: str | Path | None = None) -> list[str]:
@@ -29,6 +30,12 @@ def load_plugins(root: str | Path | None = None) -> list[str]:
         if parts[-1] == "__init__":
             parts = parts[:-1]
         name = ".".join(parts)
-        importlib.import_module(name)
+        module = importlib.import_module(name)
+        declared = getattr(module, "POLARISM_PLUGIN_API", None)
+        if declared is not None and declared != PLUGIN_API:
+            raise RuntimeError(
+                f"Plugin module {name!r} declares POLARISM_PLUGIN_API={declared}; "
+                f"this version requires {PLUGIN_API}."
+            )
         loaded.append(name)
     return loaded

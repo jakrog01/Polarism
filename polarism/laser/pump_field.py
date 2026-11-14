@@ -27,7 +27,8 @@ def evaluate_pump(pump, t):
                 xp = compute_engine.xp
                 vector = xp.asarray(value)
                 if vector.ndim:
-                    vector = vector[:, None, None]
+                    ndim = getattr(getattr(pump, "grid", None), "ndim", 2)
+                    vector = vector.reshape((-1, 1, *(1,) * ndim))
                 result = result + envelope * vector
             return result
     return pump(t)
@@ -44,7 +45,8 @@ class PumpField:
 
     def __call__(self, t: float):
         lasers = self.lasers
-        X, Y = self.grid.X, self.grid.Y
+        X = self.grid.X
+        Y = self.xp.zeros_like(X) if self.grid.ndim == 1 else self.grid.Y
         terms = self.separable_terms()
         if terms:
             coefficients = [coefficient(t) for _, coefficient in terms]
@@ -53,7 +55,7 @@ class PumpField:
                 for (envelope, _), value in zip(terms, coefficients):
                     vector = self.xp.asarray(value)
                     if vector.ndim:
-                        vector = vector[:, None, None]
+                        vector = vector.reshape((-1, 1, *(1,) * self.grid.ndim))
                     total = total + envelope * vector
                 return total
         if not lasers:
@@ -113,7 +115,7 @@ class BatchedPumpField:
                 return None
             envelopes = [laser._spatial_envelope for laser in slot]
             shared = all(bool(self.xp.array_equal(envelopes[0], item)) for item in envelopes[1:])
-            envelope = envelopes[0] if shared else self.xp.stack(envelopes)
+            envelope = envelopes[0] if shared else self.xp.stack(envelopes)[:, None]
             if all(type(laser) is type(slot[0]) and
                    _scalar_settings(laser) == _scalar_settings(slot[0])
                    for laser in slot[1:]):
@@ -138,7 +140,7 @@ class BatchedPumpField:
             for envelope, coefficient in self._terms:
                 value = self.xp.asarray(coefficient(t))
                 if value.ndim:
-                    value = value[:, None, None]
+                    value = value.reshape((-1, 1, *(1,) * self.grid.ndim))
                 component = envelope * value
                 if components is not None:
                     components.append(component)
@@ -147,4 +149,4 @@ class BatchedPumpField:
                 self.last_components = components
             return total
         return self.xp.stack([PumpField(lasers, self.grid, self.precision)(t)
-                              for lasers in self.member_lasers])
+                              for lasers in self.member_lasers])[:, None]

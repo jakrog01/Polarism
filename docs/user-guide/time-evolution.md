@@ -52,6 +52,39 @@ Practical procedure:
 
 The bundled tests already encode this mindset by checking decay laws, spatial uniformity, and solver-to-solver agreement.
 
+## Stopping early
+
+Set `stop.steady_state: true` to check for convergence every `stop.check_every`
+ps. The interval must be a positive multiple of `solver.dt`. At two
+consecutive checks, a member stops when both its relative norm change and the
+relative L2 change of `|psi|²` are below `stop.rtol`. A norm below `1e-30` is
+treated as steady. Checks can record a stop only at or after `stop.min_time`.
+The defaults are `steady_state: false`, `rtol: 1e-6`, `check_every: 10.0` ps,
+and `min_time: 0.0` ps.
+
+You can register a Python predicate on a controller:
+
+```python
+controller.add_event(lambda view: view.t >= 2.0, every=0.1)
+controller.run()
+```
+
+`every` is in ps and must be a positive multiple of `solver.dt`. The callback
+receives a frozen view with `t`, `step`, `psi`, `density`, `reservoir`,
+`batched`, and `batch_size`. Arrays are read-only host snapshots; reservoir is
+a tuple of density arrays. Return `None` or `False` to continue, `True` to
+stop every member, or a boolean array of length `batch_size` to record stops
+for selected members. Callbacks run at exact scheduled steps, after the solver
+chunk and before a checkpoint at that step. Events are Python callbacks and
+must be registered again after loading a checkpoint.
+
+For a batch, integration continues until every member has a stop time or
+`solver.total_time` is reached. The final result metadata has `stop_time` in
+ps, aligned with `member_index`; members that did not stop have `NaN`. The
+run summary prints the same times. A single-member run ends at its first stop.
+Checkpoint v2 stores stop times and the previous steady-state sample so a
+resumed run continues the check sequence.
+
 ## Real time only
 
 The current package does not expose a dedicated imaginary-time evolution driver. If you need true ground-state workflows, add them explicitly and document the numerical assumptions before using them for production research.
@@ -69,14 +102,15 @@ reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid,
                              precision="double", batch_size=3)
 ```
 
-`state.psi` and every reservoir field have shape `(3, ny, nx)`. The seed
+`S` is `(nx,)` in 1D or `(ny, nx)` in 2D. `state.psi` has shape `(3, *S)`; solvers work on the canonical
+`state.field` and reservoir fields of shape `(3, 1, *S)`. The seed
 produces the same initial wavefunction in every member as a single unbatched
 state with that seed; assign `state.psi` to customize members. Pass one shared
-`(ny, nx)` potential and a callable `pump(t)` returning either a shared
-`(ny, nx)` pump or individual `(3, ny, nx)` pump fields. The boundary profile
+`grid.shape` potential and a callable `pump(t)` returning either a shared
+`grid.shape` pump or individual `(3, 1, *S)` pump fields. The boundary profile
 and mask are shared across the batch. `reservoir.reset(batch_size=3)` restores
 batched zero fields; `reservoir.reset()` restores unbatched zero fields.
 
 All built-in solvers accept batched states. Spatial derivatives and FFTs use the
-last two axes, so batch members do not interact. See the [solver batch
+last `grid.ndim` axes, so batch members do not interact. See the [solver batch
 capability table](../api/solvers.md#batched-solver-capabilities) for CUDA paths.

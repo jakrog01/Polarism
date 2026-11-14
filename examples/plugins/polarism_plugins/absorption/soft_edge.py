@@ -12,7 +12,7 @@ class SoftEdgeAbsorption(AbsorptionStrategy):
 
     def __init__(self, grid, absorption_cfg, physics_constants):
         self.xp = compute_engine.xp
-        self.profile = create_absorption_profile(grid.ny, grid.nx, absorption_cfg)
+        self.profile = create_absorption_profile(grid.shape, absorption_cfg)
         self.strength = absorption_cfg.strength
         self.dt = None
 
@@ -24,3 +24,5 @@ class SoftEdgeAbsorption(AbsorptionStrategy):
 
     def apply_absorption(self, psi):
         return psi * self.xp.exp(-0.5 * self.strength * self.dt * self.profile)
+
+POLARISM_PLUGIN_API = 2

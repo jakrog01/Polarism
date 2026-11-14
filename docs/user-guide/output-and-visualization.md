@@ -20,19 +20,63 @@ plots and movie titles use the display label.
 | `nR`, `nI`, `nR_max`, `nI_max` | | fields, scalars | `quadratic-double` reservoir |
 
 Per-laser peak powers are stored as the scalar group `P_lasers` (`L0`, `L1`, …).
-Additional quantities come from [observable plugins](../plugins/observables.md)
-selected with `cfg.result.observables`.
+Additional quantities are selected with `cfg.result.observables`: the
+[built-in observables](#built-in-observables) below or
+[observable plugins](../plugins/observables.md).
 
-The initial state is recorded at its starting time. After that, every output
-receives a frame every `save_interval` solver steps, at times
-`save_interval * dt`, `2 * save_interval * dt`, and so on.
+## Built-in observables
+
+```python
+cfg.result.observables = ("center-of-mass", "current", "vortices")
+```
+
+Each name adds the nodes below to the saved frames and costs nothing when it is
+not requested. All are computed on the device from the current `psi`; in a
+batched run scalars hold one value per member and fields keep the member axis.
+The total norm is the always-present `norm` node, so there is no separate
+observable for it. Gradients use central differences: periodic on `periodic`
+grids, one-sided at the edges of `closed-interval` grids. With `ħ` =
+`physics.hbar` and `m` = `physics.m_eff` (per member when swept):
+
+| Observable | Nodes | Kind and units | Definition |
+| --- | --- | --- | --- |
+| `center-of-mass` | `center_x`, `center_y` (2D only) | scalars, µm | `<r> = Σ \|ψ\|² r / Σ \|ψ\|²` |
+| `momentum-density` | `momentum_density` | field, µm^ndim | `n(k) = \|Σ ψ(r) e^{-ik·r} Πh\|² / (2π)^ndim`, fftshifted, so `Σ n(k) Π dk = N` |
+| `current` | `current_x`, `current_y` (2D only) | fields, µm⁻¹ ps⁻¹ (ps⁻¹ in 1D) | `j = (ħ/m) Im(ψ* ∇ψ)` |
+| `angular-momentum` | `angular_momentum` | scalar, ħ | `<L_z>/(Nħ) = Im Σ ψ*(x ∂_y ψ − y ∂_x ψ) / Σ \|ψ\|²` about the grid origin |
+| `vortices` | `vortex_charge`, `vortex_count` | `int8` field, count | phase winding per plaquette (below) |
+
+`angular-momentum` follows from `L_z = −iħ(x ∂_y − y ∂_x)`; a vortex of charge
+`m` centred on the origin gives `m`, and its sign is positive for a phase that
+increases counter-clockwise. `angular-momentum` and `vortices` need a 2D grid
+and are rejected by validation in 1D; the others also work in 1D with only the
+`x` component.
+
+The `momentum_density` axes are `kx` (last axis) and `ky`, with values
+`2π · fftshift(fftfreq(n, h))` for the grid spacing `h` along that axis; the
+datasets record `dims` as `kx`/`ky`.
+
+`vortex_charge[j, i]` is the phase winding, in units of 2π, around the
+plaquette whose corners are the grid points `(j, i)`, `(j, i+1)`, `(j+1, i+1)`
+and `(j+1, i)`; it is the sum of the four phase steps wrapped to `(−π, π]`.
+Phase singularities therefore sit at plaquette centres `(x_i + h/2, y_j + h/2)`.
+On closed-interval grids the last row and column have no plaquette and are
+zero. `vortex_count` counts the non-zero plaquettes whose largest corner
+density exceeds `10⁻³ max|ψ|²` of the member, so phase noise in empty regions
+is ignored (the raw `vortex_charge` field is not masked). A plaquette
+resolves a winding of ±1 only; a charge-2 vortex is undersampled by one
+plaquette and may be missed or miscounted.
+
+The initial state is recorded at its starting time `t0`. After that, every
+output receives a frame every `save_every` ps. The interval must be a positive
+multiple of `solver.dt`; by default every step is saved.
 
 ## Saving results
 
 ```python
 cfg.result.save_results = True
 cfg.result.formats = ("hdf5",)
-cfg.result.save_interval = 10
+cfg.result.save_every = 0.01
 cfg.result.save_psi = False
 cfg.result.compression = "none"
 cfg.result.output_directory = "simulation_results"
@@ -47,7 +91,7 @@ Built-in formats:
 | --- | --- | --- |
 | `hdf5` | `results.h5` | default choice for long runs and large fields |
 | `npy` | `batch_*.npz`, `static_*.npy`, `grid_*.npy`, `metadata.json` | NumPy-only downstream tools |
-| `json` | `batch_*.json` | debugging small runs |
+| `json` | `batch_*.json`, `metadata.json` | debugging small runs |
 
 The older switches `save_hdf5`, `save_npy` and `save_json` still work and are
 merged with `formats`. Further formats can be added as
@@ -92,30 +136,43 @@ with ps.load_results("simulation_results/20260101-120000") as result:
     dt = result.config["solver"]["dt"]
 ```
 
-For HDF5 runs, `fields`, `scalars` and `static` return `h5py` datasets, so
-slicing reads only the selected frames from disk; use `[:]` for the whole
-array. NPY runs return NumPy arrays. `attrs` holds the file metadata
-(`format_version`, `polarism_version`). Files written by Polarism 0.3 load with
-their old names mapped to the new ones.
+For HDF5 runs, `fields` returns lazy scalar-field views and `scalars` and
+`static` return `h5py` datasets. Slicing reads only the selected frames from
+disk; use `[:]` for the whole array. NPY and JSON runs return NumPy arrays.
+`attrs` holds file metadata including `format_version` and `polarism_version`.
+Only format v3 files load.
 
 For saved parameter sweeps, `polarism.load_results` accepts the sweep directory
 and returns a `SweepResults` view with lazy frame and member slicing. See
 [Parameter Sweeps](parameter-sweeps.md#output-and-restart) for its layout and
 reader API.
 
-The HDF5 layout (`format_version = 2`) is:
+## File formats
+
+The HDF5 results layout (`format_version = 3`) is:
 
 | Path | Content |
 | --- | --- |
 | `time` | frame times in ps |
-| `fields/<name>` | field frames, shape `(frames, ny, nx)` |
+| `fields/<name>` | field frames, shape `(time, component, *S)` for one run or `(time, member, component, *S)` for a batch |
 | `scalars/<name>` | scalar series |
 | `scalar_groups/<group>/<label>` | grouped scalar series |
 | `static/<name>` | time-independent fields |
-| `grid/x`, `grid/y` | 1-D grid coordinates in µm |
+| `grid/x` and, in 2D, `grid/y` | spatial grid coordinates in µm |
 | `config` | attribute `json` with the full configuration |
 
-Datasets carry `label` and, where known, `units` attributes.
+The root stores `ndim`, `grid_type`, `components = ["scalar"]`,
+`polarism_version`, and coordinate and time units. Every dataset has `dims`
+and `units` attributes. Coordinates use µm and time uses ps. Density has units
+µm⁻ⁿᵈⁱᵐ, wavefunction has µm⁻ⁿᵈⁱᵐᐟ², and potential has meV; unknown units are
+an empty string. Static fields omit the time dimension. In 1D, HDF5 stores
+`grid/x` without `grid/y`. `load_results` hides the scalar component axis;
+the public field shape remains `(time, *S)` or `(time, member, *S)`.
+
+NPY and JSON fields keep those public shapes. Their `metadata.json` records
+`format_version = 3`, `ndim`, and each array's `dims` and `units`. Older result
+versions are rejected with the found and supported versions. Live visualization
+and animation are currently available only in 2D.
 
 ## Online animation
 
@@ -157,16 +214,3 @@ This is useful for interactive debugging, not for unattended cluster runs.
 `SimulationController.add_visitor(visitor)` adds any
 [`ResultVisitor`](../plugins/observables.md); it receives every
 recorded frame, and its `finalize()` is called when the run ends.
-
-## Appendable HDF5 writers
-
-Batch pipelines that stream their own field snapshots, outside
-`SimulationController`, can use the append-only writers exported from
-`polarism.results.storage`:
-
-- `create_hdf5_writer(...)` selects a CPU-buffered writer on CPU runs and a
-  GPU-async writer on CuPy runs.
-- The GPU writer uses double buffering and pinned host memory so device-to-host
-  copies overlap with simulation work.
-- `compute_batch_size(...)` derives the batch depth from the field set, spatial
-  shape and free GPU memory; on CPU it uses a fixed depth of `500`.

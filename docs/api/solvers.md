@@ -1,42 +1,31 @@
 # Solvers
 
-All solver backends implement the `AbstractSolver` interface: they accept a configured system state and advance it by one timestep.
+All built-in solvers implement `AbstractSolver(config, grid, model)` and
+`step(model, state, dt) -> StepReport`. The controller builds one `Model` and
+calls `advance(model, state, n_steps)` for each output chunk. Each accepted
+step updates `state.step` and computes `state.t = state.t0 + state.step * dt`.
+The inherited `advance` applies `model.noise` after every accepted step.
 
-## Solver interface
+The model holds `grid`, batched `physics`, `precision`, `xp`, `potential`,
+`pump`, `reservoir`, `boundary`, and optional `noise`. It also holds optional
+`drive`, `potential_static`, `cap`, and `potential_envelope` for the new
+physics. `potential_at(t)` evaluates the configured potential plus CAP. Its
+`rhs(field, reservoir_fields, t, out=None)` evaluates the finite difference
+reference derivative. Built-in fused solvers use their specialized stage code.
+Solver classes publish a frozen `SolverCapabilities` declaration, which
+validation reads through the solver registry. See [Solver plugins](../plugins/solvers.md)
+for the full contract.
 
-At the abstraction level, every solver must:
+Fields and reservoir state tuples use `(B, 1, *S)` arrays. Public `state.psi`
+and `state.psi_k` omit the component axis, and omit the member axis in an
+unbatched run. `S` is `(nx,)` in 1D or `(ny, nx)` in 2D. A shared potential or
+pump array uses `grid.shape`; batched inputs use `(B, 1, *S)`.
 
-- be constructible from the simulation config and grid
-- implement `step(potential, pump, reservoir, boundary_condition, state)`
-- consume the current potential, pump callable, reservoir, boundary condition, and simulation state
-
-`pump` is a callable `pump(t) -> array`, returning the pump field at the
-requested time. The step starts at `state.t` and advances the fields by
-`config.solver.dt`; the caller updates `state.t` afterward.
-
-RK4 solvers evaluate the pump once at each of `t`, `t + dt/2`, and `t + dt`,
-using the midpoint value for both middle stages. `etd-rk2` passes
-`pump(t + dt/2)` to `reservoir.step`. `split-step-fft` advances the reservoir
-in two half-steps, sampling the pump at `t + dt/4` and `t + 3dt/4`. The
-reservoir interface still accepts an array. For a constant field, pass
-`lambda t: pump_array`. Treat the returned array as read-only.
-`ifrk-fft-cuda` samples once for each distinct stage time `t + c_i dt` in its
-selected tableau.
-
-`SimulationController` passes a `PumpField` (`polarism.laser.pump_field`).
-Besides `pump(t)`, it offers `separable_term()`, which returns
-`(envelope, coefficient)` when there is exactly one built-in laser. `rk4-cuda`
-then scales the cached envelope inside its kernels instead of building three
-pump arrays per step. Any other callable falls back to `pump(t)`.
-`rk4-cuda` uses one tiled CUDA kernel per step in single precision and on GPUs
-classified as full-rate FP64 in double precision. The tile includes a stencil halo
-in shared memory. Other double-precision GPUs, and devices without enough shared
-memory for a tile, use staged kernels. Tiled and staged results agree to rounding
-level.
-
-This replaces the former pump-array argument and intentionally breaks the
-plugin solver interface. Plugin solvers must evaluate the callable at their
-integration stage times.
+The RK4 methods sample `model.pump` at `t`, `t + dt/2`, and `t + dt`.
+`etd-rk2` uses `t + dt/2`; split-step methods use `t + dt/4` and
+`t + 3dt/4`. `ifrk-fft-cuda` samples each distinct tableau stage time.
+A `PumpField` may expose separable spatial and temporal terms, allowing fused
+CUDA solvers to scale a cached envelope inside kernels.
 
 ## Available solver methods
 
@@ -52,6 +41,48 @@ integration stage times.
 | `ifrk-fft-cuda` | selectable-order Lawson interaction-picture RK | periodic spectral solver with stage-coupled reservoirs |
 | `ifrk4-fft-cuda` | Lawson RK4 alias | equivalent to `ifrk-fft-cuda` with `tableau: rk4` |
 
+## Extra terms and dispersion
+
+Capabilities `terms` and `dispersion` decide which solvers accept
+[extra terms](../plugins/terms.md) and non-parabolic
+[dispersion](../plugins/dispersion.md); validation rejects other combinations.
+With no extra terms and `parabolic` dispersion every solver runs its unchanged
+code path.
+
+| `solver.method` | Extra terms | Dispersion |
+| --- | --- | --- |
+| `rk4-fdm` | yes | `parabolic` |
+| `rk4-fdm-fused` | no | `parabolic` |
+| `rk4-cuda` | with a `cuda` snippet | `parabolic` |
+| `split-step-fft` | yes | any registered |
+| `split-step-fft-cuda` | with a `cuda` snippet | `parabolic` |
+| `etd-rk2` | yes | any registered |
+| `ip-rk4` | yes | any registered |
+| `ifrk-fft-cuda`, `ifrk4-fft-cuda` | with a `cuda` snippet | `parabolic` |
+
+`split-step-fft` multiplies the field by `exp((G - iE/hbar) dt)` after its local
+step, so field-dependent terms are first order in `dt` there. The CUDA
+split-step solver uses the same local factor. The other supporting solvers add
+the terms to their stage right-hand sides.
+
+## Coherent drive and varying potential
+
+`coherent_drive` and `time_dependent_potential` capabilities control the
+[coherent source](../user-guide/coherent-drive.md) and the
+[potential envelope](../user-guide/potentials-and-pumps.md). A disabled drive
+and constant potential envelope use the existing solver arithmetic.
+
+| `solver.method` | Coherent drive | Varying potential |
+| --- | --- | --- |
+| `rk4-fdm` | yes | yes |
+| `ip-rk4` | yes | yes |
+| `etd-rk2` | yes | yes |
+| `split-step-fft` | no | yes |
+| `rk4-fdm-fused` | no | no |
+| `rk4-cuda` | yes | yes |
+| `split-step-fft-cuda` | yes | yes |
+| `ifrk-fft-cuda`, `ifrk4-fft-cuda` | yes | yes |
+
 ## Compatibility guidance
 
 The package includes explicit compatibility checks and warnings. In practice:
@@ -63,6 +94,7 @@ The package includes explicit compatibility checks and warnings. In practice:
 - for `closed-interval` grids use the FDM family: `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`
 - `etd-rk2` advances the reservoir between predictor and corrector using a midpoint condensate estimate, retaining second-order coupling for all supported reservoir types
 - CUDA solvers are meaningful only when the GPU backend is actually active
+- `reservoir_type: none` is supported by all solvers except `rk4-fdm-fused`
 
 `split-step-fft-cuda` keeps the wavefunction in Fourier space between steps and
 uses two cuFFT transforms per step. Its local kernel combines two reservoir RK2
@@ -72,6 +104,10 @@ reservoirs through their `step` method. A mask absorber costs two additional
 transforms; CAP absorption stays on the fast path. It requires an active CUDA
 GPU and does not support `kinetic_relaxation_eta`. Like `split-step-fft`, it is
 second order, so compare timestep errors before using large steps.
+With coherent drive, it places source half-steps around the local condensate
+step and evaluates the envelope at `t + dt/2`. A varying potential is sampled
+at the same midpoint while CAP remains static. Extra terms use their CUDA
+snippets in the local factor.
 
 For CUDA graph eligibility, precision guidance, benchmarking, and device
 selection, see [Running on GPUs](../user-guide/running-on-gpus.md).
@@ -128,10 +164,10 @@ cheaper.
 
 In this run the errors of all tableaus fall only about two- to fourfold per
 halving of dt. The cause is the initial condition, not the integrator: the
-default `init_mode` seeds ψ with white noise that has content up to the grid's
+default `noise.initial` seeds ψ with white noise that has content up to the grid's
 Nyquist wavenumber, and Lawson methods lose their classical order on such
-non-smooth data. With a smooth start (`init_mode =
-"filtered_complex_gaussian"`, `init_k_cutoff_um = 0.5`, 256² grid, same
+non-smooth data. With a smooth start (`noise.initial =
+"filtered_complex_gaussian"`, `noise.initial_k_cutoff_um = 0.5`, 256² grid, same
 reference) the nominal orders appear:
 
 | tableau | dt = 0.4 | dt = 0.2 | dt = 0.1 | dt = 0.05 |
@@ -178,8 +214,8 @@ Key properties:
 
 | `solver.laplacian` | Description | Notes |
 | --- | --- | --- |
-| `five-point` | nearest-neighbor 2D Laplacian | default, historical behavior |
-| `isotropic-9pt` | 9-point isotropic stencil | requires square cells (`dx == dy`) |
+| `five-point` | 3-point 1D or nearest-neighbor 5-point 2D Laplacian | default, historical 2D behavior |
+| `isotropic-9pt` | 9-point isotropic stencil | 2D only; requires square cells (`dx == dy`) |
 
 The 9-point stencil is a numerical discretization of the same kinetic operator,
 not a new physical term.  It is useful when high-k modes expose the angular
@@ -222,17 +258,19 @@ Use solver choice as a numerical decision, not just a performance switch:
 Use `SimulationState(grid, ..., batch_size: int | None = None)` and
 `create_reservoir(config, physics, grid, precision="double", *, batch_size: int | None = None)`.
 The built-in reservoir instances also expose `reset(batch_size: int | None = None)`.
-The leading batch axis is independent; potential and boundary fields stay 2-D.
+The leading batch axis is independent. Solver fields and reservoir tuples are
+`(B, 1, *S)`; shared potential and boundary fields use `grid.shape`, while
+member-stacked fields use `(B, 1, *S)`.
 
 | Solver | Batched execution |
 | --- | --- |
-| `rk4-fdm`, `rk4-fdm-fused` | Native array RK4; spatial stencils use the last two axes |
+| `rk4-fdm`, `rk4-fdm-fused` | Native array RK4; spatial stencils use the last `grid.ndim` axes |
 | `split-step-fft`, `ip-rk4`, `etd-rk2` | Native batched FFT and array operations |
 | `ifrk-fft-cuda`, `ifrk4-fft-cuda` | Native batched cuFFT and fused CUDA stages for built-in reservoirs; existing generic path for plugin or diffusive reservoirs |
 | `split-step-fft-cuda` | Native batched cuFFT and local CUDA kernel; existing generic path for plugin or diffusive reservoirs |
-| `rk4-cuda` | Array RK4 fallback on batched states, including the 9-point stencil; the tiled and staged RawKernels remain optimized for 2-D states |
+| `rk4-cuda` | Batched staged RawKernels; 1D uses flat left/right kernels and 2D retains its tiled or staged path |
 
 CUDA graph buffers and FFT plans are selected by the active field shape. A
 separable pump with scalar time coefficient uses its cached envelope. When the
 coefficient varies across batch members, the solver evaluates `pump(t)` at each
-stage and uses the returned 3-D field.
+stage and uses the returned `(B, 1, *S)` field.

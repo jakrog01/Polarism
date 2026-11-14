@@ -1,11 +1,11 @@
 """Grid factory helpers."""
 from __future__ import annotations
 
-from polarism.grid.closed_interval_simulation_grid_2d import (
-    ClosedIntervalSimulationGrid2D,
+from polarism.grid.closed_interval_grid import (
+    ClosedIntervalGrid,
 )
 from polarism.grid.grid_registry import available_grids
-from polarism.grid.periodic_simulation_grid_2d import PeriodicSimulationGrid2D
+from polarism.grid.periodic_grid import PeriodicGrid
 
 
 def create_grid(cfg):

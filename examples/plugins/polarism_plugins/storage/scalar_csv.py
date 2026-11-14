@@ -43,3 +43,5 @@ class ScalarCSVStorage(BaseStorage):
     def finalize(self):
         """Flush the remaining rows."""
         self.dump_batch()
+
+POLARISM_PLUGIN_API = 2

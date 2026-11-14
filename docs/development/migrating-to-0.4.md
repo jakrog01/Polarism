@@ -45,7 +45,7 @@ writing is several times faster. Set `cfg.result.compression = "lzf"` or
 
 ## File metadata
 
-HDF5 files carry `format_version = 2` and `polarism_version` root attributes,
+HDF5 files carry `format_version` and `polarism_version` root attributes,
 `grid/x` and `grid/y` coordinates, and `label`/`units` dataset attributes. NPY
 runs write `metadata.json`, `grid_x.npy` and `grid_y.npy`.
 
@@ -71,4 +71,4 @@ a background thread. Subclasses of `BaseStorage` must implement
 | `result.observables` | extra result nodes from observable plugins |
 | `result.compression`, `result.compression_level` | HDF5 compression |
 | `result.save_psi` | store the complex condensate field |
-| `checkpoint.every_steps`, `checkpoint.path`, `checkpoint.resume_from`, `checkpoint.on_signal` | [checkpoint and restart](../user-guide/checkpoint-and-restart.md) |
+| `checkpoint.every`, `checkpoint.path`, `checkpoint.resume_from`, `checkpoint.on_signal` | [checkpoint and restart](../user-guide/checkpoint-and-restart.md) |

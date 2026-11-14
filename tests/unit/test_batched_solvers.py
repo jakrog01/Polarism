@@ -10,6 +10,8 @@ from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine, has_cuda_device
 from polarism.config.simulation_parameters import ComputeEngineParameters, Config
 from polarism.config.simulation_parameters import PhysicsConstants
+from polarism.config.batch_physics import BatchPhysics
+from polarism.model import Model
 from polarism.grid.create_grid import create_grid
 from polarism.reservoir.create_reservoir import create_reservoir
 from polarism.simulation_state import SimulationState
@@ -48,14 +50,13 @@ def _run(cfg, amplitudes, batched, xp, *, advance=False, pump_style="array",
         state.psi = state.psi * amplitudes[0]
     reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid,
                                  batch_size=batch_size, precision=cfg.solver.precision)
-    solver = create_solver(cfg, grid)
     bc = BoundaryCondition(grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt)
     potential = (0.03 * xp.cos(grid.X * 0.4) + bc.before_step_action())
     if potential_style == "batched":
-        scale = xp.asarray(amplitudes)[:, None, None] if batched else amplitudes[0]
+        scale = xp.asarray(amplitudes)[:, None, None, None] if batched else amplitudes[0]
         potential = scale * potential
     profile = 1 + 0.1 * xp.sin(grid.Y * 0.6)
-    amplitude = xp.asarray(amplitudes)[:, None, None] if batched else amplitudes[0]
+    amplitude = xp.asarray(amplitudes)[:, None, None, None] if batched else amplitudes[0]
 
     if pump_style == "array":
         def pump(t):
@@ -88,7 +89,7 @@ def _run(cfg, amplitudes, batched, xp, *, advance=False, pump_style="array",
                 for envelope, coefficient in self.terms:
                     value = coefficient(t)
                     if xp.ndim(value):
-                        value = value[:, None, None]
+                        value = value[:, None, None, None]
                     result = result + envelope * value
                 return result
 
@@ -110,12 +111,14 @@ def _run(cfg, amplitudes, batched, xp, *, advance=False, pump_style="array",
 
             pump = TermOnlyPump()
 
+    model = Model(grid, BatchPhysics(cfg.physics, None, xp, cfg.solver.precision),
+                  cfg.solver.precision, potential, pump, reservoir, bc)
+    solver = create_solver(cfg, grid, model)
     if advance:
-        solver.advance(potential, pump, reservoir, bc, state, 0, 2)
+        solver.advance(model, state, 2)
     else:
         for k in range(2):
-            solver.step(potential, pump, reservoir, bc, state)
-            state.t = (k + 1) * cfg.solver.dt
+            solver.step(model, state, cfg.solver.dt)
     return xp.asarray(state.psi), tuple(xp.asarray(f) for f in reservoir.get_state())
 
 
@@ -139,8 +142,8 @@ def _compare(method, model, absorption, xp, *, advance=False, grid_type="periodi
                                          for r in references]), rtol=tolerance, atol=tolerance)
     for field_index, field in enumerate(actual_fields):
         np.testing.assert_allclose(xp.asnumpy(field) if xp is not np else field,
-                                   np.stack([xp.asnumpy(r[1][field_index]) if xp is not np
-                                             else r[1][field_index] for r in references]),
+                                   np.concatenate([xp.asnumpy(r[1][field_index]) if xp is not np
+                                                   else r[1][field_index] for r in references]),
                                    rtol=tolerance, atol=tolerance)
 
 
@@ -173,10 +176,10 @@ def test_batch_construction_and_seed():
         cfg.reservoir.reservoir_type = model
         reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid, batch_size=3)
         for field in reservoir.get_state():
-            assert field.shape == (3, grid.ny, grid.nx)
+            assert field.shape == (3, 1, grid.ny, grid.nx)
             assert np.count_nonzero(field) == 0
         reservoir.reset()
-        assert all(field.shape == (grid.ny, grid.nx) for field in reservoir.get_state())
+        assert all(field.shape == (1, 1, grid.ny, grid.nx) for field in reservoir.get_state())
     with pytest.raises(ValueError, match="batch_size"):
         SimulationState(grid, batch_size=0)
     with pytest.raises(ValueError, match="batch_size"):
@@ -249,7 +252,7 @@ def test_pump_field_separable_member_coefficient():
     envelope, coefficient = pump.separable_terms()[0]
     assert coefficient(0.2).shape == (2,)
     np.testing.assert_array_equal(pump(0.2),
-                                  envelope[None, :, :] * coefficient(0.2)[:, None, None])
+                                  envelope[None, None, :, :] * coefficient(0.2)[:, None, None, None])
 
 
 @pytest.mark.gpu
@@ -331,7 +334,7 @@ def test_cpu_member_pump_coefficient_is_bitwise_separate(method, pump_style):
     np.testing.assert_array_equal(actual[0], np.stack([item[0] for item in expected]))
     for index, field in enumerate(actual[1]):
         np.testing.assert_array_equal(field,
-                                      np.stack([item[1][index] for item in expected]))
+                                      np.concatenate([item[1][index] for item in expected]))
 
 
 @pytest.mark.gpu
@@ -413,8 +416,9 @@ def test_gpu_solver_accepts_strided_psi(method):
     state.psi = cp.asfortranarray(state.psi)
     reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid)
     bc = BoundaryCondition(grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt)
-    create_solver(cfg, grid).step(bc.before_step_action(), lambda t: 0.4 * grid.X ** 0,
-                                  reservoir, bc, state)
+    model = Model(grid, BatchPhysics(cfg.physics, None, cp), cfg.solver.precision,
+                  bc.before_step_action(), lambda t: 0.4 * grid.X ** 0, reservoir, bc)
+    create_solver(cfg, grid, model).step(model, state, cfg.solver.dt)
     assert bool(cp.all(cp.isfinite(state.psi)))
 
 
@@ -446,8 +450,6 @@ def _physics_values(cfg, *, diffusion=True):
             values[name] = np.array([0.0, 0.008])
         elif name.startswith("reservoir_diffusion"):
             values[name] = np.array([0.0, 0.004 if diffusion else 0.0])
-        elif name == "init_eps":
-            values[name] = np.array([base, base * 1.2])
         else:
             values[name] = np.array([base * 0.9 + 0.0001, base * 1.1 + 0.0002])
     return values
@@ -461,7 +463,6 @@ def _run_physics(cfg, values, xp, batched, *, advance=False):
     reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid,
                                  precision=cfg.solver.precision, batch_size=size,
                                  batch_physics=values if batched else None)
-    solver = create_solver(cfg, grid, batch_physics=values if batched else None)
     bc = BoundaryCondition(grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt,
                            batch_physics=values if batched else None)
     potential = 0.03 * xp.cos(grid.X * 0.4) + bc.before_step_action()
@@ -474,12 +475,15 @@ def _run_physics(cfg, values, xp, batched, *, advance=False):
             return profile, lambda t: 0.4 + 0.1 * t
 
     pump = Pump()
+    model = Model(grid, BatchPhysics(cfg.physics, values if batched else None, xp,
+                                     cfg.solver.precision), cfg.solver.precision,
+                  potential, pump, reservoir, bc)
+    solver = create_solver(cfg, grid, model)
     if advance:
-        solver.advance(potential, pump, reservoir, bc, state, 0, 2)
+        solver.advance(model, state, 2)
     else:
         for k in range(2):
-            solver.step(potential, pump, reservoir, bc, state)
-            state.t = (k + 1) * cfg.solver.dt
+            solver.step(model, state, cfg.solver.dt)
     return state.psi, reservoir.get_state()
 
 
@@ -497,22 +501,25 @@ def test_cpu_per_member_physics_matches_separate(method, model):
         expected.append(_run_physics(member_cfg, {}, np, False))
     np.testing.assert_array_equal(actual[0], np.stack([item[0] for item in expected]))
     for index, field in enumerate(actual[1]):
-        np.testing.assert_array_equal(field, np.stack([item[1][index] for item in expected]))
+        np.testing.assert_array_equal(field, np.concatenate([item[1][index] for item in expected]))
 
 
 def test_batch_physics_validation():
     cfg = _config("rk4-fdm", "single", "cap")
     grid = create_grid(cfg.grid)
     with pytest.raises(ValueError, match="non-float"):
-        create_solver(cfg, grid, {"init_mode": [1, 2]})
+        BatchPhysics(cfg.physics, {"noise_mode": [1, 2]}, np)
     with pytest.raises(ValueError, match="length"):
-        create_solver(cfg, grid, {"hbar": [0.6, 0.7], "m_eff": [0.2]})
-    solver = create_solver(cfg, grid, {"hbar": [0.6, 0.7]})
+        BatchPhysics(cfg.physics, {"hbar": [0.6, 0.7], "m_eff": [0.2]}, np)
     state = SimulationState(grid)
     reservoir = create_reservoir(cfg.reservoir, cfg.physics, grid)
     bc = BoundaryCondition(grid, cfg.boundary_condition, cfg.physics, cfg.solver.dt)
+    model = Model(grid, BatchPhysics(cfg.physics, {"hbar": [0.6, 0.7]}, np),
+                  cfg.solver.precision, bc.before_step_action(),
+                  lambda t: grid.X * 0, reservoir, bc)
+    solver = create_solver(cfg, grid, model)
     with pytest.raises(ValueError, match="state batch size"):
-        solver.step(bc.before_step_action(), lambda t: grid.X * 0, reservoir, bc, state)
+        solver.step(model, state, cfg.solver.dt)
 
 
 def test_plugin_without_batch_physics_rejected():
@@ -524,8 +531,10 @@ def test_plugin_without_batch_physics_rejected():
     available_reservoirs["legacy-test"] = lambda config, physics, grid, precision: None
     try:
         cfg.solver.method = "legacy-test"
-        with pytest.raises(ValueError, match="Solver 'legacy-test'"):
-            create_solver(cfg, grid, {"hbar": [0.6, 0.7]})
+        model = Model(grid, BatchPhysics(cfg.physics, {"hbar": [0.6, 0.7]}, np),
+                      cfg.solver.precision, 0, lambda t: 0, None, None)
+        with pytest.raises(TypeError):
+            create_solver(cfg, grid, model)
         cfg.reservoir.reservoir_type = "legacy-test"
         with pytest.raises(ValueError, match="Reservoir 'legacy-test'"):
             create_reservoir(cfg.reservoir, cfg.physics, grid,
@@ -606,7 +615,7 @@ def test_gpu_ifrk_batched_stage_and_finish_match_separate(monkeypatch):
     used = []
 
     def checked(self, *args):
-        if len(self.shape) == 3:
+        if self._batched:
             assert self._stage0_direct
             assert self._finish_in_stage
             used.append(True)
@@ -647,4 +656,4 @@ def test_gpu_per_member_physics_matches_separate(method, model):
             np.stack([cp.asnumpy(item[0]) for item in expected]))
     for index, field in enumerate(actual[1]):
         compare(cp.asnumpy(field),
-                np.stack([cp.asnumpy(item[1][index]) for item in expected]))
+                np.concatenate([cp.asnumpy(item[1][index]) for item in expected]))

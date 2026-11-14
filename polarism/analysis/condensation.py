@@ -21,7 +21,6 @@ class _Physics(Protocol):
     gamma_R: float
     gamma_I: float
     kappa: float
-    init_eps: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,12 +69,13 @@ def psi_sq_floor(
     *,
     mode: Literal["absolute", "seed_relative"] = "absolute",
     decades: float = 4.0,
+    initial_amplitude: float = 1.0e-3,
 ) -> float:
     """Return the observable condensate-density floor."""
     if mode == "absolute":
         return CONDENSATION_PSI_SQ_FLOOR
     if mode == "seed_relative":
-        return float(physics.init_eps) ** 2 * 10.0**float(decades)
+        return float(initial_amplitude) ** 2 * 10.0**float(decades)
     raise ValueError(f"Unsupported psi_sq_floor mode: {mode!r}")
 
 
@@ -126,6 +126,7 @@ def integrate_zero_dim(
     *,
     model: Literal["pump_only", "coupled"] = "pump_only",
     spontaneous_source: float = 1.0e-6,
+    initial_amplitude: float = 1.0e-3,
 ) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Integrate the zero-dimensional quadratic-double reservoir with RK4."""
     times = np.asarray(t, dtype=np.float64)
@@ -140,7 +141,7 @@ def integrate_zero_dim(
         raise ValueError(f"Unsupported threshold model: {model!r}")
     n_r = np.zeros_like(times)
     n_i = np.zeros_like(times)
-    n_c = np.full_like(times, float(physics.init_eps) ** 2) if model == "coupled" else None
+    n_c = np.full_like(times, float(initial_amplitude) ** 2) if model == "coupled" else None
     kappa = float(physics.kappa)
     gamma_r = float(physics.gamma_R)
     gamma_i = float(physics.gamma_I)
@@ -148,7 +149,7 @@ def integrate_zero_dim(
     gamma_c = float(physics.gamma_C)
     active = 0.0
     inactive = 0.0
-    condensate = float(physics.init_eps) ** 2
+    condensate = float(initial_amplitude) ** 2
     for index, step in enumerate(np.diff(times)):
         p0 = float(source[index])
         p1 = float(source[index + 1])

@@ -6,6 +6,8 @@ from polarism.grid import create_grid
 from polarism.laser.laser_factory import LaserFactory
 from polarism.plugins import load_plugins
 from polarism.potential import create_potential
+from polarism.profiles import available_profiles, create_profile, register_profile
+from polarism.envelopes import available_envelopes, create_envelope, register_envelope
 from polarism.reservoir import create_reservoir
 from polarism.results import (
     RealTimeVisualization,
@@ -23,21 +25,35 @@ from polarism.results import (
     VisualizationVisitor,
 )
 from polarism.simulation_controller import SimulationController
+from polarism.dispersion import Dispersion
+from polarism.model import Model
+from polarism.model_terms import Term
 from polarism.sweep import Sweep
-from polarism.grid.simulation_grid_2d import SimulationGrid2D
+from polarism.grid.simulation_grid import SimulationGrid
 from polarism.simulation_state import SimulationState
-from polarism.solver import AbstractSolver, create_solver
+from polarism.solver import AbstractSolver, StepReport, SolverCapabilities, create_solver
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "BoundaryCondition",
     "Config",
     "create_absorption_strategy",
     "create_grid",
     "create_potential",
+    "available_profiles",
+    "create_profile",
+    "register_profile",
+    "available_envelopes",
+    "create_envelope",
+    "register_envelope",
     "create_reservoir",
     "create_solver",
     "AbstractSolver",
+    "Dispersion",
+    "Model",
+    "Term",
+    "StepReport",
+    "SolverCapabilities",
     "LaserFactory",
     "load_plugins",
     "RealTimeVisualization",
@@ -48,7 +64,7 @@ __all__ = [
     "ResultProvider",
     "SimulationController",
     "Sweep",
-    "SimulationGrid2D",
+    "SimulationGrid",
     "SimulationState",
     "Results2D",
     "ResultScalar",

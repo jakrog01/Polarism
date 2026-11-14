@@ -10,11 +10,13 @@ from polarism.compute_engine import has_cuda_device
 
 
 def _controller(method: str, size: int, precision: str, reservoir: str,
-                tableau: str = "rk4", batch: int = 1):
+                tableau: str = "rk4", batch: int = 1, ndim: int = 2,
+                noise: str = "none"):
     from polarism.config.simulation_parameters import Config
     from polarism.simulation_controller import SimulationController
 
     cfg = Config()
+    cfg.grid.ndim = ndim
     cfg.grid.nx = cfg.grid.ny = size
     cfg.grid.lx = cfg.grid.ly = 100.0
     cfg.grid.grid_type = "periodic"
@@ -30,18 +32,21 @@ def _controller(method: str, size: int, precision: str, reservoir: str,
     cfg.solver.total_time = 1.0
     cfg.solver.precision = precision
     cfg.compute_engine.use_gpu = True
+    cfg.noise.seed = 42
+    cfg.noise.stochastic = noise
     controller = SimulationController(cfg, members=[{} for _ in range(batch)] if batch > 1 else None)
     controller.pump_field.lasers = controller.lasers
     return controller
 
 
 def _arguments(controller):
-    return (controller.potential, controller.pump_field, controller.reservoir,
-            controller.boundary_condition, controller.state)
+    return (controller.model, controller.state)
 
 
-def _time_run(method, size, precision, reservoir, steps, chunked, cp, tableau="rk4"):
-    controller = _controller(method, size, precision, reservoir, tableau)
+def _time_run(method, size, precision, reservoir, steps, chunked, cp,
+              tableau="rk4", ndim=2, noise="none"):
+    controller = _controller(method, size, precision, reservoir, tableau,
+                             ndim=ndim, noise=noise)
     args = _arguments(controller)
     dt = controller.cfg.solver.dt
     if chunked:
@@ -49,7 +54,7 @@ def _time_run(method, size, precision, reservoir, steps, chunked, cp, tableau="r
             done = 0
             while done < steps:
                 length = min(64, steps - done)
-                controller.solver.advance(*args, first_step + done, length)
+                controller.solver.advance(*args, length)
                 done += length
 
         # The untimed pass captures every graph length the timed pass uses.
@@ -58,34 +63,42 @@ def _time_run(method, size, precision, reservoir, steps, chunked, cp, tableau="r
         start = time.perf_counter()
         chunks(steps)
     else:
+        noise_applier = None if controller.solver.injects_noise else controller.model.noise
         for k in range(4):
-            controller.solver.step(*args)
+            controller.solver.step(*args, dt)
+            if noise_applier is not None:
+                noise_applier.apply_to_state(controller.state, controller.reservoir, k)
             controller.state.t = (k + 1) * dt
         cp.cuda.Device().synchronize()
         start = time.perf_counter()
         for k in range(steps):
-            controller.solver.step(*args)
+            controller.solver.step(*args, dt)
+            if noise_applier is not None:
+                noise_applier.apply_to_state(controller.state, controller.reservoir, k + 4)
             controller.state.t = (k + 5) * dt
     cp.cuda.Device().synchronize()
     return (time.perf_counter() - start) * 1e6 / steps
 
 
-def _time_batched(method, size, precision, reservoir, steps, batch, cp, tableau="rk4"):
+def _time_batched(method, size, precision, reservoir, steps, batch, cp,
+                  tableau="rk4", ndim=2, noise="none"):
     def timed_advance(controller):
         args = _arguments(controller)
-        controller.solver.advance(*args, 0, steps)
+        controller.solver.advance(*args, steps)
         cp.cuda.Device().synchronize()
         start = time.perf_counter()
-        controller.solver.advance(*args, steps, steps)
+        controller.solver.advance(*args, steps)
         cp.cuda.Device().synchronize()
         return time.perf_counter() - start
 
-    batched = _controller(method, size, precision, reservoir, tableau, batch)
+    batched = _controller(method, size, precision, reservoir, tableau, batch,
+                          ndim, noise)
     batched_seconds = timed_advance(batched)
     del batched
     sequential_seconds = 0.0
     for _ in range(batch):
-        single = _controller(method, size, precision, reservoir, tableau)
+        single = _controller(method, size, precision, reservoir, tableau,
+                             ndim=ndim, noise=noise)
         sequential_seconds += timed_advance(single)
         del single
     return sequential_seconds, batched_seconds
@@ -116,11 +129,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--precisions", nargs="+", choices=("single", "double"),
                         default=["single", "double"])
     parser.add_argument("--steps", type=int, default=128)
+    parser.add_argument("--ndim", type=int, choices=(1, 2), default=2)
     parser.add_argument("--reservoir", choices=("single", "double", "quadratic-double"),
                         default="single")
     parser.add_argument("--tableau", choices=("rk4", "dp5", "dop853", "vern7", "vern9"),
                         default="rk4")
     parser.add_argument("--batch", type=int, help="compare one batch with this many sequential runs")
+    parser.add_argument("--noise", choices=("none", "wigner"), default="none")
     args = parser.parse_args(argv)
     if args.steps < 1 or any(n < 2 for n in args.grid_sizes) or (args.batch is not None and args.batch < 2):
         parser.error("steps must be positive, grid sizes at least 2, and batch at least 2")
@@ -147,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
                     try:
                         sequential_seconds, batched_seconds = _time_batched(
                             method, size, precision, args.reservoir, args.steps, args.batch, cp,
-                            args.tableau)
+                            args.tableau, args.ndim, args.noise)
                     except cp.cuda.memory.OutOfMemoryError:
                         cp.get_default_memory_pool().free_all_blocks()
                         print(f"{method:22} {precision:6} {size:5}  batch {args.batch:4}  "
@@ -155,12 +170,13 @@ def main(argv: list[str] | None = None) -> int:
                         continue
                     record = {
                         "method": method, "tableau": args.tableau, "precision": precision,
-                        "grid": size, "reservoir": args.reservoir, "steps": args.steps,
-                        "batch": args.batch, "sequential_s": sequential_seconds,
+                        "grid": size, "ndim": args.ndim, "reservoir": args.reservoir, "steps": args.steps,
+                        "batch": args.batch, "noise": args.noise,
+                        "sequential_s": sequential_seconds,
                         "batched_s": batched_seconds,
                         "speedup": sequential_seconds / batched_seconds,
                         "ns_per_member_element_step": batched_seconds * 1e9 /
-                        (args.batch * size * size * args.steps),
+                        (args.batch * size ** args.ndim * args.steps),
                         "device": name, "compute_capability": capability,
                         "cuda_runtime": runtime, "cuda_driver": driver,
                         "cupy": cp.__version__, "copy_gbps": bandwidth,
@@ -171,15 +187,17 @@ def main(argv: list[str] | None = None) -> int:
                     print(json.dumps(record, sort_keys=True))
                     continue
                 step_us = _time_run(method, size, precision, args.reservoir,
-                                    args.steps, False, cp, args.tableau)
+                                    args.steps, False, cp, args.tableau, args.ndim, args.noise)
                 advance_us = _time_run(method, size, precision, args.reservoir,
-                                       args.steps, True, cp, args.tableau)
+                                       args.steps, True, cp, args.tableau, args.ndim, args.noise)
                 record = {
                     "method": method, "tableau": args.tableau, "precision": precision, "grid": size,
+                    "ndim": args.ndim,
                     "reservoir": args.reservoir, "steps": args.steps,
+                    "noise": args.noise,
                     "step_us": step_us, "advance_us": advance_us,
                     "speedup": step_us / advance_us,
-                    "mpts_steps_per_s": size * size / advance_us,
+                    "mpts_steps_per_s": size ** args.ndim / advance_us,
                     "device": name, "compute_capability": capability,
                     "cuda_runtime": runtime, "cuda_driver": driver,
                     "cupy": cp.__version__, "copy_gbps": bandwidth,

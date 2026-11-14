@@ -8,7 +8,13 @@ from typing import TYPE_CHECKING
 from polarism.boundary_conditions.absorption.absorption_registry import (
     available_absorptions,
 )
+from polarism.dispersion import available_dispersions
 from polarism.grid.create_grid import grid_boundary
+from polarism.initial_condition import available_initial_conditions
+from polarism.profiles import validate_profile_spec
+from polarism.envelopes import create_envelope
+from polarism.model_terms import available_terms
+from polarism.results.builtin_observables import TWO_DIMENSIONAL_OBSERVABLES
 from polarism.results.observable_registry import available_observables
 from polarism.results.storage import available_storages
 
@@ -17,7 +23,7 @@ if TYPE_CHECKING:
 
 _EXPLICIT_FDM_SOLVERS = {"rk4-fdm", "rk4-fdm-fused", "rk4-cuda"}
 _VALID_PRECISIONS = {"single", "double"}
-_VALID_INIT_MODES = {"legacy_positive_uniform", "complex_gaussian_zero_mean", "filtered_complex_gaussian"}
+_VALID_INIT_MODES = {"none", "legacy_positive_uniform", "complex_gaussian_zero_mean", "filtered_complex_gaussian"}
 _VALID_PROFILE_TYPES = {"sin2", "parabolic"}
 _VALID_POWER_DEFINITIONS = {"peak_amplitude", "pulse_energy"}
 _RK4_NEG_REAL_AXIS_LIMIT = 2.7852935634052816
@@ -27,28 +33,52 @@ class ConfigValidationError(ValueError):
     """Raised when a required config constraint is violated."""
 
 
+def _validate_time_multiple(name: str, value: float, dt: float) -> int:
+    """Return the nearest positive step count for a fixed-time interval."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ConfigValidationError(f"{name} must be a positive finite time in ps")
+    ratio = value / dt
+    nearest = round(ratio)
+    if nearest < 1 or not math.isclose(ratio, nearest, rel_tol=1e-9, abs_tol=0):
+        lower = max(1, math.floor(ratio))
+        upper = max(1, math.ceil(ratio))
+        raise ConfigValidationError(
+            f"{name} must be an integer multiple of solver.dt; nearest valid values: "
+            f"{lower * dt:g} and {upper * dt:g} ps"
+        )
+    return nearest
+
+
 def validate_config(cfg: Config) -> None:
     """Raise ConfigValidationError for invalid values; warn for instability risk."""
     _validate_grid(cfg)
     _validate_physics(cfg)
+    _validate_terms(cfg)
+    _validate_noise(cfg)
+    _validate_initial_condition(cfg)
     _validate_solver(cfg)
     _validate_result(cfg)
     _validate_checkpoint(cfg)
+    _validate_stop(cfg)
     _validate_sweep(cfg)
     _validate_boundary(cfg)
+    _validate_potential(cfg)
+    _validate_drive(cfg)
     _validate_laser(cfg)
     _warn_explicit_stability(cfg)
 
 
 def _validate_grid(cfg: Config) -> None:
     g = cfg.grid
+    if type(g.ndim) is not int or g.ndim not in (1, 2):
+        raise ConfigValidationError(f"grid.ndim must be 1 or 2, got {g.ndim!r}")
     if g.nx < 1:
         raise ConfigValidationError(f"grid.nx must be >= 1, got {g.nx}")
-    if g.ny < 1:
+    if g.ndim == 2 and g.ny < 1:
         raise ConfigValidationError(f"grid.ny must be >= 1, got {g.ny}")
     if g.lx <= 0.0:
         raise ConfigValidationError(f"grid.lx must be > 0, got {g.lx}")
-    if g.ly <= 0.0:
+    if g.ndim == 2 and g.ly <= 0.0:
         raise ConfigValidationError(f"grid.ly must be > 0, got {g.ly}")
 
 
@@ -75,28 +105,88 @@ def _validate_physics(cfg: Config) -> None:
                 f"got {val}"
             )
 
-    if p.init_eps < 0.0:
-        raise ConfigValidationError(
-            f"physics.init_eps must be >= 0, got {p.init_eps}"
-        )
+    try:
+        available_dispersions.lookup(p.dispersion)
+    except ValueError as exc:
+        raise ConfigValidationError(f"physics.dispersion: {exc}") from exc
 
-    if p.init_mode not in _VALID_INIT_MODES:
+
+def _validate_terms(cfg: Config) -> None:
+    if not isinstance(cfg.terms, dict):
+        raise ConfigValidationError("terms must map term names to parameter mappings")
+    for name, params in cfg.terms.items():
+        try:
+            available_terms.lookup(name)
+        except ValueError as exc:
+            raise ConfigValidationError(f"terms: {exc}") from exc
+        if not isinstance(params, dict):
+            raise ConfigValidationError(f"terms.{name} must be a mapping of parameters")
+
+
+def _validate_noise(cfg: Config) -> None:
+    n = cfg.noise
+    if type(n.enabled) is not bool:
+        raise ConfigValidationError(f"noise.enabled must be a boolean, got {n.enabled!r}")
+    if n.seed is not None and (type(n.seed) is not int or n.seed < 0 or n.seed > (1 << 63) - 1):
+        raise ConfigValidationError(f"noise.seed must be a non-negative int64 or null, got {n.seed!r}")
+    if not isinstance(n.initial_amplitude, (int, float)) or not math.isfinite(n.initial_amplitude) or n.initial_amplitude < 0:
         raise ConfigValidationError(
-            f"physics.init_mode='{p.init_mode}' is not recognised. "
+            f"noise.initial_amplitude must be finite and >= 0, got {n.initial_amplitude!r}"
+        )
+    if n.initial not in _VALID_INIT_MODES:
+        raise ConfigValidationError(
+            f"noise.initial='{n.initial}' is not recognised. "
             f"Valid values: {sorted(_VALID_INIT_MODES)}."
         )
-
-    if p.init_mode == "filtered_complex_gaussian":
-        k_cut = getattr(p, "init_k_cutoff_um", None)
-        if k_cut is None or k_cut <= 0.0:
+    if n.initial == "filtered_complex_gaussian":
+        k_cut = n.initial_k_cutoff_um
+        if not isinstance(k_cut, (int, float)) or not math.isfinite(k_cut) or k_cut <= 0.0:
             raise ConfigValidationError(
-                f"physics.init_k_cutoff_um must be > 0 when "
-                f"init_mode='filtered_complex_gaussian', got {k_cut!r}."
+                f"noise.initial_k_cutoff_um must be > 0 when "
+                f"noise.initial='filtered_complex_gaussian', got {k_cut!r}."
             )
+    if n.stochastic not in {"none", "wigner"}:
+        raise ConfigValidationError(f"noise.stochastic must be 'none' or 'wigner', got {n.stochastic!r}")
+    if not isinstance(n.stochastic_strength, (int, float)) or not math.isfinite(n.stochastic_strength) or n.stochastic_strength < 0:
+        raise ConfigValidationError(f"noise.stochastic_strength must be finite and >= 0, got {n.stochastic_strength!r}")
+
+
+def _validate_initial_condition(cfg: Config) -> None:
+    ic = cfg.initial_condition
+    if not isinstance(ic.type, str):
+        raise ConfigValidationError(f"initial_condition.type must be a string, got {ic.type!r}")
+    try:
+        available_initial_conditions.lookup(ic.type)
+    except ValueError as exc:
+        raise ConfigValidationError(f"initial_condition.type: {exc}") from exc
+    for name in ("amplitude", "x0", "y0", "kx", "ky", "core_width"):
+        value = getattr(ic, name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ConfigValidationError(f"initial_condition.{name} must be a finite number, got {value!r}")
+    if ic.amplitude < 0:
+        raise ConfigValidationError(f"initial_condition.amplitude must be >= 0, got {ic.amplitude!r}")
+    if ic.core_width <= 0:
+        raise ConfigValidationError(f"initial_condition.core_width must be > 0, got {ic.core_width!r}")
+    for name in ("charge", "frame"):
+        if type(getattr(ic, name)) is not int:
+            raise ConfigValidationError(f"initial_condition.{name} must be an integer, got {getattr(ic, name)!r}")
+    if ic.path is not None and (not isinstance(ic.path, str) or not ic.path):
+        raise ConfigValidationError("initial_condition.path must be a nonempty path or None")
+    if not isinstance(ic.extra, dict):
+        raise ConfigValidationError("initial_condition.extra must be a mapping")
+    if ic.type == "file" and ic.path is None:
+        raise ConfigValidationError("initial_condition.path is required when initial_condition.type='file'")
+    if ic.type == "vortex" and cfg.grid.ndim != 2:
+        raise ConfigValidationError("initial_condition.type='vortex' requires a 2D grid")
 
 
 def _validate_solver(cfg: Config) -> None:
     s = cfg.solver
+    from polarism.solver.solver_compatibility import solver_capabilities
+    if cfg.grid.ndim not in solver_capabilities(s.method).ndim:
+        raise ConfigValidationError(f"solver.method={s.method!r} does not support grid.ndim={cfg.grid.ndim}")
+    if cfg.grid.ndim == 1 and s.laplacian == "isotropic-9pt":
+        raise ConfigValidationError("solver.laplacian='isotropic-9pt' is not supported in 1D")
     if s.tableau not in {"rk4", "dp5", "dop853", "vern7", "vern9"}:
         raise ConfigValidationError(
             "solver.tableau must be one of rk4, dp5, dop853, vern7, vern9"
@@ -115,6 +205,8 @@ def _validate_solver(cfg: Config) -> None:
 
 def _validate_result(cfg: Config) -> None:
     r = cfg.result
+    if cfg.grid.ndim == 1 and (r.real_time_view or r.animate):
+        raise ConfigValidationError("visualization of 1D runs is not supported yet")
     if type(r.view_member) is not int or r.view_member < 0:
         raise ConfigValidationError("result.view_member must be a nonnegative integer")
     for field, names, registry in (("formats", r.formats, available_storages),
@@ -126,28 +218,48 @@ def _validate_result(cfg: Config) -> None:
                 registry.lookup(name)
             except ValueError as exc:
                 raise ConfigValidationError(f"result.{field}: {exc}") from exc
+    if cfg.grid.ndim == 1:
+        for name in r.observables:
+            if name in TWO_DIMENSIONAL_OBSERVABLES:
+                raise ConfigValidationError(
+                    f"result.observables: {name!r} requires a 2D grid, got grid.ndim=1"
+                )
     if not isinstance(r.compression, str) or r.compression not in {"none", "lzf", "gzip"}:
         raise ConfigValidationError("result.compression must be one of none, lzf, gzip")
     if type(r.compression_level) is not int or not 0 <= r.compression_level <= 9:
         raise ConfigValidationError("result.compression_level must be an integer in [0, 9]")
     if not isinstance(r.save_psi, bool):
         raise ConfigValidationError("result.save_psi must be a boolean")
-    if r.save_interval < 1:
-        raise ConfigValidationError(f"result.save_interval must be >= 1, got {r.save_interval}")
+    if r.save_every is not None:
+        _validate_time_multiple("result.save_every", r.save_every, cfg.solver.dt)
     if r.batch_size < 1:
         raise ConfigValidationError(f"result.batch_size must be >= 1, got {r.batch_size}")
 
 
 def _validate_checkpoint(cfg: Config) -> None:
     c = cfg.checkpoint
-    if type(c.every_steps) is not int or c.every_steps < 0:
-        raise ConfigValidationError("checkpoint.every_steps must be a nonnegative integer")
+    if isinstance(c.every, bool) or not isinstance(c.every, (int, float)) or not math.isfinite(c.every):
+        raise ConfigValidationError("checkpoint.every must be a nonnegative finite time in ps")
+    if c.every != 0:
+        _validate_time_multiple("checkpoint.every", c.every, cfg.solver.dt)
     for name in ("path", "resume_from"):
         value = getattr(c, name)
         if value is not None and (not isinstance(value, str) or not value):
             raise ConfigValidationError(f"checkpoint.{name} must be a nonempty path or None")
     if not isinstance(c.on_signal, bool):
         raise ConfigValidationError("checkpoint.on_signal must be a boolean")
+
+
+def _validate_stop(cfg: Config) -> None:
+    s = cfg.stop
+    if type(s.steady_state) is not bool:
+        raise ConfigValidationError("stop.steady_state must be a boolean")
+    if isinstance(s.rtol, bool) or not isinstance(s.rtol, (int, float)) or not math.isfinite(s.rtol) or s.rtol <= 0:
+        raise ConfigValidationError("stop.rtol must be a positive finite number")
+    if s.steady_state:
+        _validate_time_multiple("stop.check_every", s.check_every, cfg.solver.dt)
+    if isinstance(s.min_time, bool) or not isinstance(s.min_time, (int, float)) or not math.isfinite(s.min_time) or s.min_time < 0:
+        raise ConfigValidationError("stop.min_time must be a nonnegative finite time in ps")
 
 
 def _validate_sweep(cfg: Config) -> None:
@@ -182,8 +294,43 @@ def _validate_boundary(cfg: Config) -> None:
         )
 
 
+def _validate_potential(cfg: Config) -> None:
+    potential = cfg.potential
+    try:
+        create_envelope(potential.envelope)
+    except ValueError as exc:
+        raise ConfigValidationError(f"potential.envelope: {exc}") from exc
+    if potential.potential_type == "profile":
+        if not potential.profile:
+            raise ConfigValidationError("potential.profile is required for potential_type='profile'")
+        try:
+            validate_profile_spec(potential.profile, cfg.grid.ndim)
+        except ValueError as exc:
+            raise ConfigValidationError(f"potential.profile: {exc}") from exc
+
+
+def _validate_drive(cfg: Config) -> None:
+    drive = cfg.drive
+    if type(drive.enabled) is not bool:
+        raise ConfigValidationError("drive.enabled must be a boolean")
+    for name in ("amplitude", "energy", "kx", "ky"):
+        value = getattr(drive, name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ConfigValidationError(f"drive.{name} must be a finite number")
+    if cfg.grid.ndim == 1 and drive.ky != 0.0:
+        raise ConfigValidationError("drive.ky must be zero on a 1D grid")
+    try:
+        validate_profile_spec(drive.profile, cfg.grid.ndim)
+        create_envelope(drive.envelope)
+    except ValueError as exc:
+        raise ConfigValidationError(f"drive profile/envelope: {exc}") from exc
+
+
 def _validate_laser(cfg: Config) -> None:
     laser = cfg.laser
+    if cfg.reservoir.reservoir_type == "none" and (laser.P0 != 0 or laser.n_pulses > 0 or laser.mode == "multiple"):
+        warnings.warn("Incoherent laser pump has no reservoir to feed when reservoir_type='none'.",
+                      UserWarning, stacklevel=2)
     if laser.sigma_space <= 0.0:
         raise ConfigValidationError(
             f"laser.sigma_space must be > 0, got {laser.sigma_space}"
@@ -212,10 +359,22 @@ def _validate_laser(cfg: Config) -> None:
             f"laser.power_definition='{laser.power_definition}' is not recognised. "
             f"Valid values: {sorted(_VALID_POWER_DEFINITIONS)}."
         )
+    if laser.mode == "single" and laser.laser_type == "profile":
+        if laser.power_definition != "peak_amplitude":
+            raise ConfigValidationError("laser_type='profile' requires power_definition='peak_amplitude'")
+        if not laser.profile:
+            raise ConfigValidationError("laser.profile is required for laser_type='profile'")
+        try:
+            validate_profile_spec(laser.profile, cfg.grid.ndim)
+            create_envelope(laser.envelope)
+        except ValueError as exc:
+            raise ConfigValidationError(f"laser profile/envelope: {exc}") from exc
 
 
 def _dx_min(cfg: Config) -> float:
     g = cfg.grid
+    if g.ndim == 1:
+        return g.lx / (g.nx if grid_boundary(g.grid_type) == "periodic" else max(g.nx - 1, 1))
     if grid_boundary(g.grid_type) == "periodic":
         dx = g.lx / g.nx
         dy = g.ly / g.ny

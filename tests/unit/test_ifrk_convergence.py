@@ -24,16 +24,17 @@ def _trajectory(tableau, dt):
         0.35 * (1 + 0.12 * np.cos(2 * np.pi * x / cfg.grid.lx))
         * np.exp(0.3j * np.sin(2 * np.pi * y / cfg.grid.ly)), dtype=np.complex128)
     controller.reservoir.set_state((
-        np.asarray(0.7 + 0.04 * np.cos(2 * np.pi * x / cfg.grid.lx)),
-        np.asarray(0.6 + 0.04 * np.sin(2 * np.pi * y / cfg.grid.ly)),
+        np.asarray(0.7 + 0.04 * np.cos(2 * np.pi * x / cfg.grid.lx)).reshape(1, 1, 8, 8),
+        np.asarray(0.6 + 0.04 * np.sin(2 * np.pi * y / cfg.grid.ly)).reshape(1, 1, 8, 8),
     ))
     potential = 0.6 * np.cos(2 * np.pi * x / cfg.grid.lx) - 0.07j * (
         1 + 0.1 * np.sin(2 * np.pi * y / cfg.grid.ly))
     envelope = 1 + 0.1 * np.cos(2 * np.pi * x / cfg.grid.lx)
     pump = lambda t: envelope * (1.5 + 0.7 * np.sin(3 * t) + 0.4 * np.cos(5 * t))
     steps = round(cfg.solver.total_time / dt)
-    controller.solver.advance(potential, pump, controller.reservoir,
-                              controller.boundary_condition, controller.state, 0, steps)
+    controller.model.potential = potential
+    controller.model.pump = pump
+    controller.solver.advance(controller.model, controller.state, steps)
     return np.concatenate([
         controller.state.psi.ravel(),
         *(field.ravel() for field in controller.reservoir.get_state()),

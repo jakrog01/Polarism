@@ -6,6 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
+MAX_BATCH_BYTES = 256 * 1024**2
+
 
 class BaseStorage(ABC):
     """Store result batches in a common format."""
@@ -25,6 +27,7 @@ class BaseStorage(ABC):
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.batch_size = batch_size
         self.batch_count = 0
+        self.batch_bytes = 0
         self.total_saved = 0
 
         self.time_buffer = []
@@ -34,6 +37,26 @@ class BaseStorage(ABC):
         self.static_fields: dict[str, np.ndarray] = {}
         self.node_metadata: dict[str, dict[str, str]] = {}
         self.members: int | None = None
+        self.ndim = 2
+
+    def dataset_metadata(self, name: str, *, static: bool = False, field: bool = False) -> dict:
+        """Describe public dimensions and physical units of a saved array."""
+        axes = (["y", "x"] if self.ndim == 2 else ["x"])
+        if name == "momentum_density":
+            axes = [f"k{axis}" for axis in axes]
+        dims = ([] if static else ["time"])
+        if self.members is not None:
+            dims.append("member")
+        if field:
+            dims.extend(axes)
+        units = self.node_metadata.get(name, {}).get("units", "")
+        if name == "density" or name.startswith(("N_R", "nR", "nA", "nI")):
+            units = f"µm^-{self.ndim}"
+        elif name == "psi":
+            units = f"µm^-{self.ndim / 2:g}"
+        elif name == "potential":
+            units = "meV"
+        return {**self.node_metadata.get(name, {"label": name}), "dims": dims, "units": units}
 
     def add_to_batch(self, t: float, nodes: list, **context) -> None:
         """Add one result step to the current batch."""
@@ -63,6 +86,7 @@ class BaseStorage(ABC):
                 if node.name not in self.field_buffers:
                     self.field_buffers[node.name] = []
                 self.field_buffers[node.name].append(field)
+                self.batch_bytes += field.nbytes
             else:
                 if node.name not in self.scalar_buffers:
                     self.scalar_buffers[node.name] = []
@@ -88,7 +112,7 @@ class BaseStorage(ABC):
 
         self.batch_count += 1
 
-        if self.batch_count >= self.batch_size:
+        if self.batch_count >= self.batch_size or self.batch_bytes >= MAX_BATCH_BYTES:
             self.dump_batch()
 
     @abstractmethod
@@ -111,6 +135,10 @@ class BaseStorage(ABC):
         if self.batch_count > 0:
             self.dump_batch()
 
+    def set_stop_times(self, stop_times) -> None:
+        """Optionally write final stop times to backend metadata."""
+        pass
+
     def _clear_buffers(self) -> None:
         """Clear all in-memory buffers."""
         self.time_buffer.clear()
@@ -118,3 +146,4 @@ class BaseStorage(ABC):
         self.scalar_buffers.clear()
         self.scalar_group_buffers.clear()
         self.batch_count = 0
+        self.batch_bytes = 0

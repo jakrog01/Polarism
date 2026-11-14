@@ -5,6 +5,7 @@ from polarism.laser.continuous_gaussian import ContinuousGaussian
 from polarism.laser.laser_factory import LaserFactory
 from polarism.laser.laser_registry import register_laser
 from polarism.laser.pulse_gaussian import PulseGaussian
+from polarism.laser.profile_laser import ProfileLaser
 from polarism.laser.uniform_laser import UniformLaser
 
 __all__ = [
@@ -12,6 +13,7 @@ __all__ = [
     "register_laser",
     "ContinuousGaussian",
     "PulseGaussian",
+    "ProfileLaser",
     "ContinuousExponentialPump",
     "ContinuousExponentialLengthPump",
     "UniformLaser",

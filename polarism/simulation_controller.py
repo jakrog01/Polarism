@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
-from dataclasses import asdict
+from copy import copy
+from dataclasses import asdict, dataclass, replace
 import json
 import os
 from pathlib import Path
@@ -19,13 +20,21 @@ from tqdm import tqdm
 from polarism.boundary_conditions.boundary_condition import BoundaryCondition
 from polarism.compute_engine import compute_engine, has_full_rate_fp64
 from polarism.config.dtype_utils import complex_dtype, real_dtype
-from polarism.config.validation import validate_config
+from polarism.config.validation import _validate_time_multiple, validate_config
+from polarism.dispersion import available_dispersions
+from polarism.envelopes import create_envelope
 from polarism.grid.create_grid import create_grid
-from polarism.grid.simulation_grid_2d import SimulationGrid2D
+from polarism.grid.simulation_grid import SimulationGrid
 from polarism.laser.laser_factory import LaserFactory
 from polarism.laser.pump_field import BatchedPumpField, PumpField
+from polarism.model import CoherentDrive, Model
+from polarism.model_terms import available_terms
+from polarism.config.batch_physics import BatchPhysics
+from polarism.noise import NoiseApplier
+from polarism.noise.stochastic import draw_seed
 from polarism.plugins import load_plugins
 from polarism.potential.create_potential import create_potential
+from polarism.profiles import create_profile
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
 from polarism.reservoir.create_reservoir import create_reservoir
 from polarism.results.real_time_visualization import RealTimeVisualization
@@ -60,9 +69,11 @@ def _compute_total_norm(**ctx):
     xp = compute_engine.xp
     grid = ctx["grid"]
     psi = ctx["state"].psi
-    if psi.ndim == 3:
-        return (xp.abs(psi) ** 2).sum(axis=(-2, -1)) * grid.dx * grid.dy
-    return (xp.abs(psi) ** 2).sum() * grid.dx * grid.dy
+    total = ((xp.abs(psi) ** 2).sum(axis=tuple(range(-grid.ndim, 0)))
+             if ctx["state"].batched else (xp.abs(psi) ** 2).sum())
+    for spacing in reversed(grid.spacing):
+        total = total * spacing
+    return total
 
 
 def _compute_psi(**ctx):
@@ -78,14 +89,42 @@ def _compute_pump_field(**ctx):
 _fp64_notice_shown = False
 
 
+@dataclass(frozen=True)
+class RunEventView:
+    """Immutable event snapshot with read-only host arrays."""
+    t: float
+    step: int
+    psi: np.ndarray
+    density: np.ndarray
+    reservoir: tuple[np.ndarray, ...]
+    batched: bool
+    batch_size: int
+
+
+def _model_component(name: str) -> property:
+    """Expose a model component on the controller, kept in sync with the model."""
+    def get(self):
+        model = self.__dict__.get("model")
+        return getattr(model, name) if model is not None else self.__dict__[f"_{name}"]
+
+    def set(self, value):
+        model = self.__dict__.get("model")
+        if model is not None:
+            setattr(model, name, value)
+        self.__dict__[f"_{name}"] = value
+
+    return property(get, set)
+
+
 class SimulationController:
     """Set up and run a full simulation."""
     cfg: Config
-    grid: SimulationGrid2D
-    boundary_condition: BoundaryCondition
-    potential: Union["np.ndarray", "cp.ndarray"]
+    grid: SimulationGrid
+    boundary_condition: BoundaryCondition = _model_component("boundary")
+    potential: Union["np.ndarray", "cp.ndarray"] = _model_component("potential")
+    pump_field = _model_component("pump")
     lasers: list
-    reservoir: AbstractReservoir
+    reservoir: AbstractReservoir = _model_component("reservoir")
     state: SimulationState
     solver: AbstractSolver
     visualizer: RealTimeVisualization | None
@@ -102,8 +141,21 @@ class SimulationController:
             load_plugins()
         if members is not None and len(members) == 0:
             raise ValueError("members must contain at least one override mapping")
+        cfg = copy(cfg)
+        cfg.noise = replace(cfg.noise)
+        indices = member_indices or list(range(len(members or [cfg])))
+        self._seed_drawn = cfg.noise.seed is None and cfg.checkpoint.resume_from is None
+        if cfg.noise.seed is None:
+            if cfg.checkpoint.resume_from is not None:
+                with h5py.File(cfg.checkpoint.resume_from, "r") as saved:
+                    cfg.noise.seed = int(json.loads(saved.attrs["config_json"])["noise"]["seed"])
+            else:
+                cfg.noise.seed = draw_seed()
         member_configs = ([apply_overrides(cfg, overrides) for overrides in members]
                           if members is not None else None)
+        for member in member_configs or []:
+            if member.noise.seed is None:
+                member.noise.seed = cfg.noise.seed
         if member_configs is not None and len(member_configs) == 1:
             cfg = member_configs[0]
         batched = member_configs is not None and len(member_configs) >= 2
@@ -111,7 +163,7 @@ class SimulationController:
         self._batched = batched
         self._member_configs = member_configs
         self._output_dir = Path(output_dir) if output_dir is not None else None
-        self._member_indices = member_indices or list(range(len(member_configs or [cfg])))
+        self._member_indices = indices
         if member_configs is not None and cfg.result.view_member >= len(member_configs):
             raise ValueError("result.view_member is outside the batch")
         compute_engine.configure(cfg.compute_engine)
@@ -141,6 +193,7 @@ class SimulationController:
         check_solver_compatibility(cfg)
 
         self.grid = create_grid(cfg.grid)
+        self._profile_y = self.xp.zeros_like(self.grid.X) if self.grid.ndim == 1 else self.grid.Y
         batch_physics = None
         if batched:
             from polarism.config.batch_physics import _FLOAT_FIELDS
@@ -158,41 +211,53 @@ class SimulationController:
             potentials = [create_potential(member.potential, self.grid)
                           for member in member_configs]
             self.potential = (potentials[0] if all(bool(self.xp.array_equal(potentials[0], item))
-                              for item in potentials[1:]) else self.xp.stack(potentials))
+                              for item in potentials[1:]) else self.xp.stack(potentials)[:, None])
             member_lasers = [LaserFactory.create_laser(
-                member.laser, self.grid.X, self.grid.Y, cfg.solver.precision,
-                getattr(member, "_laser_entry_overrides", None)) for member in member_configs]
+                member.laser, self.grid.X, self._profile_y, cfg.solver.precision,
+                getattr(member, "_laser_entry_overrides", None), self.grid) for member in member_configs]
             self.lasers = member_lasers[0]
             self.pump_field = BatchedPumpField(member_lasers, self.grid, cfg.solver.precision)
             self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid,
                                               cfg.solver.precision, batch_size=len(member_configs),
                                               batch_physics=batch_physics)
             states = [SimulationState(
-                self.grid, member.physics.init_eps, cfg.solver.precision,
-                mode=member.physics.init_mode,
-                k_cutoff_um=member.physics.init_k_cutoff_um,
-                seed=member.physics.init_seed,
+                self.grid, member.noise.initial_amplitude if member.noise.enabled else 0.0,
+                cfg.solver.precision,
+                mode=member.noise.initial if member.noise.enabled else "none",
+                k_cutoff_um=member.noise.initial_k_cutoff_um,
+                seed=member.noise.seed,
+                initial_condition=member.initial_condition,
             ) for member in member_configs]
+            initial_fields = self.xp.stack([state.psi for state in states])
             self.state = states[0]
-            self.state.psi = self.xp.stack([state.psi for state in states])
+            self.state.batch_size = len(states)
+            self.state.batched = True
+            self.state.psi = initial_fields
         else:
             self.potential = create_potential(cfg.potential, self.grid)
-            self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self.grid.Y, cfg.solver.precision,
-                                                    getattr(cfg, "_laser_entry_overrides", None))
+            self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self._profile_y, cfg.solver.precision,
+                                                    getattr(cfg, "_laser_entry_overrides", None), self.grid)
             self.pump_field = PumpField(self.lasers, self.grid, cfg.solver.precision)
             self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid, cfg.solver.precision)
             self.state = SimulationState(
                 self.grid,
-                cfg.physics.init_eps,
+                cfg.noise.initial_amplitude if cfg.noise.enabled else 0.0,
                 cfg.solver.precision,
-                mode=getattr(cfg.physics, "init_mode", "legacy_positive_uniform"),
-                k_cutoff_um=getattr(cfg.physics, "init_k_cutoff_um", None),
-                seed=getattr(cfg.physics, "init_seed", None),
+                mode=cfg.noise.initial if cfg.noise.enabled else "none",
+                k_cutoff_um=cfg.noise.initial_k_cutoff_um,
+                seed=cfg.noise.seed,
+                initial_condition=cfg.initial_condition,
             )
-        self.solver = create_solver(cfg, self.grid, batch_physics=batch_physics)
         self._batch_physics = batch_physics
         self.max_laser_power = self._compute_max_laser_power()
 
+        members_for_envelope = member_configs or [cfg]
+        self._potential_dynamic = any(
+            member.potential.envelope.get("type") != "constant"
+            for member in members_for_envelope
+        )
+        if self._potential_dynamic:
+            self._potential_static = self.potential
         cap = self.boundary_condition.before_step_action()
         if self.xp.iscomplexobj(cap) and not self.xp.iscomplexobj(self.potential):
             self.potential = self.potential.astype(self.state.psi.dtype)
@@ -206,16 +271,22 @@ class SimulationController:
                 else real_dtype(self.xp, "single")
             )
             self.potential = self.potential.astype(target)
+        if self._potential_dynamic:
+            self._potential_static = self.xp.asarray(self._potential_static, dtype=self.potential.dtype)
+            self._potential_cap = self.xp.asarray(cap, dtype=self.potential.dtype)
+        self.model = self._make_model()
+        self.solver = create_solver(cfg, self.grid, self.model)
         self.visualizer = None
         self.next_viz_time = 0.0
         self.results_manager = ResultsManager()
         self.storage_visitor = None
         self.animation_visitor = None
-        self._step = 0
         self._state_shape_explicit = batched
         self._stop_requested = False
         self._resumed = False
         self.run_directory = None
+        self._events = []
+        self._reset_stop_state()
 
         if cfg.checkpoint.resume_from is not None:
             self.load_checkpoint(cfg.checkpoint.resume_from)
@@ -228,7 +299,7 @@ class SimulationController:
 
         if self.storage_visitor is not None:
             self.run_directory = self.storage_visitor.output_dir
-        elif (cfg.checkpoint.every_steps or cfg.checkpoint.path is not None
+        elif (cfg.checkpoint.every or cfg.checkpoint.path is not None
               or cfg.checkpoint.resume_from is not None):
             self.run_directory = create_run_directory(cfg.result.output_directory)
 
@@ -302,10 +373,13 @@ class SimulationController:
 
         self.cfg._storage_members = len(self._member_configs) if self._member_configs is not None and (self._output_dir is not None or self._batched) else None
         self.cfg._storage_indices = self._member_indices
+        self.cfg._storage_member_seeds = ([member.noise.seed for member in self._member_configs]
+                                           if self._member_configs is not None else None)
         self.cfg._storage_resume = self.cfg.checkpoint.resume_from is not None
         self.cfg._storage_resume_time = self.state.t if self._resumed else None
         self.storage_visitor = StorageVisitor(
-            self.cfg, x=compute_engine.to_cpu(self.grid.X[0, :]), y=compute_engine.to_cpu(self.grid.Y[:, 0]),
+            self.cfg, x=compute_engine.to_cpu(self.grid.X if self.grid.ndim == 1 else self.grid.X[0, :]),
+            y=None if self.grid.ndim == 1 else compute_engine.to_cpu(self.grid.Y[:, 0]),
             output_dir=self._output_dir,
         )
         self.add_visitor(self.storage_visitor)
@@ -402,7 +476,8 @@ class SimulationController:
                 if not node.is_field and node.name.endswith("_max"):
                     field_node = field_nodes.get(node.name[:-4])
                     if field_node is not None:
-                        node.compute_fn = lambda field_node=field_node, **ctx: field_node.compute_fn(**ctx).max(axis=(-2, -1))
+                        axes = tuple(range(-self.grid.ndim, 0))
+                        node.compute_fn = lambda field_node=field_node, axes=axes, **ctx: field_node.compute_fn(**ctx).max(axis=axes)
                         node.reduce_dim_fn = lambda value: value
 
         if self.cfg.result.save_psi:
@@ -434,10 +509,30 @@ class SimulationController:
                 )
             )
 
+        if self.model.drive is not None:
+            nodes.append(
+                ResultNode(
+                    name="drive", label="|F(r)|",
+                    compute_fn=lambda **ctx: self._drive_result_field(),
+                    reduce_dim_fn=lambda f: f.max(axis=tuple(range(-self.grid.ndim, 0))) if self._batched else float(f.max()),
+                    cmap="magma", scaling=None, clim=None, expose=True, save=True,
+                    cut=None, is_field=True, static=True,
+                )
+            )
+
         for name in self.cfg.result.observables:
             produced = available_observables[name](self)
             nodes.extend(produced if isinstance(produced, list) else [produced])
         return nodes
+
+    def _drive_result_field(self):
+        """Return the static drive magnitude with a batch axis when needed."""
+        field = self.xp.abs(self.model.drive.spatial)
+        if self._batched:
+            if field.ndim == self.grid.ndim:
+                return self.xp.broadcast_to(field, (len(self._member_configs), *self.grid.shape))
+            return field[:, 0]
+        return field
 
     def _checkpoint_path(self) -> Path:
         """Return the configured path, creating a run directory when needed."""
@@ -450,21 +545,22 @@ class SimulationController:
     def set_initial_state(self, psi, reservoir_state=None, t: float = 0.0) -> None:
         """Set a real-space initial field and optional reservoir densities."""
         shape = tuple(psi.shape)
-        spatial = (self.grid.ny, self.grid.nx)
-        if shape[-2:] != spatial or len(shape) not in (2, 3):
+        spatial = self.grid.shape
+        if shape[-self.grid.ndim:] != spatial or len(shape) not in (self.grid.ndim, self.grid.ndim + 1):
             raise ValueError(f"psi grid shape must end in {spatial}, got {shape}")
-        if len(shape) == 3 and shape[0] < 1:
+        if len(shape) == self.grid.ndim + 1 and shape[0] < 1:
             raise ValueError("psi batch shape must have at least one member")
         if not np.isfinite(t) or t < 0:
             raise ValueError("t must be finite and nonnegative")
-        step = round(t / self.cfg.solver.dt)
-        if not np.isclose(t, step * self.cfg.solver.dt, rtol=0, atol=1e-12):
-            raise ValueError("t must lie on a solver step boundary")
         dtype = complex_dtype(self.xp, self.cfg.solver.precision)
+        self.state.batch_size = shape[0] if len(shape) == self.grid.ndim + 1 else 1
+        self.state.batched = len(shape) == self.grid.ndim + 1
         self.state.psi = self.xp.asarray(psi, dtype=dtype).copy()
-        self.state.t = step * self.cfg.solver.dt
-        self._step = step
+        self.state.t0 = float(t)
+        self.state.t = float(t)
+        self.state.step = 0
         self._state_shape_explicit = True
+        self._reset_stop_state()
         if reservoir_state is not None:
             fields = tuple(reservoir_state)
             expected = self.reservoir.get_state()
@@ -476,12 +572,12 @@ class SimulationController:
         else:
             reset = getattr(self.reservoir, "reset", None)
             if callable(reset):
-                if len(shape) == 3:
+                if self.state.batched:
                     reset(shape[0])
                 else:
                     reset()
             else:
-                zeros = tuple(self.xp.zeros(shape, dtype=field.dtype)
+                zeros = tuple(self.xp.zeros(self.state.field.shape, dtype=field.dtype)
                               for field in self.reservoir.get_state())
                 self.reservoir.set_state(zeros)
 
@@ -492,7 +588,10 @@ class SimulationController:
         from polarism.reservoir.single_reservoir import SingleReservoir
 
         dtype = real_dtype(self.xp, self.cfg.solver.precision) if cast else None
-        arrays = tuple(self.xp.asarray(field, dtype=dtype).copy() for field in fields)
+        shape = self.state.field.shape
+        arrays = tuple(self.xp.asarray(field, dtype=dtype).reshape(shape).copy() for field in fields)
+        if hasattr(self.reservoir, "_batched"):
+            self.reservoir._batched = self.state.batched
         if type(self.reservoir) is SingleReservoir:
             self.reservoir.nR = arrays[0]
         elif type(self.reservoir) is DoubleReservoir:
@@ -502,45 +601,117 @@ class SimulationController:
         else:
             self.reservoir.set_state(arrays)
 
+    def _reset_stop_state(self) -> None:
+        """Clear member stop times and the previous steady-state sample."""
+        self.stop_times = np.full(self.state.batch_size, np.nan, dtype=float)
+        self._steady_last_step = -1
+        self._steady_norm = None
+        self._steady_density = None
+
+    def add_event(self, callback, every: float) -> None:
+        """Call a predicate at every fixed-time interval in ps."""
+        if not callable(callback):
+            raise TypeError("event callback must be callable")
+        interval = _validate_time_multiple("event every", every, self.cfg.solver.dt)
+        self._events.append((callback, interval))
+
+    def _event_view(self) -> RunEventView:
+        """Copy event inputs to read-only host arrays."""
+        def snapshot(value):
+            array = np.array(compute_engine.to_cpu(value), copy=True)
+            array.setflags(write=False)
+            return array
+
+        psi = snapshot(self.state.psi)
+        density = np.abs(psi) ** 2
+        density.setflags(write=False)
+        reservoir = tuple(snapshot(field[:, 0] if self.state.batched else field[0, 0])
+                          for field in self.reservoir.get_state())
+        return RunEventView(self.state.t, self.state.step, psi, density, reservoir,
+                            self.state.batched, self.state.batch_size)
+
+    def _record_stops(self, reached) -> None:
+        """Record the first stop time for each selected member."""
+        if reached is None or reached is False or (isinstance(reached, np.bool_) and not reached):
+            return
+        if reached is True or (isinstance(reached, np.bool_) and reached):
+            selected = np.ones(self.state.batch_size, dtype=bool)
+        else:
+            selected = np.asarray(compute_engine.to_cpu(reached))
+            if selected.shape != (self.state.batch_size,) or selected.dtype != np.bool_:
+                raise ValueError("event must return a boolean or a boolean array of batch_size")
+        self.stop_times[selected & np.isnan(self.stop_times)] = self.state.t
+
+    def _check_steady_state(self) -> None:
+        """Compare norm and density against the preceding scheduled check."""
+        xp = self.xp
+        density = xp.abs(self.state.psi) ** 2
+        axes = tuple(range(-self.grid.ndim, 0))
+        cell = 1.0
+        for spacing in self.grid.spacing:
+            cell *= spacing
+        norms = np.atleast_1d(compute_engine.to_cpu(density.sum(axis=axes) * cell))
+        if self._steady_density is not None:
+            old = self._steady_density
+            old_norms = self._steady_norm
+            delta = xp.sqrt(((density - old) ** 2).sum(axis=axes))
+            scale = xp.sqrt((old ** 2).sum(axis=axes))
+            relative_density = np.atleast_1d(compute_engine.to_cpu(delta / xp.maximum(scale, 1e-30)))
+            relative_norm = np.abs(norms - old_norms) / np.maximum(old_norms, 1e-30)
+            reached = (norms < 1e-30) | ((relative_norm < self.cfg.stop.rtol)
+                                            & (relative_density < self.cfg.stop.rtol))
+            if self.state.t >= self.cfg.stop.min_time:
+                self._record_stops(reached)
+        self._steady_norm = norms.copy()
+        self._steady_density = density.copy()
+        self._steady_last_step = self.state.step
+
     def save_checkpoint(self, path: str | os.PathLike) -> None:
-        """Atomically save the current step boundary to an HDF5 checkpoint."""
+        """Atomically save the current state to an HDF5 checkpoint."""
         from polarism import __version__
 
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        step = round(self.state.t / self.cfg.solver.dt)
-        if self.state.t != step * self.cfg.solver.dt:
-            raise ValueError("checkpoint requires a solver step boundary")
-        self._step = step
         if self.storage_visitor is not None:
             self.storage_visitor.flush()
-        psi = compute_engine.to_cpu(self.state.psi)
-        psi_k = self.state.psi_k
+        field = compute_engine.to_cpu(self.state.field)
+        field_k = self.state.field_k
         fields = tuple(compute_engine.to_cpu(value) for value in self.reservoir.get_state())
+        names = getattr(self.reservoir, "state_names", tuple(str(i) for i in range(len(fields))))
         fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
         try:
             with os.fdopen(fd, "wb"):
                 pass
             with h5py.File(temporary, "w") as h5:
-                h5.attrs["checkpoint_version"] = 1
+                h5.attrs["checkpoint_version"] = 2
                 h5.attrs["polarism_version"] = __version__
-                h5.attrs["step"] = self._step
+                h5.attrs["step"] = self.state.step
                 h5.attrs["t"] = self.state.t
+                h5.attrs["t0"] = self.state.t0
                 h5.attrs["dt"] = self.cfg.solver.dt
+                h5.attrs["ndim"] = self.grid.ndim
+                h5.attrs["shape"] = self.grid.shape
+                h5.attrs["components"] = self.state.components
+                h5.attrs["batched"] = self.state.batched
                 h5.attrs["reservoir_type"] = self.cfg.reservoir.reservoir_type
                 h5.attrs["config_json"] = json.dumps(asdict(self.cfg))
+                h5.attrs["stop_time"] = self.stop_times
+                h5.attrs["steady_last_step"] = self._steady_last_step
+                if self._steady_norm is not None:
+                    h5.attrs["steady_norm"] = self._steady_norm
+                    h5.create_dataset("steady_density", data=compute_engine.to_cpu(self._steady_density))
                 if self._member_configs is not None:
                     h5.attrs["member_configs_json"] = json.dumps([
-                        {**{name: asdict(member)[name] for name in ("physics", "laser", "potential")},
+                        {**{name: asdict(member)[name] for name in ("physics", "laser", "potential", "drive", "noise")},
                          "laser_entries": getattr(member, "_laser_entry_overrides", {})}
                         for member in self._member_configs
                     ], sort_keys=True)
-                h5.create_dataset("psi", data=psi)
-                if psi_k is not None:
-                    h5.create_dataset("psi_k", data=compute_engine.to_cpu(psi_k))
+                h5.create_dataset("field", data=field)
+                if field_k is not None:
+                    h5.create_dataset("field_k", data=compute_engine.to_cpu(field_k))
                 group = h5.create_group("reservoir")
-                for index, value in enumerate(fields):
-                    group.create_dataset(str(index), data=value)
+                for name, value in zip(names, fields):
+                    group.create_dataset(name, data=value)
             os.replace(temporary, target)
         finally:
             if os.path.exists(temporary):
@@ -549,64 +720,168 @@ class SimulationController:
     def load_checkpoint(self, path: str | os.PathLike) -> None:
         """Validate and restore a checkpoint for the current configuration."""
         with h5py.File(path, "r") as h5:
-            if h5.attrs.get("checkpoint_version") != 1:
-                raise ValueError("unsupported checkpoint version")
+            version = h5.attrs.get("checkpoint_version")
+            if version != 2:
+                raise ValueError(f"checkpoint format v{version} is not supported by Polarism 0.7; supported: 2")
             if h5.attrs["reservoir_type"] != self.cfg.reservoir.reservoir_type:
                 raise ValueError("reservoir type mismatch")
             if h5.attrs["dt"] != self.cfg.solver.dt:
                 raise ValueError("checkpoint dt mismatch")
+            saved_config = json.loads(h5.attrs["config_json"])
+            saved_noise = saved_config["noise"]
+            if saved_config.get("stop", asdict(self.cfg.stop)) != asdict(self.cfg.stop):
+                raise ValueError("checkpoint stop config mismatch")
+            if self._seed_drawn:
+                drawn = self.cfg.noise.seed
+                self.cfg.noise.seed = saved_noise["seed"]
+                saved_members = json.loads(h5.attrs.get("member_configs_json", "[]"))
+                for member, saved in zip(self._member_configs or [], saved_members):
+                    if member.noise.seed == drawn:
+                        member.noise.seed = saved["noise"]["seed"]
+                self._seed_drawn = False
+            relevant_noise = ("enabled", "seed", "stochastic", "stochastic_strength")
+            if (self._member_configs is None and any(
+                    saved_noise[name] != getattr(self.cfg.noise, name)
+                    for name in relevant_noise)):
+                raise ValueError("checkpoint noise config mismatch")
             if self._member_configs is not None:
                 expected = json.dumps([
-                    {**{name: asdict(member)[name] for name in ("physics", "laser", "potential")},
+                    {**{name: asdict(member)[name] for name in ("physics", "laser", "potential", "drive", "noise")},
                      "laser_entries": getattr(member, "_laser_entry_overrides", {})}
                     for member in self._member_configs
                 ], sort_keys=True)
                 if h5.attrs.get("member_configs_json") != expected:
-                    raise ValueError("checkpoint member physics, pump or potential mismatch")
-            psi = h5["psi"][:]
-            shape = psi.shape
-            if shape[-2:] != (self.grid.ny, self.grid.nx) or len(shape) not in (2, 3):
+                    raise ValueError("checkpoint member physics, pump, potential or drive mismatch")
+            field = h5["field"][:]
+            shape = field.shape
+            if int(h5.attrs["ndim"]) != self.grid.ndim or tuple(h5.attrs["shape"]) != self.grid.shape:
                 raise ValueError("checkpoint grid shape mismatch")
-            if self._state_shape_explicit and shape != self.state.psi.shape:
+            if int(h5.attrs["components"]) != self.state.components or shape[1] != self.state.components:
+                raise ValueError("checkpoint components mismatch")
+            if shape[-self.grid.ndim:] != self.grid.shape or len(shape) != self.grid.ndim + 2:
+                raise ValueError("checkpoint field shape mismatch")
+            batched = bool(h5.attrs["batched"])
+            public_shape = (shape[0], *self.grid.shape) if batched else self.grid.shape
+            if not batched and shape[0] != 1:
                 raise ValueError("checkpoint batch shape mismatch")
-            fields = tuple(h5["reservoir"][str(i)][:] for i in range(len(h5["reservoir"])))
+            if self._state_shape_explicit and public_shape != self.state.psi.shape:
+                raise ValueError("checkpoint batch shape mismatch")
+            names = getattr(self.reservoir, "state_names", tuple(str(i) for i in range(len(self.reservoir.get_state()))))
+            if set(h5["reservoir"]) != set(names):
+                raise ValueError("checkpoint reservoir names mismatch")
+            fields = tuple(h5["reservoir"][name][:] for name in names)
             if len(fields) != len(self.reservoir.get_state()) or any(x.shape != shape for x in fields):
                 raise ValueError("checkpoint reservoir batch shape mismatch")
             step = int(h5.attrs["step"])
             t = float(h5.attrs["t"])
-            if step < 0 or t != step * self.cfg.solver.dt:
+            t0 = float(h5.attrs["t0"])
+            if step < 0 or not np.isfinite(t) or not np.isfinite(t0) or t != t0 + step * self.cfg.solver.dt:
                 raise ValueError("checkpoint time and step mismatch")
-            source_precision = json.loads(h5.attrs["config_json"])["solver"]["precision"]
+            source_precision = saved_config["solver"]["precision"]
             precision_changed = source_precision != self.cfg.solver.precision
-            psi_k = h5["psi_k"][:] if "psi_k" in h5 else None
-            if psi_k is not None and psi_k.shape != shape:
+            field_k = h5["field_k"][:] if "field_k" in h5 else None
+            if field_k is not None and field_k.shape != shape:
                 raise ValueError("checkpoint spectral batch shape mismatch")
+            stop_times = np.asarray(h5.attrs.get("stop_time", np.full(shape[0], np.nan)), dtype=float)
+            if stop_times.shape != (shape[0],):
+                raise ValueError("checkpoint stop_time shape mismatch")
+            steady_last_step = int(h5.attrs.get("steady_last_step", -1))
+            steady_norm = h5.attrs.get("steady_norm")
+            steady_density = h5["steady_density"][:] if "steady_density" in h5 else None
+            if (steady_norm is None) != (steady_density is None):
+                raise ValueError("checkpoint steady-state reference is incomplete")
+            if steady_norm is not None and (np.shape(steady_norm) != (shape[0],)
+                                            or steady_density.shape != public_shape):
+                raise ValueError("checkpoint steady-state reference shape mismatch")
+            if steady_last_step > step or steady_last_step < -1:
+                raise ValueError("checkpoint steady-state check step mismatch")
             if precision_changed:
                 warnings.warn("checkpoint precision differs; casting state", UserWarning, stacklevel=2)
         dtype = complex_dtype(self.xp, self.cfg.solver.precision) if precision_changed else None
-        self.state.psi = self.xp.asarray(psi, dtype=dtype).copy()
+        self.state.batch_size = shape[0]
+        self.state.batched = batched
+        self.state.field = self.xp.asarray(field, dtype=dtype).copy()
         self.state.t = t
-        self._step = step
+        self.state.t0 = t0
+        self.state.step = step
         self._state_shape_explicit = True
         self._restore_reservoir(fields, cast=precision_changed)
+        self.stop_times = stop_times.copy()
+        self._steady_last_step = steady_last_step
+        self._steady_norm = np.asarray(steady_norm).copy() if steady_norm is not None else None
+        self._steady_density = self.xp.asarray(steady_density).copy() if steady_density is not None else None
         self._resumed = True
-        if psi_k is not None:
-            self.state.psi_k = self.xp.asarray(psi_k, dtype=dtype).copy()
-        self.solver = create_solver(self.cfg, self.grid, batch_physics=self._batch_physics)
+        if field_k is not None:
+            self.state.field_k = self.xp.asarray(field_k, dtype=dtype).copy()
+        self.model = self._make_model()
+        self.solver = create_solver(self.cfg, self.grid, self.model)
+
+    def _make_model(self) -> Model:
+        """Collect solver inputs and optional stochastic noise."""
+        cfg = self.cfg
+        physics = BatchPhysics(cfg.physics, self._batch_physics, self.xp,
+                               cfg.solver.precision, ndim=self.grid.ndim)
+        noise = None
+        if cfg.noise.enabled and cfg.noise.stochastic == "wigner" and any(
+            member.noise.stochastic_strength > 0
+            for member in (self._member_configs or [cfg])
+        ):
+            noise = NoiseApplier(cfg, self.grid, self._member_configs)
+        terms = tuple(available_terms.lookup(name)(params, self.grid, physics)
+                      for name, params in cfg.terms.items())
+        dispersion = available_dispersions.lookup(cfg.physics.dispersion)()
+        members = self._member_configs or [cfg]
+        drive = None
+        if cfg.drive.enabled:
+            spatial = []
+            for member in members:
+                phase = member.drive.kx * self.grid.X
+                if self.grid.ndim == 2:
+                    phase = phase + member.drive.ky * self.grid.Y
+                source = member.drive.amplitude * create_profile(member.drive.profile, self.grid) * self.xp.exp(1j * phase)
+                spatial.append(self.xp.asarray(source, dtype=complex_dtype(self.xp, cfg.solver.precision)))
+            source = (spatial[0] if len(spatial) == 1 or all(bool(self.xp.array_equal(spatial[0], item)) for item in spatial[1:])
+                      else self.xp.stack(spatial)[:, None])
+            energies = [member.drive.energy for member in members]
+            energy = (energies[0] if len(energies) == 1 or all(value == energies[0] for value in energies[1:])
+                      else self.xp.asarray(energies, dtype=real_dtype(self.xp, cfg.solver.precision)).reshape((-1, 1, *(1,) * self.grid.ndim)))
+            drive = CoherentDrive(source, self._member_envelope([member.drive.envelope for member in members]), energy)
+        potential_envelope = None
+        if self._potential_dynamic:
+            potential_envelope = self._member_envelope([member.potential.envelope for member in members])
+        return Model(self.grid, physics, cfg.solver.precision, self.potential,
+                     self.pump_field, self.reservoir, self.boundary_condition, noise,
+                     terms, dispersion, drive,
+                     self._potential_static if self._potential_dynamic else None,
+                     self._potential_cap if self._potential_dynamic else None,
+                     potential_envelope)
+
+    def _member_envelope(self, specs):
+        """Build one scalar envelope or a member-broadcast coefficient."""
+        envelopes = [create_envelope(spec) for spec in specs]
+        if len(envelopes) == 1 or all(spec == specs[0] for spec in specs[1:]):
+            return envelopes[0]
+        shape = (-1, 1, *(1,) * self.grid.ndim)
+        dtype = real_dtype(self.xp, self.cfg.solver.precision)
+        return lambda t: self.xp.asarray([envelope(t) for envelope in envelopes], dtype=dtype).reshape(shape)
 
     def run(self) -> None:
         """Run the simulation loop."""
         self.pump_field.lasers = self.lasers
         dt = self.cfg.solver.dt
         n_steps = round(self.cfg.solver.total_time / dt)
-        if self._step > n_steps:
+        if self.state.step > n_steps:
             raise ValueError("checkpoint step exceeds configured total_time")
-        interval = self.cfg.checkpoint.every_steps
+        interval = (_validate_time_multiple("checkpoint.every", self.cfg.checkpoint.every, dt)
+                    if self.cfg.checkpoint.every else 0)
         checkpoint_enabled = (interval > 0 or self.cfg.checkpoint.path is not None
                               or self.cfg.checkpoint.resume_from is not None)
         last_checkpoint_step = -1
         previous_handlers = {}
         self._stop_requested = False
+        steady_interval = (_validate_time_multiple("stop.check_every", self.cfg.stop.check_every, dt)
+                           if self.cfg.stop.steady_state else 0)
+        stopping_active = bool(self._events or steady_interval or np.isfinite(self.stop_times).any())
 
         def request_stop(signum, frame):
             self._stop_requested = True
@@ -617,15 +892,18 @@ class SimulationController:
                 signal.signal(signum, request_stop)
 
         try:
-            if self._step == 0 and not self._resumed and (self.results_manager.visitors or self.storage_visitor is not None or self.animation_visitor is not None):
+            if self.state.step == 0 and not self._resumed and (self.results_manager.visitors or self.storage_visitor is not None or self.animation_visitor is not None):
                 self._record_results(self.state.t)
                 if self.visualizer is not None:
                     self.next_viz_time += self.cfg.result.real_time_refresh_interval
 
-            save_interval = max(1, self.cfg.result.save_interval)
-            step = self._step
+            save_steps = (
+                _validate_time_multiple("result.save_every", self.cfg.result.save_every, dt)
+                if self.cfg.result.save_every is not None else 1
+            )
+            step = self.state.step
             with tqdm(total=n_steps, initial=step, desc="Simulating") as progress:
-                while step < n_steps and not self._stop_requested:
+                while step < n_steps and not self._stop_requested and not (stopping_active and np.isfinite(self.stop_times).all()):
                     recording = (
                         self.storage_visitor is not None
                         or self.animation_visitor is not None
@@ -637,22 +915,23 @@ class SimulationController:
                     if self.visualizer is not None:
                         end = step + 1
                     elif recording:
-                        end = min(n_steps, ((step // save_interval) + 1) * save_interval)
+                        end = min(n_steps, ((step // save_steps) + 1) * save_steps)
                     else:
                         end = n_steps
                     if interval:
                         end = min(end, ((step // interval) + 1) * interval)
                     if previous_handlers:
                         end = min(end, step + 64)
-                    self.solver.advance(
-                        self.potential, self.pump_field, self.reservoir,
-                        self.boundary_condition, self.state, step, end - step,
-                    )
+                    if self._events:
+                        for _, event_interval in self._events:
+                            end = min(end, ((step // event_interval) + 1) * event_interval)
+                    if steady_interval:
+                        end = min(end, ((step // steady_interval) + 1) * steady_interval)
+                    self.solver.advance(self.model, self.state, end - step)
                     progress.update(end - step)
-                    step = end
-                    self._step = step
-                    t_after = step * dt
-                    should_save = recording and step % save_interval == 0
+                    step = self.state.step
+                    t_after = self.state.t
+                    should_save = recording and step % save_steps == 0
                     should_viz = (
                         self.visualizer is not None and t_after >= self.next_viz_time
                     )
@@ -666,20 +945,40 @@ class SimulationController:
 
                     should_animate = (
                         self.animation_visitor is not None
-                        and step % save_interval == 0
+                        and step % save_steps == 0
                     )
 
-                    if should_save or should_viz or should_animate:
+                    if self._events:
+                        view = None
+                        for callback, event_interval in tuple(self._events):
+                            if step % event_interval == 0:
+                                if view is None:
+                                    view = self._event_view()
+                                self._record_stops(callback(view))
+                    if steady_interval and step % steady_interval == 0 and self._steady_last_step != step:
+                        self._check_steady_state()
+                    stopped = stopping_active and np.isfinite(self.stop_times).all()
+                    if should_save or should_viz or should_animate or stopped and recording:
                         self._record_results(t_after)
                         if should_viz:
                             self.next_viz_time += self.cfg.result.real_time_refresh_interval
                     if interval and step % interval == 0:
                         self.save_checkpoint(self._checkpoint_path())
                         last_checkpoint_step = step
-            if (checkpoint_enabled or self._stop_requested) and last_checkpoint_step != self._step:
+            if (checkpoint_enabled or self._stop_requested) and last_checkpoint_step != self.state.step:
                 self.save_checkpoint(self._checkpoint_path())
+            if stopping_active:
+                indices = (self._member_indices if len(self._member_indices) == len(self.stop_times)
+                           else range(len(self.stop_times)))
+                values = ", ".join(
+                    f"member {index}=" + ("NaN" if np.isnan(t) else f"{t:g}")
+                    for index, t in zip(indices, self.stop_times)
+                )
+                print(f"Stop times (ps): {values}")
         finally:
             try:
+                if self.storage_visitor is not None and stopping_active:
+                    self.storage_visitor.set_stop_times(self.stop_times)
                 for visitor in self.results_manager.visitors:
                     finalize = getattr(visitor, "finalize", None)
                     if not callable(finalize):
@@ -701,6 +1000,8 @@ class SimulationController:
     def _record_results(self, t: float) -> None:
         """Evaluate the pump and send the current state to result visitors."""
         P_total = self._compute_total_pump(t)
+        if self._batched and P_total.ndim == 4:
+            P_total = P_total[:, 0]
         scalar_groups = self._get_scalar_groups()
         if self._batched:
             self.pump_field.last_components = []
@@ -736,13 +1037,13 @@ class SimulationController:
             if terms is not None:
                 values = {}
                 for i, field in enumerate(self.pump_field.last_components):
-                    if field.ndim == 2:
+                    if field.ndim == self.grid.ndim:
                         values[f"L{i}"] = self.xp.broadcast_to(field.max(), (len(self._member_configs),))
                     else:
-                        values[f"L{i}"] = field.max(axis=(-2, -1))
+                        values[f"L{i}"] = field.max(axis=tuple(range(-self.grid.ndim, 0)))[:, 0]
                 return {"P_lasers": values}
             return {"P_lasers": {
-                f"L{i}": self.xp.stack([self.xp.max(lasers[i].get_power(self.grid.X, self.grid.Y, self.state.t))
+                f"L{i}": self.xp.stack([self.xp.max(lasers[i].get_power(self.grid.X, self._profile_y, self.state.t))
                                            for lasers in self.pump_field.member_lasers])
                 for i in range(len(self.lasers))
             }}

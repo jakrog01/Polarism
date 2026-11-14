@@ -66,7 +66,7 @@ def test_static_and_complex_round_trip_all_backends(tmp_path):
             storage.add_to_batch(t, nodes, cached={"psi": (psi, None), "pump": (pump, None)})
         storage.finalize()
     with h5py.File(tmp_path / "h5" / "results.h5") as result:
-        assert np.array_equal(result["fields/psi"][:], np.stack([psi, psi]))
+        assert np.array_equal(result["fields/psi"][:, 0], np.stack([psi, psi]))
         assert np.array_equal(result["static/pump"][:], pump)
         assert "fields/pump" not in result
     with np.load(tmp_path / "npy" / "batch_000000.npz") as result:
@@ -90,7 +90,7 @@ def test_visitor_preserves_order_and_in_place_snapshot(tmp_path):
     visitor.finalize()
     with h5py.File(visitor.output_dir / "results.h5") as result:
         assert np.array_equal(result["time"][:], np.arange(31, dtype=float))
-        assert np.array_equal(result["fields/density"][:, 0, 0], np.arange(31, dtype=np.float32))
+        assert np.array_equal(result["fields/density"][:, 0, 0, 0], np.arange(31, dtype=np.float32))
 
 
 def test_writer_failure_reaches_main_thread(tmp_path):

@@ -23,7 +23,7 @@ from polarism.config.batch_physics import BatchPhysics
 from polarism.compute_engine import compute_engine
 from polarism.config.dtype_utils import real_dtype
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
-from polarism.grid.simulation_grid_2d import SimulationGrid2D
+from polarism.grid.simulation_grid import SimulationGrid
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
 from polarism.reservoir.laplacian import real_laplacian
 from polarism.reservoir.reservoir_registry import register_reservoir
@@ -40,6 +40,7 @@ _QDOUBLE_RHS_KERNELS: dict[tuple[str, int], object] = {}
 
 @register_reservoir("quadratic-double")
 class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
+    state_names = ("nR", "nI")
     """Two-reservoir model with quadratic inactive→active transfer."""
 
     config: ReservoirParameters
@@ -59,14 +60,14 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
         self,
         reservoir_config: ReservoirParameters,
         physics: PhysicsConstants,
-        grid: SimulationGrid2D,
+        grid: SimulationGrid,
         precision: str = "double",
         batch_physics=None,
     ) -> None:
         """Set up the quadratic double reservoir."""
         self.xp = compute_engine.xp
         self.config = reservoir_config
-        self.batch_physics = BatchPhysics(physics, batch_physics, self.xp, precision)
+        self.batch_physics = BatchPhysics(physics, batch_physics, self.xp, precision, ndim=grid.ndim)
         self.R = self.batch_physics.get("R")
         self.gamma_R = self.batch_physics.get("gamma_R")
         self.gamma_I = self.batch_physics.get("gamma_I")
@@ -74,18 +75,20 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
         self.reservoir_diffusion_I = self.batch_physics.get("reservoir_diffusion_I")
         self.reservoir_diffusion_R = self.batch_physics.get("reservoir_diffusion_R")
         self.dx = grid.dx
-        self.dy = grid.dy
+        self.dy = grid.dy if grid.ndim == 2 else None
         self.grid_type = grid.boundary
-        self._spatial_shape = (grid.ny, grid.nx)
+        self._spatial_shape = grid.shape
+        self._batched = False
         rdtype = real_dtype(self.xp, precision)
-        self.nR = self.xp.zeros((grid.ny, grid.nx), dtype=rdtype)
-        self.nI = self.xp.zeros((grid.ny, grid.nx), dtype=rdtype)
+        self.nR = self.xp.zeros((1, 1, *grid.shape), dtype=rdtype)
+        self.nI = self.xp.zeros((1, 1, *grid.shape), dtype=rdtype)
 
     def reset(self, batch_size: int | None = None) -> None:
         """Reset zero density fields, optionally with a leading batch axis."""
         if batch_size is not None and (isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1):
             raise ValueError("batch_size must be a positive integer")
-        shape = self._spatial_shape if batch_size is None else (batch_size, *self._spatial_shape)
+        self._batched = batch_size is not None
+        shape = (1 if batch_size is None else batch_size, 1, *self._spatial_shape)
         self.nR = self.xp.zeros(shape, dtype=self.nR.dtype)
         self.nI = self.xp.zeros(shape, dtype=self.nI.dtype)
 
@@ -102,6 +105,7 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
         ],
     ) -> None:
         """Set the reservoir state from ``(nR, nI)``."""
+        self._check_state_shape(state, self.nR.shape)
         self.nR = self.xp.maximum(state[0], 0).astype(self.nR.dtype, copy=False)
         self.nI = self.xp.maximum(state[1], 0).astype(self.nI.dtype, copy=False)
 
@@ -136,15 +140,17 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
     ]:
         """Return time derivatives ``(dnR, dnI)``."""
         self.batch_physics.check(psi)
+        self._check_state_shape(state, psi.shape)
         nR, nI = state
         abs_psi2 = rho if rho is not None else psi.real * psi.real + psi.imag * psi.imag
 
-        if nR.shape[-2:] != psi.shape[-2:] or nI.shape[-2:] != psi.shape[-2:]:
+        spatial = self._spatial_shape
+        if nR.shape[-len(spatial):] != spatial or nI.shape[-len(spatial):] != spatial:
             raise ValueError(
                 "reservoir state and psi must share trailing grid shape, "
                 f"got nR={nR.shape}, nI={nI.shape}, psi={psi.shape}"
             )
-        if Pxy.shape[-2:] != psi.shape[-2:]:
+        if Pxy.shape[-len(spatial):] != spatial:
             raise ValueError(
                 "pump and psi must share trailing grid shape, "
                 f"got pump={Pxy.shape}, psi={psi.shape}"
@@ -220,13 +226,13 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
 
     def get_reservoir_density(self) -> Union["np.ndarray", "cp.ndarray"]:
         """Return the active reservoir density ``nR``."""
-        return self.nR
+        return self._public_density(self.nR)
 
     def get_reservoir_densities(
         self,
     ) -> tuple[Union["np.ndarray", "cp.ndarray"], Union["np.ndarray", "cp.ndarray"]]:
         """Return ``(nR, nI)``."""
-        return self.nR, self.nI
+        return self._public_density(self.nR), self._public_density(self.nI)
 
     def make_result_nodes(self) -> list[ResultNode]:
         """Build result nodes exposed by this reservoir."""
@@ -235,7 +241,7 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
             nodes.append(
                 ResultNode(
                     "nR",
-                    compute_fn=lambda **ctx: self.nR,
+                    compute_fn=lambda **ctx: self._public_density(self.nR),
                     reduce_dim_fn=lambda f: float(f.max()),
                     cmap="viridis",
                     scaling=None,
@@ -249,7 +255,7 @@ class QuadraticDoubleReservoir(AbstractReservoir, ResultProvider):
             nodes.append(
                 ResultNode(
                     "nI",
-                    compute_fn=lambda **ctx: self.nI,
+                    compute_fn=lambda **ctx: self._public_density(self.nI),
                     reduce_dim_fn=lambda f: float(f.max()),
                     cmap="plasma",
                     scaling=None,

@@ -7,16 +7,16 @@ from typing import TYPE_CHECKING
 from polarism.registry import Registry
 
 if TYPE_CHECKING:
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
 
 GRID_BOUNDARIES = {"periodic", "closed-interval"}
 
-available_grids: Registry[type[SimulationGrid2D]] = Registry("grid")
+available_grids: Registry[type[SimulationGrid]] = Registry("grid")
 
 
-def register_grid(name: str) -> Callable[[type[SimulationGrid2D]], type[SimulationGrid2D]]:
+def register_grid(name: str) -> Callable[[type[SimulationGrid]], type[SimulationGrid]]:
     """Return a decorator that registers a grid under ``name``."""
-    def decorator(cls: type[SimulationGrid2D]) -> type[SimulationGrid2D]:
+    def decorator(cls: type[SimulationGrid]) -> type[SimulationGrid]:
         boundary = getattr(cls, "boundary", None)
         if boundary not in GRID_BOUNDARIES:
             raise ValueError(

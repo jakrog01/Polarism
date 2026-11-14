@@ -55,6 +55,7 @@ For pulsed Gaussian studies:
 | `single` | one effective active reservoir is enough for the physics you want to resolve | cleanest baseline model |
 | `double` | you need to separate inactive and active reservoir populations | adds inter-reservoir transfer timescales and more stiffness risk |
 | `quadratic-double` | you model pulsed nonresonant excitation with delayed inactive-to-active feeding | uses `kappa*nI^2` transfer and can retain pulse-train memory |
+| `none` | you model condensate evolution without an incoherent reservoir | no reservoir state or result datasets; the incoherent pump has no effect |
 
 ## Solver method
 
@@ -70,6 +71,14 @@ For pulsed Gaussian studies:
 | `etd-rk2` | second-order exponential time differencing on a periodic grid | periodic only; second-order midpoint reservoir coupling; does not evaluate `kinetic_relaxation_eta` |
 | `ip-rk4` | spectral-style RK4 reference | requires `periodic`; stage-coupled reservoir; for GPU production use `ifrk4-fft-cuda` |
 
+## Dispersion and extra terms
+
+| Option | Use when | Notes |
+| --- | --- | --- |
+| `physics.dispersion = "parabolic"` | the standard effective-mass kinetic energy is enough | default; accepted by every solver |
+| `physics.dispersion = <plugin name>` | you need another E(k) | only `split-step-fft`, `ip-rk4`, and `etd-rk2`; see [Dispersion plugins](../plugins/dispersion.md) |
+| `terms = {<name>: {...}}` | you need an extra loss, nonlinearity, or energy shift | only `rk4-fdm`, `split-step-fft`, `ip-rk4`, and `etd-rk2`; see [Term plugins](../plugins/terms.md) |
+
 ## RK4 CUDA Laplacian
 
 | Option | Use when | Notes |
@@ -82,8 +91,8 @@ For pulsed Gaussian studies:
 | Option | Use when | Notes |
 | --- | --- | --- |
 | `legacy_positive_uniform` | you need to reproduce old runs | biased positive-uniform complex seed |
-| `complex_gaussian_zero_mean` | you want an unbiased stochastic seed | no spectral cutoff |
-| `filtered_complex_gaussian` | you want an explicit condensate-band seed cutoff | requires `init_k_cutoff_um`; report/sweep the cutoff |
+| `complex_gaussian_zero_mean` | you want an unbiased stochastic seed (default) | no spectral cutoff |
+| `filtered_complex_gaussian` | you want an explicit condensate-band seed cutoff | requires `noise.initial_k_cutoff_um`; report/sweep the cutoff |
 
 ## Backend choice
 

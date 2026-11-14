@@ -1,7 +1,7 @@
 # Plugins
 
-A plugin is a Python module that registers a laser, potential, reservoir,
-solver, grid, absorption strategy, storage format, or observable under a configuration name. Start with
+A plugin is a Python module that registers a laser, potential, initial condition, reservoir,
+solver, extra term, dispersion, grid, absorption strategy, storage format, or observable under a configuration name. Start with
 [Your first plugin](first-plugin.md) for a complete run before using the
 component-specific contracts below.
 
@@ -11,6 +11,8 @@ component-specific contracts below.
   Subdirectories are allowed and `__init__.py` files are optional.
 - `load_plugins()` recursively visits those files in sorted path order and
   imports each one. The decorators run during import.
+- Plugin modules can declare `POLARISM_PLUGIN_API = 2`. A declared value that
+  differs from Polarism's `PLUGIN_API` is rejected during loading.
 - `SimulationController` loads plugins during construction; the `polarism`
   CLI loads them before parsing flags. You can call `load_plugins(root)` to
   import from another project's root. It returns imported module names, or
@@ -27,9 +29,12 @@ component-specific contracts below.
 | Component | Decorator import | Selection field | Factory call |
 | --- | --- | --- | --- |
 | [Laser](lasers.md) | `polarism.laser.register_laser` | `cfg.laser.laser_type` | `LaserClass(laser_config, X, Y, precision)` |
-| [Potential](potentials.md) | `polarism.potential.register_potential` | `cfg.potential.potential_type` | `potential_fn(grid.X, grid.Y, potential_config)` |
+| [Potential](potentials.md) | `polarism.potential.register_potential` | `cfg.potential.potential_type` | `potential_fn(X, Y, potential_config)` |
+| [Initial condition](initial-conditions.md) | `polarism.initial_condition.register_initial_condition` | `cfg.initial_condition.type` | `condition_fn(grid, initial_condition_config, xp, cdtype)` |
 | [Reservoir](reservoirs.md) | `polarism.reservoir.register_reservoir` | `cfg.reservoir.reservoir_type` | `ReservoirClass(reservoir_config, physics, grid, precision)` |
-| [Solver](solvers.md) | `polarism.solver.register_solver` | `cfg.solver.method` | `SolverClass(config, grid)` |
+| [Solver](solvers.md) | `polarism.solver.register_solver` | `cfg.solver.method` | `SolverClass(config, grid, model)` |
+| [Term](terms.md) | `polarism.model_terms.register_term` | keys of `cfg.terms` | `TermClass(params, grid, physics)` |
+| [Dispersion](dispersion.md) | `polarism.dispersion.register_dispersion` | `cfg.physics.dispersion` | `DispersionClass()` |
 | [Grid](grids.md) | `polarism.grid.register_grid` | `cfg.grid.grid_type` | `GridClass(grid_config)` |
 | [Absorption](absorption.md) | `polarism.boundary_conditions.absorption.register_absorption` | `cfg.boundary_condition.absorption` | `StrategyClass(grid, boundary_config, physics)` |
 | [Storage format](storage.md) | `polarism.results.storage.register_storage` | `cfg.result.formats` | `StorageClass(output_dir, batch_size, config, x, y)` |
@@ -42,13 +47,15 @@ In `multiple` laser mode, the factory calls the same laser constructor once per 
 1. `SimulationController` configures NumPy or CuPy, loads plugins, validates
    the config, and checks known solver compatibility rules.
 2. It creates the grid, boundary absorption strategy, potential, lasers,
-   `PumpField`, reservoir, `SimulationState`, and solver, in that order.
+   `PumpField`, reservoir, `SimulationState`, `Model` (with the configured extra
+   terms and dispersion), and solver, in that order.
 3. It adds the strategy's `get_potential_distribution()` to the external
    potential. If outputs are enabled or a visitor is added, it builds result nodes; the reservoir's
    `make_result_nodes()` contributes optional nodes.
-4. During a run, the controller calls `solver.advance(...)` for chunks between
-   output samples. The inherited `advance()` calls `step(...)` repeatedly and
-   updates `state.t` after each step.
+4. During a run, the controller calls `solver.advance(model, state, n_steps)`
+   for chunks between output samples. The inherited `advance()` calls
+   `step(model, state, dt)` repeatedly; each accepted step updates `state.step`
+   and `state.t`.
 5. A solver samples the callable pump at its stage times, advances the
    condensate and reservoir, and applies the boundary after-step action when
    its method requires it. The controller records results at configured times.
@@ -59,7 +66,7 @@ In `multiple` laser mode, the factory calls the same laser constructor once per 
 
 ## Array and parameter rules
 
-Use `compute_engine.xp` or an initialized `self.xp` so arrays stay on NumPy or CuPy as selected. `real_dtype(xp, precision)` and `complex_dtype(xp, precision)` in `polarism.config.dtype_utils` map `single` to float32/complex64 and `double` to float64/complex128. Fields use `(grid.ny, grid.nx)`; use that shape for pump, potential, reservoir, and wavefunction arrays. Avoid CPU transfers inside per-step methods on GPU runs.
+Use `compute_engine.xp` or an initialized `self.xp` so arrays stay on NumPy or CuPy as selected. `real_dtype(xp, precision)` and `complex_dtype(xp, precision)` in `polarism.config.dtype_utils` map `single` to float32/complex64 and `double` to float64/complex128. Spatial fields use `grid.shape`: `(nx,)` in 1D and `(ny, nx)` in 2D. Solvers and reservoirs use canonical `(B, 1, *grid.shape)` arrays. Potential and laser factories pass `Y = zeros_like(X)` in 1D. Avoid CPU transfers inside per-step methods on GPU runs.
 
 `LaserParameters`, `GridParameters`, and `ReservoirParameters` have an `extra` dictionary. In multiple-laser YAML, unknown keys are merged into each laser's `extra`, alongside top-level `laser.extra` and an explicit entry-level `extra` mapping. These free-form keys are not individual CLI flags. Other configuration blocks do not have `extra`; use their existing fields or a component's own Python setup.
 

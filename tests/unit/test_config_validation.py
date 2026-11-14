@@ -10,7 +10,7 @@ from polarism.solver.solver_compatibility import SolverCompatibilityError, check
 from tests.unit.conftest import small_config
 
 
-@pytest.mark.parametrize("path,value", [("solver__dt", 0.0), ("solver__total_time", 0.0), ("solver__precision", "quad"), ("physics__gamma_C", -1.0), ("physics__init_mode", "foobar"), ("boundary_condition__mask_width_percent", 0.6), ("laser__power_definition", "foo")])
+@pytest.mark.parametrize("path,value", [("solver__dt", 0.0), ("solver__total_time", 0.0), ("solver__precision", "quad"), ("physics__gamma_C", -1.0), ("noise__initial", "foobar"), ("boundary_condition__mask_width_percent", 0.6), ("laser__power_definition", "foo")])
 def test_validate_config_rejects_invalid_values(path: str, value) -> None:
     cfg = small_config(**{path: value})
     with pytest.raises(ConfigValidationError, match=path.replace("__", ".").split(".")[-1]):
@@ -18,8 +18,8 @@ def test_validate_config_rejects_invalid_values(path: str, value) -> None:
 
 
 def test_filtered_mode_requires_cutoff() -> None:
-    cfg = small_config(physics__init_mode="filtered_complex_gaussian", physics__init_k_cutoff_um=None)
-    with pytest.raises(ConfigValidationError, match="init_k_cutoff_um"):
+    cfg = small_config(noise__initial="filtered_complex_gaussian", noise__initial_k_cutoff_um=None)
+    with pytest.raises(ConfigValidationError, match="initial_k_cutoff_um"):
         validate_config(cfg)
 
 

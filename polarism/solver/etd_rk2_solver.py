@@ -5,10 +5,9 @@ import math
 from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.config.dtype_utils import complex_dtype
-from polarism.config.batch_physics import BatchPhysics
 from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
-from polarism.solver.abstract_solver import AbstractSolver
+from polarism.solver.abstract_solver import AbstractSolver, ACCEPTED, SolverCapabilities
 from polarism.solver.solver_registry import register_solver
 
 if TYPE_CHECKING:
@@ -17,7 +16,7 @@ if TYPE_CHECKING:
 
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
 
 # The direct phi formulas lose about eps/|z|**2 to cancellation, so small |z|
@@ -29,10 +28,23 @@ _PHI_TAYLOR_TERMS = 10
 @register_solver("etd-rk2")
 class ETDRK2Solver(AbstractSolver):
     """Solve the model with ETD-RK2."""
-    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None):
+    capabilities = SolverCapabilities(
+        components=frozenset({1}), ndim=frozenset({1, 2}),
+        grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
+        custom_reservoirs="quantitative", potential=True,
+        kinetic_relaxation=False, dispersion=frozenset({"*"}),
+        coherent_drive=True, time_dependent_potential=True,
+        noise=frozenset({"none", "wigner"}),
+        quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
+        description='ETD-RK2 spectral solver. FFT-only, periodic grid only. Reservoir advanced between predictor and corrector using a midpoint condensate estimate (psi_n + a)/2, giving O(dt²) psi↔reservoir coupling (measured p≈2.00 on quadratic-double, per convergence study). Does not evaluate kinetic_relaxation_eta.',
+    )
+    def __init__(self, config: Config, grid: SimulationGrid, model):
         """Set up the etdrk 2 solver."""
-        super().__init__(config)
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
+        super().__init__(config, grid, model)
+        self._has_drive = model.drive is not None
+        self._time_dependent_potential = model.time_dependent_potential
+        self._fft = self.xp.fft.fft if grid.ndim == 1 else self.xp.fft.fft2
+        self._ifft = self.xp.fft.ifft if grid.ndim == 1 else self.xp.fft.ifft2
         dt = self.config.solver.dt
         hbar = self.batch_physics.get("hbar")
         m_eff = self.batch_physics.get("m_eff")
@@ -47,7 +59,10 @@ class ETDRK2Solver(AbstractSolver):
                 f"Consider using 'rk4-fdm' solver for non-periodic grids.",
                 UserWarning,
             )
-        self._L = -1j * hbar * grid.k_squared / (2 * m_eff)
+        if model.dispersion.kind == "parabolic":
+            self._L = -1j * hbar * grid.k_squared / (2 * m_eff)
+        else:
+            self._L = -1j * model.dispersion.energy(grid, self.batch_physics) / hbar
         L_dt = self._L * dt
 
         # Coefficients are evaluated in float64, then stored in solver precision.
@@ -98,40 +113,52 @@ class ETDRK2Solver(AbstractSolver):
 
         return (-1j / hbar) * eff_energy * psi + gain_loss * psi
 
-    def step(
-        self,
-        potential: Union[np.ndarray, cp.ndarray],
-        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
-        reservoir: AbstractReservoir,
-        boundary_condition: BoundaryCondition,
-        state: SimulationState,
-    ) -> None:
+    def step(self, model, state, dt):
         """Advance the solver by one time step."""
-        self.batch_physics.check(state.psi)
+        potential = model.potential
+        pump = model.pump
+        reservoir = model.reservoir
+        boundary_condition = model.boundary
+        self.batch_physics.check(state.field)
         dt = self.config.solver.dt
 
         res_state = reservoir.get_state()
         nR = reservoir.get_active_density(res_state)
         nI = reservoir.get_inactive_density(res_state)
 
-        psi_k = self.xp.fft.fft2(state.psi)
+        psi_k = self._fft(state.field)
 
-        N_n = self._nonlinear_rhs(state.psi, nR, nI, potential)
-        N_n_k = self.xp.fft.fft2(N_n)
+        if self._time_dependent_potential:
+            potential = model.potential_at(state.t)
+        N_n = self._nonlinear_rhs(state.field, nR, nI, potential)
+        if model.terms:
+            N_n = N_n + model.extra_rhs(state.field, res_state, state.t)
+        if self._has_drive:
+            N_n = N_n + model.drive_contribution(state.field, state.t)
+        N_n_k = self._fft(N_n)
 
         a_k = self._exp_L * psi_k + self._phi1 * N_n_k * dt
-        a = self.xp.fft.ifft2(a_k)
+        a = self._ifft(a_k)
 
-        psi_mid = (state.psi + a) / 2
+        psi_mid = (state.field + a) / 2
         reservoir.step(dt, psi_mid, evaluate_pump(pump, state.t + 0.5 * dt))
         res_new = reservoir.get_state()
         nR_new = reservoir.get_active_density(res_new)
         nI_new = reservoir.get_inactive_density(res_new)
 
+        if self._time_dependent_potential:
+            potential = model.potential_at(state.t + dt)
         N_a = self._nonlinear_rhs(a, nR_new, nI_new, potential)
-        N_a_k = self.xp.fft.fft2(N_a)
+        if model.terms:
+            N_a = N_a + model.extra_rhs(a, res_new, state.t + dt)
+        if self._has_drive:
+            N_a = N_a + model.drive_contribution(a, state.t + dt)
+        N_a_k = self._fft(N_a)
 
         psi_new_k = a_k + self._phi2 * (N_a_k - N_n_k) * dt
-        state.psi = self.xp.fft.ifft2(psi_new_k)
+        state.field = self._ifft(psi_new_k)
 
-        state.psi = boundary_condition.after_step_action(state.psi)
+        state.field = boundary_condition.after_step_action(state.field)
+        state.step += 1
+        state.t = state.t0 + state.step * dt
+        return ACCEPTED

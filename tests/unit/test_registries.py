@@ -24,7 +24,7 @@ def test_unknown_registry_identifier_lists_available_entries(family: str) -> Non
     with pytest.raises(ValueError, match="Available") as exc:
         if family == "solver":
             registry = available_solvers
-            create_solver(small_config(solver__method="missing"), g)
+            available_solvers.lookup("missing")
         elif family == "laser":
             registry = available_lasers
             LaserFactory.create_laser(LaserParameters(laser_type="missing"), g.X, g.Y)

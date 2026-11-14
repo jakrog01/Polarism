@@ -3,10 +3,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Union
 
-from polarism.config.batch_physics import BatchPhysics
 from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
-from polarism.solver.abstract_solver import AbstractSolver
+from polarism.solver.abstract_solver import AbstractSolver, ACCEPTED, SolverCapabilities
 from polarism.solver.solver_registry import register_solver
 
 if TYPE_CHECKING:
@@ -15,22 +14,31 @@ if TYPE_CHECKING:
 
     from polarism.boundary_conditions.boundary_condition import BoundaryCondition
     from polarism.config.simulation_parameters import Config
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
     from polarism.reservoir.abstract_reservoir import AbstractReservoir
 
 
 @register_solver("rk4-fdm-fused")
 class RK4FDMFusedSolver(AbstractSolver):
+    capabilities = SolverCapabilities(
+        components=frozenset({1}), ndim=frozenset({1, 2}),
+        grid_types=frozenset({"periodic", "closed-interval"}), reservoirs=frozenset({"single", "double", "quadratic-double"}),
+        custom_reservoirs="quantitative", potential=True,
+        kinetic_relaxation=True, dispersion=frozenset({"parabolic"}), terms=False,
+        coherent_drive=False, time_dependent_potential=False,
+        noise=frozenset({"none", "wigner"}),
+        quantitative_reservoirs=frozenset({"single", "double", "quadratic-double"}),
+        description='Optimized FDM RK4 with pre-allocated buffers. Stage-coupled reservoir; numerically equivalent to rk4-fdm.',
+    )
 
     """Solve the model with fused finite-difference RK4."""
-    def __init__(self, config: Config, grid: SimulationGrid2D, batch_physics=None):
+    def __init__(self, config: Config, grid: SimulationGrid, model):
         """Set up the fused RK4 solver."""
-        super().__init__(config)
-        self.batch_physics = BatchPhysics(config.physics, batch_physics, self.xp, getattr(config.solver, "precision", "double"))
+        super().__init__(config, grid, model)
         self.dx = grid.dx
-        self.dy = grid.dy
+        self.dy = grid.dy if grid.ndim == 2 else None
         self.nx = grid.nx
-        self.ny = grid.ny
+        self.ny = grid.ny if grid.ndim == 2 else None
         self.grid_type = grid.boundary
 
         self._hbar = self.batch_physics.get("hbar")
@@ -43,7 +51,7 @@ class RK4FDMFusedSolver(AbstractSolver):
         self._dt = config.solver.dt
 
         self._inv_dx2 = 1.0 / (self.dx**2)
-        self._inv_dy2 = 1.0 / (self.dy**2)
+        self._inv_dy2 = 1.0 / (self.dy**2) if self.dy is not None else None
         self._kinetic_coeff = -(self._hbar**2) / (2.0 * self._m_eff)
         self._minus_i_over_hbar = -1j / self._hbar
         self._kinetic_relaxation_eta = self.batch_physics.get("kinetic_relaxation_eta")
@@ -119,6 +127,10 @@ class RK4FDMFusedSolver(AbstractSolver):
 
     def _laplacian_periodic(self, psi, out) -> None:
         """Apply the periodic Laplacian stencil."""
+        if self.dy is None:
+            out[:] = (self.xp.roll(psi, -1, axis=-1) - 2 * psi
+                      + self.xp.roll(psi, 1, axis=-1)) * self._inv_dx2
+            return
         inv_dx2 = self._inv_dx2
         inv_dy2 = self._inv_dy2
         xp = self.xp
@@ -130,6 +142,12 @@ class RK4FDMFusedSolver(AbstractSolver):
 
     def _laplacian_closed_interval_neumann(self, psi, out) -> None:
         """Apply the closed-interval Neumann Laplacian stencil."""
+        if self.dy is None:
+            out[..., 1:-1] = (psi[..., 2:] - 2 * psi[..., 1:-1]
+                              + psi[..., :-2]) * self._inv_dx2
+            out[..., 0] = 2 * (psi[..., 1] - psi[..., 0]) * self._inv_dx2
+            out[..., -1] = 2 * (psi[..., -2] - psi[..., -1]) * self._inv_dx2
+            return
         inv_dx2 = self._inv_dx2
         inv_dy2 = self._inv_dy2
         out.fill(0)
@@ -206,27 +224,24 @@ class RK4FDMFusedSolver(AbstractSolver):
             out=self._psi_next,
         )
 
-    def step(
-        self,
-        potential: Union[np.ndarray, cp.ndarray],
-        pump: Callable[[float], Union[np.ndarray, cp.ndarray]],
-        reservoir: AbstractReservoir,
-        boundary_condition: BoundaryCondition,
-        state: SimulationState,
-    ) -> None:
+    def step(self, model, state, dt):
         """Advance the solver by one time step.
 
-        Note: ``state.psi`` is rebound to an internal buffer that is overwritten
+        Note: ``state.field`` is rebound to an internal buffer that is overwritten
         on the next call. Consumers that need to persist ``psi`` across steps
         must copy it.
         """
-        self.batch_physics.check(state.psi)
+        potential = model.potential
+        pump = model.pump
+        reservoir = model.reservoir
+        boundary_condition = model.boundary
+        self.batch_physics.check(state.field)
         dt = self._dt
         t = state.t
         p0 = evaluate_pump(pump, t)
         p_half = evaluate_pump(pump, t + 0.5 * dt)
         p1 = evaluate_pump(pump, t + dt)
-        psi0 = state.psi
+        psi0 = state.field
         self._ensure_buffers(psi0)
 
         res0 = reservoir.get_state()
@@ -262,12 +277,15 @@ class RK4FDMFusedSolver(AbstractSolver):
 
         dt6 = dt / 6.0
         self._combine_rk4_into(psi0, dt6)
-        state.psi = self._psi_next
+        state.field = self._psi_next
 
-        state.psi = boundary_condition.after_step_action(state.psi)
+        state.field = boundary_condition.after_step_action(state.field)
 
         res_new = tuple(
             r0 + dt6 * (k1 + 2 * k2 + 2 * k3 + k4)
             for r0, k1, k2, k3, k4 in zip(res0, k1_res, k2_res, k3_res, k4_res)
         )
         reservoir.set_state(res_new)
+        state.step += 1
+        state.t = state.t0 + state.step * dt
+        return ACCEPTED

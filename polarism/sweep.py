@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from itertools import product
-from dataclasses import asdict
-from copy import deepcopy
+from dataclasses import asdict, replace
+from copy import copy, deepcopy
 import json
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -16,6 +17,7 @@ from polarism.simulation_controller import SimulationController
 from polarism.results.reader import load_results
 from polarism.results.visitors.storage_visitor import create_run_directory
 from polarism.sweep_config import apply_overrides, override_kind
+from polarism.noise.stochastic import draw_seed
 
 
 def autotune_batch_size(limit, timer, *, max_steps=16384, initial_steps=8):
@@ -88,7 +90,8 @@ def _config_signature(cfg):
     """Capture settings that determine stored simulation frames."""
     data = asdict(cfg)
     return {name: data[name] for name in ("grid", "solver", "reservoir", "physics",
-                                         "laser", "potential", "boundary_condition",
+                                         "terms", "initial_condition", "laser", "potential", "drive",
+                                         "boundary_condition", "stop",
                                          "compute_engine")}
 
 
@@ -103,6 +106,7 @@ class Sweep:
 
     def __init__(self, cfg, parameters, mode="product"):
         load_plugins()
+        self._requested_cfg = cfg
         if mode not in {"product", "zip"}:
             raise ValueError("mode must be 'product' or 'zip'")
         if not isinstance(parameters, dict):
@@ -141,7 +145,7 @@ class Sweep:
         probe_cfg.result.real_time_view = False
         probe_cfg.result.animate = False
         probe_cfg.result.view_member = 0
-        probe_cfg.checkpoint.every_steps = 0
+        probe_cfg.checkpoint.every = 0
         probe_cfg.checkpoint.path = None
         probe_cfg.checkpoint.resume_from = None
         count = len(overrides)
@@ -161,7 +165,7 @@ class Sweep:
         else:
             bytes_per_member = max(measured, sum(_array_bytes(item) for item in
                                    (probe.solver, probe.state, probe.reservoir)))
-            bytes_per_member += probe.grid.nx * probe.grid.ny * (32 if cfg.solver.precision == "double" else 16)
+            bytes_per_member += math.prod(probe.grid.shape) * (32 if cfg.solver.precision == "double" else 16)
         del probe
         limit = min(count, max(1, int(free * settings.memory_fraction // max(1, bytes_per_member))))
         if settings.max_batch is not None:
@@ -170,12 +174,13 @@ class Sweep:
         if isinstance(device, bytes):
             device = device.decode()
         names = sorted(key for member in overrides for key in member
-                       if key.startswith("physics.") and key not in
-                       {"physics.init_seed", "physics.init_mode", "physics.init_k_cutoff_um", "physics.init_eps"})
+                       if key.startswith("physics.") or key in {"noise.seed", "noise.initial",
+                       "noise.initial_amplitude", "noise.initial_k_cutoff_um", "noise.stochastic_strength"})
         pump_kind = cfg.laser.laser_type if cfg.laser.mode == "single" else "multiple"
-        cache_key = json.dumps([device, cfg.solver.method, [cfg.grid.ny, cfg.grid.nx],
+        cache_key = json.dumps([device, cfg.solver.method, [cfg.grid.nx] if cfg.grid.ndim == 1 else [cfg.grid.ny, cfg.grid.nx],
                                 cfg.solver.precision, cfg.reservoir.reservoir_type,
-                                sorted(set(names)), pump_kind])
+                                sorted(set(names)), pump_kind, cfg.noise.enabled,
+                                cfg.noise.stochastic])
         cache_file = _cache_file()
         try:
             cache = json.loads(cache_file.read_text())
@@ -191,12 +196,11 @@ class Sweep:
         def timer(size, steps):
             controller = SimulationController(probe_cfg, members=overrides[:size])
             solver = controller.solver
-            args = (controller.potential, controller.pump_field, controller.reservoir,
-                    controller.boundary_condition, controller.state)
-            solver.advance(*args, 0, steps)
+            args = (controller.model, controller.state)
+            solver.advance(*args, steps)
             cp.cuda.Stream.null.synchronize()
             start = time.perf_counter()
-            solver.advance(*args, steps, steps)
+            solver.advance(*args, steps)
             cp.cuda.Stream.null.synchronize()
             return max(time.perf_counter() - start, 1e-12)
 
@@ -214,11 +218,21 @@ class Sweep:
 
         checkpoint = self.cfg.checkpoint
         source = resume or checkpoint.resume_from
+        self.cfg = copy(self._requested_cfg)
+        self.cfg.noise = replace(self.cfg.noise)
+        if self.cfg.noise.seed is None:
+            if source:
+                saved_manifest = json.loads((Path(source) / "sweep.json").read_text())
+                self.cfg.noise.seed = int(saved_manifest["seed"])
+            else:
+                self.cfg.noise.seed = draw_seed()
+        member_seeds = [self.cfg.noise.seed if member.get("noise.seed") is None
+                        else int(member["noise.seed"]) for member in self.members]
         output = self.cfg.result.save_results
         if output and not (self.cfg.result.formats or self.cfg.result.save_hdf5
                            or self.cfg.result.save_npy or self.cfg.result.save_json):
             raise ValueError("sweep output requires at least one storage format")
-        checkpoint_enabled = bool(checkpoint.every_steps or checkpoint.path or source)
+        checkpoint_enabled = bool(checkpoint.every or checkpoint.path or source)
         run_dir = Path(source) if source else (
             create_run_directory(self.cfg.result.output_directory)
             if output or checkpoint_enabled else None
@@ -258,7 +272,9 @@ class Sweep:
                             "mode": self.mode, "parameter_keys": list(self.members[0]),
                             "parameters": self.members, "members": mapping,
                             "batches": planned, "batch_sizes": [batch["size"] for batch in planned],
-                            "config_signature": _config_signature(self.cfg)}
+                            "config_signature": _config_signature(self.cfg),
+                            "seed": self.cfg.noise.seed,
+                            "member_seeds": member_seeds}
                 manifest_path.write_text(json.dumps(manifest, indent=2, default=_json_value))
 
         results = [None] * len(self.members)
@@ -297,7 +313,8 @@ class Sweep:
                 (batch_dir / "complete").touch()
             if not output:
                 psi = controller.state.psi
-                fields = controller.reservoir.get_state()
+                fields = tuple(field[:, 0] if controller.state.batched else field[0, 0]
+                               for field in controller.reservoir.get_state())
                 for position, index in enumerate(indices):
                     member_psi = psi[position] if len(local) > 1 else psi
                     member_fields = tuple(field[position] if len(local) > 1 else field

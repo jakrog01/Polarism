@@ -7,7 +7,7 @@ from polarism.config.batch_physics import BatchPhysics
 from polarism.compute_engine import compute_engine
 from polarism.config.dtype_utils import real_dtype
 from polarism.config.simulation_parameters import PhysicsConstants, ReservoirParameters
-from polarism.grid.simulation_grid_2d import SimulationGrid2D
+from polarism.grid.simulation_grid import SimulationGrid
 from polarism.reservoir.abstract_reservoir import AbstractReservoir
 from polarism.reservoir.laplacian import real_laplacian
 from polarism.reservoir.reservoir_registry import register_reservoir
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 @register_reservoir("double")
 class DoubleReservoir(AbstractReservoir, ResultProvider):
+    state_names = ("nA", "nI")
     """Model coupled active and inactive reservoirs."""
     config: ReservoirParameters
     R: float
@@ -40,14 +41,14 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         self,
         reservoir_config: ReservoirParameters,
         physics: PhysicsConstants,
-        grid: SimulationGrid2D,
+        grid: SimulationGrid,
         precision: str = "double",
         batch_physics=None,
     ):
         """Set up the double reservoir."""
         self.xp = compute_engine.xp
         self.config = reservoir_config
-        self.batch_physics = BatchPhysics(physics, batch_physics, self.xp, precision)
+        self.batch_physics = BatchPhysics(physics, batch_physics, self.xp, precision, ndim=grid.ndim)
         self.R = self.batch_physics.get("R")
         self.gamma_I = self.batch_physics.get("gamma_I")
         self.gamma_A = self.batch_physics.get("gamma_A")
@@ -56,18 +57,20 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         self.reservoir_diffusion_I = self.batch_physics.get("reservoir_diffusion_I")
         self.reservoir_diffusion_A = self.batch_physics.get("reservoir_diffusion_A")
         self.dx = grid.dx
-        self.dy = grid.dy
+        self.dy = grid.dy if grid.ndim == 2 else None
         self.grid_type = grid.boundary
-        self._spatial_shape = (grid.ny, grid.nx)
+        self._spatial_shape = grid.shape
+        self._batched = False
         rdtype = real_dtype(self.xp, precision)
-        self.nI = self.xp.zeros((grid.ny, grid.nx), dtype=rdtype)
-        self.nA = self.xp.zeros((grid.ny, grid.nx), dtype=rdtype)
+        self.nI = self.xp.zeros((1, 1, *grid.shape), dtype=rdtype)
+        self.nA = self.xp.zeros((1, 1, *grid.shape), dtype=rdtype)
 
     def reset(self, batch_size: int | None = None) -> None:
         """Reset zero density fields, optionally with a leading batch axis."""
         if batch_size is not None and (isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1):
             raise ValueError("batch_size must be a positive integer")
-        shape = self._spatial_shape if batch_size is None else (batch_size, *self._spatial_shape)
+        self._batched = batch_size is not None
+        shape = (1 if batch_size is None else batch_size, 1, *self._spatial_shape)
         self.nA = self.xp.zeros(shape, dtype=self.nA.dtype)
         self.nI = self.xp.zeros(shape, dtype=self.nI.dtype)
 
@@ -81,6 +84,7 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
         self, state: tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]]
     ) -> None:
         """Set the current state."""
+        self._check_state_shape(state, self.nA.shape)
         self.nA = self.xp.maximum(state[0], 0).astype(self.nA.dtype, copy=False)
         self.nI = self.xp.maximum(state[1], 0).astype(self.nI.dtype, copy=False)
 
@@ -107,6 +111,7 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
     ) -> tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]]:
         """Return the reservoir time derivatives."""
         self.batch_physics.check(psi)
+        self._check_state_shape(state, psi.shape)
         nA, nI = state
         abs_psi2 = rho if rho is not None else psi.real * psi.real + psi.imag * psi.imag
 
@@ -138,13 +143,13 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
 
     def get_reservoir_density(self) -> Union[np.ndarray, cp.ndarray]:
         """Return the total reservoir density."""
-        return self.nA
+        return self._public_density(self.nA)
 
     def get_reservoir_densities(
         self,
     ) -> tuple[Union[np.ndarray, cp.ndarray], Union[np.ndarray, cp.ndarray]]:
         """Return the active and inactive reservoir densities."""
-        return self.nA, self.nI
+        return self._public_density(self.nA), self._public_density(self.nI)
 
     def make_result_nodes(self) -> list[ResultNode]:
         """Build the result nodes exposed by this object."""
@@ -153,7 +158,7 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
             nodes.append(
                 ResultNode(
                     "nA",
-                    compute_fn=lambda **ctx: self.nA,
+                    compute_fn=lambda **ctx: self._public_density(self.nA),
                     reduce_dim_fn=lambda f: float(f.max()),
                     cmap="viridis",
                     scaling=None,
@@ -167,7 +172,7 @@ class DoubleReservoir(AbstractReservoir, ResultProvider):
             nodes.append(
                 ResultNode(
                     "nI",
-                    compute_fn=lambda **ctx: self.nI,
+                    compute_fn=lambda **ctx: self._public_density(self.nI),
                     reduce_dim_fn=lambda f: float(f.max()),
                     cmap="plasma",
                     scaling=None,

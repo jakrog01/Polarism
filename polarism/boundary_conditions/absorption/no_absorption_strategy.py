@@ -18,7 +18,7 @@ if TYPE_CHECKING:
         BoundaryConditionParameters,
         PhysicsConstants,
     )
-    from polarism.grid.simulation_grid_2d import SimulationGrid2D
+    from polarism.grid.simulation_grid import SimulationGrid
 
 
 @register_absorption("no-absorption")
@@ -28,7 +28,7 @@ class NoAbsorptionStrategy(AbsorptionStrategy):
 
     def __init__(
         self,
-        grid: SimulationGrid2D | None,
+        grid: SimulationGrid | None,
         absorption_cfg: BoundaryConditionParameters | None,
         physics_constants: PhysicsConstants | None,
     ):

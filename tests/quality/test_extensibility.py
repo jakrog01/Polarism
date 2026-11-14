@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from polarism.boundary_conditions.absorption.absorption_registry import available_absorptions, register_absorption
 from polarism.boundary_conditions.absorption.absorption_strategy import AbsorptionStrategy

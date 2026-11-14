@@ -13,7 +13,7 @@ from polarism.config.simulation_parameters import (
     BoundaryConditionParameters,
     PhysicsConstants,
 )
-from polarism.grid.simulation_grid_2d import SimulationGrid2D
+from polarism.grid.simulation_grid import SimulationGrid
 
 
 
@@ -27,17 +27,17 @@ class AbsorptionMaskStrategy(AbsorptionStrategy):
     splitting, so it limits the solver to first order in time; prefer ``cap``
     for quantitative runs.
     """
-    grid: SimulationGrid2D
+    grid: SimulationGrid
     absorption_cfg: BoundaryConditionParameters
 
     def __init__(
         self,
-        grid: SimulationGrid2D,
+        grid: SimulationGrid,
         absorption_cfg: BoundaryConditionParameters,
         physics_constants: PhysicsConstants | None = None
     ):
         """Set up the absorption mask strategy."""
-        self.absorption_profile = create_absorption_profile(grid.ny, grid.nx, absorption_cfg)
+        self.absorption_profile = create_absorption_profile(grid.shape, absorption_cfg)
         self.strength = absorption_cfg.strength
         self.mask = None
 

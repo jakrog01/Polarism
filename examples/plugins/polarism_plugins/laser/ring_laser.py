@@ -19,3 +19,5 @@ class RingLaser(AbstractLaser):
 
     def _P_time(self, t):
         return 1.0
+
+POLARISM_PLUGIN_API = 2

@@ -105,16 +105,12 @@ def _pulse_response_error(dt: float) -> tuple[float, SimulationController]:
     controller.state.psi.fill(0.0)
     squared_error = 0.0
     squared_reference = 0.0
+    source = controller.pump_field
     for step in range(int(cfg.solver.total_time / dt)):
         time = step * dt
-        pump = np.asarray(controller._compute_total_pump(time))
-        controller.solver.step(
-            controller.potential,
-            lambda t: pump,
-            controller.reservoir,
-            controller.boundary_condition,
-            controller.state,
-        )
+        pump = np.asarray(source(time))
+        controller.model.pump = lambda t: pump
+        controller.solver.step(controller.model, controller.state, dt)
         expected = _closed_form_pulse_response(cfg, controller, time + dt)
         squared_error += float(np.linalg.norm(controller.reservoir.nR - expected) ** 2)
         squared_reference += float(np.linalg.norm(expected) ** 2)
@@ -171,13 +167,8 @@ def _reflected_fraction(
     controller.state.psi[:] = initial
     zero_pump = np.zeros_like(controller.grid.X)
     for _ in range(int(total_time / cfg.solver.dt)):
-        controller.solver.step(
-            controller.potential,
-            lambda t: zero_pump,
-            controller.reservoir,
-            controller.boundary_condition,
-            controller.state,
-        )
+        controller.model.pump = lambda t: zero_pump
+        controller.solver.step(controller.model, controller.state, cfg.solver.dt)
     density = np.abs(controller.state.psi) ** 2
     if interior_half_width is not None:
         density = np.where(np.abs(controller.grid.X) <= interior_half_width, density, 0.0)
