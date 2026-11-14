@@ -16,7 +16,7 @@ coefficient enters `d psi / dt`:
 | `"rate"` | `G * psi` | `G` in 1/ps |
 
 ```python
-from polarism.model_terms import Term, register_term
+from polarism.model_terms import CudaSnippet, Term, register_term
 
 POLARISM_PLUGIN_API = 2
 
@@ -24,6 +24,8 @@ POLARISM_PLUGIN_API = 2
 @register_term("nonlinear-loss")
 class NonlinearLoss(Term):
     category = "rate"
+
+    cuda = CudaSnippet("-0.5 * alpha * rho", (("{REAL}", "alpha"),))
 
     def coefficient(self, field, reservoir, reservoir_fields, t):
         return -0.5 * self.params["alpha"] * abs(field) ** 2
@@ -47,6 +49,27 @@ Return a real array broadcastable to `field`, or a scalar. Keep the result in
 the field's precision (for example multiply by Python floats or by
 `self.physics.get(name)`), so single-precision runs stay single precision.
 Several terms are summed in configuration order.
+
+### CUDA expression
+
+`rk4-cuda` requires `Term.cuda` for every configured extra term. The optional
+`CudaSnippet(expression, arguments)` supplies a C expression for the real
+coefficient. `arguments` is a tuple of `(C type, name)` pairs; `{REAL}` in a
+type becomes `float` or `double`. A pointer argument can also specify
+`"shared"` or `"batched"` as a third item. The generator then loads the
+cell's value and makes it available under `name` in the expression. A pair
+with a pointer type leaves the full array available for explicit indexing.
+By default, values come from `self.params`. Override `cuda_values()` to
+provide device arrays or values computed during initialization. Pointer
+arguments receive contiguous device arrays. Scalar arguments accept floating
+point or `int` values.
+
+The expression can use `pre`, `pim`, `rho`, `n_active`, `n_inactive`, `x`, `y`,
+`t_stage`, `member`, and `cell`. The coordinates are in µm. `cell` is the
+spatial index within a member, and `member` is its batch index. The solver
+evaluates the expression at every RK stage and adds it according to the term's
+`category`. A term without a snippet remains usable with the NumPy solvers
+but is rejected for `rk4-cuda` during validation.
 
 ## Configure
 
@@ -80,7 +103,8 @@ solver's own accuracy.
 | `ip-rk4` | yes | added to the nonlinear right-hand side at every stage |
 | `etd-rk2` | yes | added to the nonlinear right-hand side of predictor and corrector |
 | `split-step-fft` | yes | local factor `exp((G - iE/hbar) dt)` at `t + dt/2`, first order in `dt` for field-dependent terms |
-| `rk4-fdm-fused`, `rk4-cuda`, `split-step-fft-cuda`, `ifrk-fft-cuda`, `ifrk4-fft-cuda` | no | rejected at validation |
+| `rk4-cuda` | with a `cuda` snippet | coefficient expression fused into each CUDA RK stage |
+| `rk4-fdm-fused`, `split-step-fft-cuda`, `ifrk-fft-cuda`, `ifrk4-fft-cuda` | no | rejected at validation |
 
 A plugin solver that integrates with `model.rhs` supports terms automatically.
 A solver with its own kernels reads `model.terms` and declares

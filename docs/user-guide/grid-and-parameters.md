@@ -131,6 +131,11 @@ where $z_{re}$ and $z_{im}$ are independent unit normals, $s$ is
 `stochastic_strength`, and $\Delta V$ is `dx` in 1D or `dx dy` in 2D.
 This implementation omits the Wigner energy and reservoir corrections; see
 [Physics Background](../development/physics-background.md#initial-noise-and-stochastic-seeds).
+For `rk4-cuda` with a built-in reservoir, the increment is evaluated in the
+final RK stage from the completed active density. CUDA graphs can replay noisy
+chunks; the global step index is supplied through a device counter base so a
+replay uses fresh Philox counters. Noise uses the staged CUDA kernels rather
+than the whole-step tiled kernel, so measure the cost for your device and grid.
 
 `kinetic_relaxation_eta` enables a phenomenological kinetic-energy relaxation
 term for the condensate.  It defaults to `0.0`.  When enabled it damps high-k

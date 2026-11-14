@@ -19,7 +19,7 @@ CPU_SOLVERS = (
     "rk4-fdm", "rk4-fdm-fused", "rk4-cuda", "split-step-fft",
     "ip-rk4", "etd-rk2", "ifrk-fft-cuda", "ifrk4-fft-cuda",
 )
-NONE_SOLVERS = ("rk4-fdm", "split-step-fft", "ip-rk4", "etd-rk2")
+NONE_SOLVERS = ("rk4-fdm", "rk4-cuda", "split-step-fft", "ip-rk4", "etd-rk2")
 FUSED_SOLVERS = ("rk4-fdm-fused", "rk4-cuda", "split-step-fft-cuda", "ifrk-fft-cuda", "ifrk4-fft-cuda")
 
 
@@ -68,7 +68,7 @@ def test_no_reservoir_gaussian_free_decay(method):
     assert np.isclose(final_norm, expected, rtol=5e-4)
 
 
-@pytest.mark.parametrize("method", FUSED_SOLVERS)
+@pytest.mark.parametrize("method", tuple(method for method in FUSED_SOLVERS if method != "rk4-cuda"))
 def test_fused_solver_rejects_no_reservoir_at_validation(method):
     cfg = config(method, "none")
     with pytest.raises(SolverCompatibilityError, match="reservoir_type='none'"):

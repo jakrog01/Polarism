@@ -51,7 +51,7 @@ drive:
   profile: {type: gaussian, sigma: 10.0}
   envelope: {type: constant}
 solver:
-  method: ip-rk4
+  method: rk4-cuda
   dt: 0.001
   total_time: 10.0
 ```
@@ -59,5 +59,5 @@ solver:
 The profile and envelope use the same [registries](profiles-and-envelopes.md)
 as spatial potentials and profile lasers. `drive` is a static result field
 containing $|F_0p(\mathbf r)e^{i\mathbf k\cdot\mathbf r}|$ when enabled.
-`rk4-fdm`, `ip-rk4`, and `etd-rk2` support coherent drive. Other built-in
+`rk4-fdm`, `rk4-cuda`, `ip-rk4`, and `etd-rk2` support coherent drive. Other built-in
 solvers reject it during compatibility checking.

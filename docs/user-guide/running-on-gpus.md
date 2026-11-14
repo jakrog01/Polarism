@@ -10,6 +10,13 @@ Set `cfg.compute_engine.use_gpu = True`. Use `rk4-cuda` for finite differences o
 and for double precision on GPUs classified as full-rate FP64. Other
 double-precision GPUs use staged kernels. The tiled path also requires enough
 shared memory for a tile. Tiled and staged results agree to rounding level.
+With Wigner noise, `rk4-cuda` uses the staged kernels and adds the increment
+inside the final stage. Graph replay remains available for eligible runs.
+Reservoir-free runs use staged CUDA kernels without reservoir buffers. Extra
+terms, coherent drive, and varying potential use staged CUDA kernels with
+their contributions evaluated at each RK stage. A device coefficient buffer
+holds potential and drive envelopes and stage times, so eligible graph chunks
+can replay with updated values.
 
 `cfg.solver.precision` accepts `single` and `double` and defaults to `double`. The controller emits a one-time notice for double-precision runs on GPUs outside the high-throughput FP64 classes recognized by the code: compute capabilities 6.0 (P100), 7.0 (V100), 8.0 (A100), 9.0 (H100), and 10.0 (B200). Consumer GPUs often have reduced FP64 throughput. Compare accuracy and speed before switching to `single`.
 

@@ -12,21 +12,22 @@ from polarism.dispersion import (
     available_dispersions,
     register_dispersion,
 )
-from polarism.model_terms import available_terms, register_term
+from polarism.model_terms import CudaSnippet, available_terms, register_term
 from polarism.solver.solver_compatibility import SolverCompatibilityError, check_solver_compatibility
 from polarism.sweep import Sweep
 from polarism.sweep_config import apply_overrides, override_kind
 
-TERM_SOLVERS = ("rk4-fdm", "ip-rk4", "etd-rk2", "split-step-fft")
+TERM_SOLVERS = ("rk4-fdm", "rk4-cuda", "ip-rk4", "etd-rk2", "split-step-fft")
 SPECTRAL_SOLVERS = ("split-step-fft", "ip-rk4", "etd-rk2")
-NO_TERM_SOLVERS = ("rk4-fdm-fused", "rk4-cuda", "split-step-fft-cuda", "ifrk-fft-cuda", "ifrk4-fft-cuda")
+NO_TERM_SOLVERS = ("rk4-fdm-fused", "split-step-fft-cuda", "ifrk-fft-cuda", "ifrk4-fft-cuda")
 PARABOLIC_ONLY_SOLVERS = ("rk4-fdm",) + NO_TERM_SOLVERS
-LOSS_RTOL = {"rk4-fdm": 1e-8, "ip-rk4": 1e-8, "etd-rk2": 1e-4, "split-step-fft": 5e-3}
-SHIFT_ATOL = {"rk4-fdm": 1e-8, "ip-rk4": 1e-8, "etd-rk2": 1e-6, "split-step-fft": 1e-8}
+LOSS_RTOL = {"rk4-fdm": 1e-8, "rk4-cuda": 1e-8, "ip-rk4": 1e-8, "etd-rk2": 1e-4, "split-step-fft": 5e-3}
+SHIFT_ATOL = {"rk4-fdm": 1e-8, "rk4-cuda": 1e-8, "ip-rk4": 1e-8, "etd-rk2": 1e-6, "split-step-fft": 1e-8}
 
 
 class NonlinearLoss(Term):
     category = "rate"
+    cuda = CudaSnippet("-0.5 * alpha * rho", (("double", "alpha"),))
 
     def coefficient(self, field, reservoir, reservoir_fields, t):
         return -0.5 * self.params["alpha"] * abs(field) ** 2
@@ -34,6 +35,7 @@ class NonlinearLoss(Term):
 
 class ConstantShift(Term):
     category = "energy"
+    cuda = CudaSnippet("energy", (("double", "energy"),))
 
     def coefficient(self, field, reservoir, reservoir_fields, t):
         return self.params["energy"]
@@ -124,6 +126,20 @@ def test_term_category_is_checked():
 
     with pytest.raises(ValueError, match="category"):
         Misnamed({}, None, None)
+
+
+def test_rk4_cuda_rejects_term_without_cuda_snippet(plugins):
+    class CpuOnly(Term):
+        category = "rate"
+
+        def coefficient(self, field, reservoir, reservoir_fields, t):
+            return 0.0
+
+    register_term("cpu-only")(CpuOnly)
+    cfg = config("rk4-cuda")
+    cfg.terms = {"cpu-only": {}}
+    with pytest.raises(SolverCompatibilityError, match="CUDA snippet"):
+        check_solver_compatibility(cfg)
 
 
 @pytest.mark.parametrize("method", SPECTRAL_SOLVERS)

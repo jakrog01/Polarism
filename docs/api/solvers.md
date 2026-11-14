@@ -53,7 +53,7 @@ code path.
 | --- | --- | --- |
 | `rk4-fdm` | yes | `parabolic` |
 | `rk4-fdm-fused` | no | `parabolic` |
-| `rk4-cuda` | no | `parabolic` |
+| `rk4-cuda` | with a `cuda` snippet | `parabolic` |
 | `split-step-fft` | yes | any registered |
 | `split-step-fft-cuda` | no | `parabolic` |
 | `etd-rk2` | yes | any registered |
@@ -78,7 +78,7 @@ and constant potential envelope use the existing solver arithmetic.
 | `etd-rk2` | yes | yes |
 | `split-step-fft` | no | yes |
 | `rk4-fdm-fused` | no | no |
-| `rk4-cuda` | no | no |
+| `rk4-cuda` | yes | yes |
 | `split-step-fft-cuda` | no | no |
 | `ifrk-fft-cuda`, `ifrk4-fft-cuda` | no | no |
 
@@ -93,8 +93,8 @@ The package includes explicit compatibility checks and warnings. In practice:
 - for `closed-interval` grids use the FDM family: `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`
 - `etd-rk2` advances the reservoir between predictor and corrector using a midpoint condensate estimate, retaining second-order coupling for all supported reservoir types
 - CUDA solvers are meaningful only when the GPU backend is actually active
-- `reservoir_type: none` is supported by `rk4-fdm`, `split-step-fft`,
-  `ip-rk4`, and `etd-rk2` on NumPy or CuPy; fused solvers reject it at validation
+- `reservoir_type: none` is supported by `rk4-fdm`, `rk4-cuda`, `split-step-fft`,
+  `ip-rk4`, and `etd-rk2` on NumPy or CuPy
 
 `split-step-fft-cuda` keeps the wavefunction in Fourier space between steps and
 uses two cuFFT transforms per step. Its local kernel combines two reservoir RK2
