@@ -135,6 +135,10 @@ class BaseStorage(ABC):
         if self.batch_count > 0:
             self.dump_batch()
 
+    def set_stop_times(self, stop_times) -> None:
+        """Optionally write final stop times to backend metadata."""
+        pass
+
     def _clear_buffers(self) -> None:
         """Clear all in-memory buffers."""
         self.time_buffer.clear()

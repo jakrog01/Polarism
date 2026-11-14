@@ -121,3 +121,7 @@ class JSONStorage(BaseStorage):
         if self.batch_count > 0:
             self.dump_batch()
         (self.output_dir / "metadata.json").write_text(json.dumps(self.metadata, sort_keys=True))
+
+    def set_stop_times(self, stop_times) -> None:
+        """Store stop times in the JSON metadata."""
+        self.metadata["stop_time"] = np.asarray(stop_times, dtype=float).tolist()

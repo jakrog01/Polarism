@@ -18,6 +18,7 @@
 | `solver` | time integrator and timestep settings |
 | `result` | storage, visualization, and output cadence |
 | `checkpoint` | periodic checkpoints, restart source, and signal handling |
+| `stop` | steady-state stopping controls |
 | `compute_engine` | CPU/GPU backend selection |
 
 ## Grid options
@@ -190,6 +191,20 @@ only the movie stream, while storage visitors remain fatal by default.
 `every` must be zero or a positive multiple of `solver.dt`, both paths must be nonempty strings
 or `None`, and `on_signal` must be a boolean. A run directory is created even
 when result storage is disabled if periodic checkpointing is enabled.
+
+## Stop options
+
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `steady_state` | stop after two consecutive checks satisfy the convergence rule | `False` |
+| `rtol` | upper bound on relative norm and density L2 changes | `1e-6` |
+| `check_every` | interval between checks in ps; a positive multiple of `solver.dt` when enabled | `10.0` |
+| `min_time` | earliest time in ps at which a stop can be recorded | `0.0` |
+
+`rtol` must be positive and finite; `min_time` must be nonnegative and finite.
+The norm threshold `N < 1e-30` counts as steady at a comparison check.
+See [Stopping early](../user-guide/time-evolution.md#stopping-early) for the
+Python event API and batched stop-time metadata.
 
 ## Compute-engine options
 

@@ -91,7 +91,7 @@ def _config_signature(cfg):
     data = asdict(cfg)
     return {name: data[name] for name in ("grid", "solver", "reservoir", "physics",
                                          "terms", "initial_condition", "laser", "potential",
-                                         "boundary_condition",
+                                         "boundary_condition", "stop",
                                          "compute_engine")}
 
 

@@ -180,6 +180,15 @@ class CheckpointParameters:
 
 
 @dataclass
+class StopParameters:
+    """Control optional steady-state stopping."""
+    steady_state: bool = False
+    rtol: float = 1e-6
+    check_every: float = 10.0
+    min_time: float = 0.0
+
+
+@dataclass
 class SweepParameters:
     """Control sweep batching and GPU memory use."""
     batch_size: int | None = None
@@ -209,6 +218,7 @@ class Config:
         default_factory=ComputeEngineParameters
     )
     checkpoint: CheckpointParameters = field(default_factory=CheckpointParameters)
+    stop: StopParameters = field(default_factory=StopParameters)
     sweep: SweepParameters = field(default_factory=SweepParameters)
 
     @classmethod

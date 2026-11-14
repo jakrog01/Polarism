@@ -227,3 +227,9 @@ class StorageVisitor(ResultVisitor):
         self._raise_error()
         for storage in self.storages:
             storage.flush()
+
+    def set_stop_times(self, stop_times) -> None:
+        """Persist final per-member stop times after all frame writes."""
+        self.flush()
+        for storage in self.storages:
+            storage.set_stop_times(stop_times)

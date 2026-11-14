@@ -8,6 +8,7 @@ from polarism.config.simulation_parameters import (
     NoiseParameters,
     PhysicsConstants,
     PotentialParameters,
+    StopParameters,
     SweepParameters,
 )
 
@@ -20,5 +21,6 @@ __all__ = [
     "PotentialParameters",
     "BoundaryConditionParameters",
     "CheckpointParameters",
+    "StopParameters",
     "SweepParameters",
 ]

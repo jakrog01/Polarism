@@ -115,5 +115,11 @@ class NPYStorage(BaseStorage):
         if path.exists() and self.batch_number > 0:
             previous = json.loads(path.read_text())
             previous["datasets"].update(self.metadata["datasets"])
+            if "stop_time" in self.metadata:
+                previous["stop_time"] = self.metadata["stop_time"]
             self.metadata = previous
         path.write_text(json.dumps(self.metadata, sort_keys=True))
+
+    def set_stop_times(self, stop_times) -> None:
+        """Store stop times in the NumPy metadata."""
+        self.metadata["stop_time"] = np.asarray(stop_times, dtype=float).tolist()

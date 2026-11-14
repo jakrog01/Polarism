@@ -57,6 +57,7 @@ def validate_config(cfg: Config) -> None:
     _validate_solver(cfg)
     _validate_result(cfg)
     _validate_checkpoint(cfg)
+    _validate_stop(cfg)
     _validate_sweep(cfg)
     _validate_boundary(cfg)
     _validate_laser(cfg)
@@ -243,6 +244,18 @@ def _validate_checkpoint(cfg: Config) -> None:
             raise ConfigValidationError(f"checkpoint.{name} must be a nonempty path or None")
     if not isinstance(c.on_signal, bool):
         raise ConfigValidationError("checkpoint.on_signal must be a boolean")
+
+
+def _validate_stop(cfg: Config) -> None:
+    s = cfg.stop
+    if type(s.steady_state) is not bool:
+        raise ConfigValidationError("stop.steady_state must be a boolean")
+    if isinstance(s.rtol, bool) or not isinstance(s.rtol, (int, float)) or not math.isfinite(s.rtol) or s.rtol <= 0:
+        raise ConfigValidationError("stop.rtol must be a positive finite number")
+    if s.steady_state:
+        _validate_time_multiple("stop.check_every", s.check_every, cfg.solver.dt)
+    if isinstance(s.min_time, bool) or not isinstance(s.min_time, (int, float)) or not math.isfinite(s.min_time) or s.min_time < 0:
+        raise ConfigValidationError("stop.min_time must be a nonnegative finite time in ps")
 
 
 def _validate_sweep(cfg: Config) -> None:

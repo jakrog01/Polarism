@@ -205,6 +205,8 @@ class SweepResults:
                        {name: select(group) for name, group in result.scalar_groups.items()},
                        select(result.static, static=True), config, result.x, result.y,
                        {**result.attrs, "member_index": index,
+                        **({"stop_time": float(result.attrs["stop_time"][position])}
+                           if "stop_time" in result.attrs else {}),
                         "parameters": self.parameters[index]})
 
     def close(self):

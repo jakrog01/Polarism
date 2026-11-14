@@ -14,7 +14,7 @@ from polarism.solver.solver_compatibility import check_solver_compatibility
 
 _LASER_ENTRY = re.compile(r"lasers\[(\d+)\]\.(.+)\Z")
 _GROUP_SECTIONS = {"grid", "solver", "reservoir", "boundary_condition",
-                   "compute_engine", "result", "checkpoint", "sweep", "terms"}
+                   "compute_engine", "result", "checkpoint", "stop", "sweep", "terms"}
 
 
 def override_kind(path):

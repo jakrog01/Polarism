@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union
 from copy import copy
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 import json
 import os
 from pathlib import Path
@@ -85,6 +85,18 @@ def _compute_pump_field(**ctx):
 
 
 _fp64_notice_shown = False
+
+
+@dataclass(frozen=True)
+class RunEventView:
+    """Immutable event snapshot with read-only host arrays."""
+    t: float
+    step: int
+    psi: np.ndarray
+    density: np.ndarray
+    reservoir: tuple[np.ndarray, ...]
+    batched: bool
+    batch_size: int
 
 
 def _model_component(name: str) -> property:
@@ -261,6 +273,8 @@ class SimulationController:
         self._stop_requested = False
         self._resumed = False
         self.run_directory = None
+        self._events = []
+        self._reset_stop_state()
 
         if cfg.checkpoint.resume_from is not None:
             self.load_checkpoint(cfg.checkpoint.resume_from)
@@ -514,6 +528,7 @@ class SimulationController:
         self.state.t = float(t)
         self.state.step = 0
         self._state_shape_explicit = True
+        self._reset_stop_state()
         if reservoir_state is not None:
             fields = tuple(reservoir_state)
             expected = self.reservoir.get_state()
@@ -554,6 +569,71 @@ class SimulationController:
         else:
             self.reservoir.set_state(arrays)
 
+    def _reset_stop_state(self) -> None:
+        """Clear member stop times and the previous steady-state sample."""
+        self.stop_times = np.full(self.state.batch_size, np.nan, dtype=float)
+        self._steady_last_step = -1
+        self._steady_norm = None
+        self._steady_density = None
+
+    def add_event(self, callback, every: float) -> None:
+        """Call a predicate at every fixed-time interval in ps."""
+        if not callable(callback):
+            raise TypeError("event callback must be callable")
+        interval = _validate_time_multiple("event every", every, self.cfg.solver.dt)
+        self._events.append((callback, interval))
+
+    def _event_view(self) -> RunEventView:
+        """Copy event inputs to read-only host arrays."""
+        def snapshot(value):
+            array = np.array(compute_engine.to_cpu(value), copy=True)
+            array.setflags(write=False)
+            return array
+
+        psi = snapshot(self.state.psi)
+        density = np.abs(psi) ** 2
+        density.setflags(write=False)
+        reservoir = tuple(snapshot(field[:, 0] if self.state.batched else field[0, 0])
+                          for field in self.reservoir.get_state())
+        return RunEventView(self.state.t, self.state.step, psi, density, reservoir,
+                            self.state.batched, self.state.batch_size)
+
+    def _record_stops(self, reached) -> None:
+        """Record the first stop time for each selected member."""
+        if reached is None or reached is False or (isinstance(reached, np.bool_) and not reached):
+            return
+        if reached is True or (isinstance(reached, np.bool_) and reached):
+            selected = np.ones(self.state.batch_size, dtype=bool)
+        else:
+            selected = np.asarray(compute_engine.to_cpu(reached))
+            if selected.shape != (self.state.batch_size,) or selected.dtype != np.bool_:
+                raise ValueError("event must return a boolean or a boolean array of batch_size")
+        self.stop_times[selected & np.isnan(self.stop_times)] = self.state.t
+
+    def _check_steady_state(self) -> None:
+        """Compare norm and density against the preceding scheduled check."""
+        xp = self.xp
+        density = xp.abs(self.state.psi) ** 2
+        axes = tuple(range(-self.grid.ndim, 0))
+        cell = 1.0
+        for spacing in self.grid.spacing:
+            cell *= spacing
+        norms = np.atleast_1d(compute_engine.to_cpu(density.sum(axis=axes) * cell))
+        if self._steady_density is not None:
+            old = self._steady_density
+            old_norms = self._steady_norm
+            delta = xp.sqrt(((density - old) ** 2).sum(axis=axes))
+            scale = xp.sqrt((old ** 2).sum(axis=axes))
+            relative_density = np.atleast_1d(compute_engine.to_cpu(delta / xp.maximum(scale, 1e-30)))
+            relative_norm = np.abs(norms - old_norms) / np.maximum(old_norms, 1e-30)
+            reached = (norms < 1e-30) | ((relative_norm < self.cfg.stop.rtol)
+                                            & (relative_density < self.cfg.stop.rtol))
+            if self.state.t >= self.cfg.stop.min_time:
+                self._record_stops(reached)
+        self._steady_norm = norms.copy()
+        self._steady_density = density.copy()
+        self._steady_last_step = self.state.step
+
     def save_checkpoint(self, path: str | os.PathLike) -> None:
         """Atomically save the current state to an HDF5 checkpoint."""
         from polarism import __version__
@@ -583,6 +663,11 @@ class SimulationController:
                 h5.attrs["batched"] = self.state.batched
                 h5.attrs["reservoir_type"] = self.cfg.reservoir.reservoir_type
                 h5.attrs["config_json"] = json.dumps(asdict(self.cfg))
+                h5.attrs["stop_time"] = self.stop_times
+                h5.attrs["steady_last_step"] = self._steady_last_step
+                if self._steady_norm is not None:
+                    h5.attrs["steady_norm"] = self._steady_norm
+                    h5.create_dataset("steady_density", data=compute_engine.to_cpu(self._steady_density))
                 if self._member_configs is not None:
                     h5.attrs["member_configs_json"] = json.dumps([
                         {**{name: asdict(member)[name] for name in ("physics", "laser", "potential", "noise")},
@@ -610,7 +695,10 @@ class SimulationController:
                 raise ValueError("reservoir type mismatch")
             if h5.attrs["dt"] != self.cfg.solver.dt:
                 raise ValueError("checkpoint dt mismatch")
-            saved_noise = json.loads(h5.attrs["config_json"])["noise"]
+            saved_config = json.loads(h5.attrs["config_json"])
+            saved_noise = saved_config["noise"]
+            if saved_config.get("stop", asdict(self.cfg.stop)) != asdict(self.cfg.stop):
+                raise ValueError("checkpoint stop config mismatch")
             if self._seed_drawn:
                 drawn = self.cfg.noise.seed
                 self.cfg.noise.seed = saved_noise["seed"]
@@ -657,11 +745,24 @@ class SimulationController:
             t0 = float(h5.attrs["t0"])
             if step < 0 or not np.isfinite(t) or not np.isfinite(t0) or t != t0 + step * self.cfg.solver.dt:
                 raise ValueError("checkpoint time and step mismatch")
-            source_precision = json.loads(h5.attrs["config_json"])["solver"]["precision"]
+            source_precision = saved_config["solver"]["precision"]
             precision_changed = source_precision != self.cfg.solver.precision
             field_k = h5["field_k"][:] if "field_k" in h5 else None
             if field_k is not None and field_k.shape != shape:
                 raise ValueError("checkpoint spectral batch shape mismatch")
+            stop_times = np.asarray(h5.attrs.get("stop_time", np.full(shape[0], np.nan)), dtype=float)
+            if stop_times.shape != (shape[0],):
+                raise ValueError("checkpoint stop_time shape mismatch")
+            steady_last_step = int(h5.attrs.get("steady_last_step", -1))
+            steady_norm = h5.attrs.get("steady_norm")
+            steady_density = h5["steady_density"][:] if "steady_density" in h5 else None
+            if (steady_norm is None) != (steady_density is None):
+                raise ValueError("checkpoint steady-state reference is incomplete")
+            if steady_norm is not None and (np.shape(steady_norm) != (shape[0],)
+                                            or steady_density.shape != public_shape):
+                raise ValueError("checkpoint steady-state reference shape mismatch")
+            if steady_last_step > step or steady_last_step < -1:
+                raise ValueError("checkpoint steady-state check step mismatch")
             if precision_changed:
                 warnings.warn("checkpoint precision differs; casting state", UserWarning, stacklevel=2)
         dtype = complex_dtype(self.xp, self.cfg.solver.precision) if precision_changed else None
@@ -673,6 +774,10 @@ class SimulationController:
         self.state.step = step
         self._state_shape_explicit = True
         self._restore_reservoir(fields, cast=precision_changed)
+        self.stop_times = stop_times.copy()
+        self._steady_last_step = steady_last_step
+        self._steady_norm = np.asarray(steady_norm).copy() if steady_norm is not None else None
+        self._steady_density = self.xp.asarray(steady_density).copy() if steady_density is not None else None
         self._resumed = True
         if field_k is not None:
             self.state.field_k = self.xp.asarray(field_k, dtype=dtype).copy()
@@ -711,6 +816,9 @@ class SimulationController:
         last_checkpoint_step = -1
         previous_handlers = {}
         self._stop_requested = False
+        steady_interval = (_validate_time_multiple("stop.check_every", self.cfg.stop.check_every, dt)
+                           if self.cfg.stop.steady_state else 0)
+        stopping_active = bool(self._events or steady_interval or np.isfinite(self.stop_times).any())
 
         def request_stop(signum, frame):
             self._stop_requested = True
@@ -732,7 +840,7 @@ class SimulationController:
             )
             step = self.state.step
             with tqdm(total=n_steps, initial=step, desc="Simulating") as progress:
-                while step < n_steps and not self._stop_requested:
+                while step < n_steps and not self._stop_requested and not (stopping_active and np.isfinite(self.stop_times).all()):
                     recording = (
                         self.storage_visitor is not None
                         or self.animation_visitor is not None
@@ -751,6 +859,11 @@ class SimulationController:
                         end = min(end, ((step // interval) + 1) * interval)
                     if previous_handlers:
                         end = min(end, step + 64)
+                    if self._events:
+                        for _, event_interval in self._events:
+                            end = min(end, ((step // event_interval) + 1) * event_interval)
+                    if steady_interval:
+                        end = min(end, ((step // steady_interval) + 1) * steady_interval)
                     self.solver.advance(self.model, self.state, end - step)
                     progress.update(end - step)
                     step = self.state.step
@@ -772,7 +885,17 @@ class SimulationController:
                         and step % save_steps == 0
                     )
 
-                    if should_save or should_viz or should_animate:
+                    if self._events:
+                        view = None
+                        for callback, event_interval in tuple(self._events):
+                            if step % event_interval == 0:
+                                if view is None:
+                                    view = self._event_view()
+                                self._record_stops(callback(view))
+                    if steady_interval and step % steady_interval == 0 and self._steady_last_step != step:
+                        self._check_steady_state()
+                    stopped = stopping_active and np.isfinite(self.stop_times).all()
+                    if should_save or should_viz or should_animate or stopped and recording:
                         self._record_results(t_after)
                         if should_viz:
                             self.next_viz_time += self.cfg.result.real_time_refresh_interval
@@ -781,8 +904,18 @@ class SimulationController:
                         last_checkpoint_step = step
             if (checkpoint_enabled or self._stop_requested) and last_checkpoint_step != self.state.step:
                 self.save_checkpoint(self._checkpoint_path())
+            if stopping_active:
+                indices = (self._member_indices if len(self._member_indices) == len(self.stop_times)
+                           else range(len(self.stop_times)))
+                values = ", ".join(
+                    f"member {index}=" + ("NaN" if np.isnan(t) else f"{t:g}")
+                    for index, t in zip(indices, self.stop_times)
+                )
+                print(f"Stop times (ps): {values}")
         finally:
             try:
+                if self.storage_visitor is not None:
+                    self.storage_visitor.set_stop_times(self.stop_times)
                 for visitor in self.results_manager.visitors:
                     finalize = getattr(visitor, "finalize", None)
                     if not callable(finalize):

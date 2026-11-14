@@ -55,6 +55,7 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - SolverParameters
         - ResultParameters
         - ComputeEngineParameters
+        - StopParameters
         - SweepParameters
         - Config
 

@@ -174,3 +174,8 @@ class HDF5Storage(BaseStorage):
         """Persist pending frames and flush the open HDF5 handle."""
         super().flush()
         self.h5_file.flush()
+
+    def set_stop_times(self, stop_times) -> None:
+        """Store stop times in root metadata, aligned with member_index."""
+        self.h5_file.attrs["stop_time"] = np.asarray(stop_times, dtype=float)
+        self.h5_file.flush()
