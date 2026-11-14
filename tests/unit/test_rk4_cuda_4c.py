@@ -8,6 +8,11 @@ import pytest
 from polarism import SimulationController
 from polarism.compute_engine import has_cuda_device
 from polarism.model_terms import CudaSnippet, Term, available_terms, register_term
+from polarism.solver.rk4_cuda_solver import (
+    _tiled_wigner_source,
+    build_tiled_1d_kernel_source,
+    build_tiled_kernel_source,
+)
 from tests.unit.conftest import small_config
 
 
@@ -41,6 +46,41 @@ def _run(cfg, gpu, members=None):
     run.run()
     field = cp.asnumpy(run.state.psi) if gpu else run.state.psi.copy()
     return run, field
+
+
+def _force_tiled(run):
+    run.solver._use_tiled = True
+    run.solver._tile_shape = (64, 1) if run.grid.ndim == 1 else (8, 8)
+
+
+@pytest.mark.parametrize("ndim", (1, 2))
+@pytest.mark.parametrize("reservoir", ("single", "double", "quadratic-double"))
+@pytest.mark.parametrize("precision", ("single", "double"))
+@pytest.mark.parametrize("batched", (False, True))
+@pytest.mark.parametrize("graphs", (False, True))
+def test_tiled_wigner_source_variants(ndim, reservoir, precision, batched, graphs):
+    real_type = "float" if precision == "single" else "double"
+    if ndim == 1:
+        source = build_tiled_1d_kernel_source(
+            "periodic", real_type, reservoir, 64, False, graphs, batched,
+        )
+    else:
+        source = build_tiled_kernel_source(
+            "periodic", real_type, reservoir, "five-point", 8, 8,
+            False, graphs, batched,
+        )
+    noisy = _tiled_wigner_source(source, real_type, reservoir, batched, graphs)
+    active = "nA" if reservoir == "double" else "nR"
+    assert "unsigned int a = (unsigned int)(gid);" in noisy
+    assert "unsigned int d = 1U;" in noisy
+    assert f"noise_scattering[noise_member] * (({active}_new < 0) ? 0 : {active}_new)" in noisy
+    assert "psi_out[2*gid] = psi_final_re + sigma * radius * cs;" in noisy
+    assert "psi_out[2*gid+1] = psi_final_im + sigma * radius * sn;" in noisy
+    assert f"{real_type} psi_final_re = psi_initial[2*gid] + dt6" in noisy
+    assert ("const int noise_member = member;" if batched else
+            "const int noise_member = 0;") in noisy
+    assert ("noise_step_base[0] + noise_step_offset" if graphs else
+            "const unsigned long long step = noise_step;") in noisy
 
 
 @pytest.mark.gpu
@@ -88,12 +128,15 @@ def test_new_features_agree_with_fdm(feature, precision, use_gpu):
 @pytest.mark.gpu
 @pytest.mark.parametrize("graphs", (False, True))
 @pytest.mark.parametrize("precision", ("single", "double"))
-def test_fused_wigner_increment_matches_numpy(graphs, precision, use_gpu):
+@pytest.mark.parametrize("ndim", (1, 2))
+@pytest.mark.parametrize("tiled", (False, True))
+def test_fused_wigner_increment_matches_numpy(graphs, precision, ndim, tiled, use_gpu):
     if not use_gpu or not has_cuda_device():
         pytest.skip("CUDA device unavailable")
     import cupy as cp
 
     cfg = _config(precision=precision)
+    cfg.grid.ndim = ndim
     cfg.reservoir.reservoir_type = "single"
     cfg.solver.total_time = 2 * cfg.solver.dt
     cfg.solver.cuda_graphs = graphs
@@ -104,6 +147,8 @@ def test_fused_wigner_increment_matches_numpy(graphs, precision, use_gpu):
     cfg.physics.gamma_C = 0.2
     cfg.compute_engine.use_gpu = True
     run = SimulationController(cfg)
+    if tiled:
+        _force_tiled(run)
     run.state.psi = cp.zeros(run.grid.shape, dtype=run.state.psi.dtype)
     run.run()
     reference = deepcopy(cfg)
@@ -116,6 +161,35 @@ def test_fused_wigner_increment_matches_numpy(graphs, precision, use_gpu):
     tolerance = 3e-6 if precision == "single" else 3e-13
     np.testing.assert_allclose(cp.asnumpy(run.state.psi).ravel(), expected,
                                rtol=tolerance, atol=tolerance)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("ndim", (1, 2))
+@pytest.mark.parametrize("graphs", (False, True))
+@pytest.mark.parametrize("precision", ("single", "double"))
+def test_tiled_wigner_batch_matches_single(ndim, graphs, precision, use_gpu):
+    if not use_gpu or not has_cuda_device():
+        pytest.skip("CUDA device unavailable")
+    import cupy as cp
+
+    cfg = _config(precision=precision)
+    cfg.grid.ndim = ndim
+    cfg.reservoir.reservoir_type = "single"
+    cfg.noise.stochastic = "wigner"
+    cfg.noise.stochastic_strength = 1.0
+    cfg.solver.cuda_graphs = graphs
+    cfg.solver.total_time = 2 * cfg.solver.dt
+    cfg.compute_engine.use_gpu = True
+    members = [{"physics.gamma_C": 0.1}, {"physics.gamma_C": 0.2}]
+    batch = SimulationController(cfg, members=members)
+    _force_tiled(batch)
+    batch.run()
+    for index, override in enumerate(members):
+        single = SimulationController(cfg, members=[override])
+        _force_tiled(single)
+        single.run()
+        np.testing.assert_array_equal(cp.asnumpy(batch.state.psi[index]),
+                                      cp.asnumpy(single.state.psi))
 
 
 @pytest.mark.gpu

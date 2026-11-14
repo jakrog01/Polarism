@@ -458,29 +458,24 @@ def _core_cuda_snippets(reservoir_type: str, real_type: str):
     return " + ".join(energy), rate, relax
 
 
-def _fused_noise_source(source: str, real_type: str, reservoir_type: str,
-                        batched: bool, graph: bool) -> str:
-    """Append the Philox Wigner increment to a final-stage flat kernel."""
-    from polarism.noise.philox import cuda_source
-
-    precision = "single" if real_type == "float" else "double"
-    philox = cuda_source(precision).split('extern "C" __global__ void philox_words', 1)[0]
+def _wigner_arguments(real_type: str, graph: bool) -> str:
+    """Return the inputs shared by flat and tiled Wigner kernels."""
     step_decl = ("const unsigned long long* __restrict__ noise_step_base, "
                  "const unsigned int noise_step_offset" if graph else
                  "const unsigned long long noise_step")
-    arguments = (
+    return (
         "const unsigned long long* __restrict__ noise_seeds, "
         f"const {real_type}* __restrict__ noise_gamma, "
         f"const {real_type}* __restrict__ noise_scattering, "
         f"const {real_type}* __restrict__ noise_strength, "
         f"const {real_type} noise_dt_over_4v, {step_decl}"
     )
-    header, body = source.split(") {", 1)
-    header += ", " + arguments
-    active = {"single": "nR_out[tid]", "double": "nA_out[tid]",
-              "quadratic-double": "nR_out[tid]", "none": f"({real_type})0"}[reservoir_type]
-    member = "member" if batched else "0"
-    cell = "spatial" if batched else "tid"
+
+
+def _wigner_increment(real_type: str, active: str, member: str, cell: str,
+                      output_index: str, graph: bool, tiled: bool = False) -> str:
+    """Generate the same Philox and Box-Muller increment for either RK4 path."""
+    precision = "single" if real_type == "float" else "double"
     step = ("noise_step_base[0] + noise_step_offset" if graph else "noise_step")
     if precision == "single":
         uniforms = (
@@ -494,7 +489,11 @@ def _fused_noise_source(source: str, real_type: str, reservoir_type: str,
             "double u2 = ((double)(c >> 5) * 67108864.0 + (double)(d >> 6) + 1.0) * 0x1p-53;"
         )
         sqrt_fn, log_fn, sincos_fn = "sqrt", "log", "sincos"
-    increment = f"""
+    output_re = (f"psi_out[2*{output_index}] = psi_final_re +"
+                 if tiled else f"psi_out[2*{output_index}] +=")
+    output_im = (f"psi_out[2*{output_index}+1] = psi_final_im +"
+                 if tiled else f"psi_out[2*{output_index}+1] +=")
+    return f"""
     const int noise_member = {member};
     const unsigned long long seed = noise_seeds[noise_member];
     const unsigned long long step = {step};
@@ -511,10 +510,57 @@ def _fused_noise_source(source: str, real_type: str, reservoir_type: str,
     {real_type} sigma = {sqrt_fn}(noise_strength[noise_member] *
         (noise_gamma[noise_member] + noise_scattering[noise_member] * {active})
         * noise_dt_over_4v);
-    psi_out[2*tid] += sigma * radius * cs;
-    psi_out[2*tid+1] += sigma * radius * sn;
+    {output_re} sigma * radius * cs;
+    {output_im} sigma * radius * sn;
 """
+
+
+def _fused_noise_source(source: str, real_type: str, reservoir_type: str,
+                        batched: bool, graph: bool) -> str:
+    """Append the Philox Wigner increment to a final-stage flat kernel."""
+    from polarism.noise.philox import cuda_source
+
+    precision = "single" if real_type == "float" else "double"
+    philox = cuda_source(precision).split('extern "C" __global__ void philox_words', 1)[0]
+    header, body = source.split(") {", 1)
+    header += ", " + _wigner_arguments(real_type, graph)
+    active = {"single": "nR_out[tid]", "double": "nA_out[tid]",
+              "quadratic-double": "nR_out[tid]", "none": f"({real_type})0"}[reservoir_type]
+    member = "member" if batched else "0"
+    cell = "spatial" if batched else "tid"
+    increment = _wigner_increment(real_type, active, member, cell, "tid", graph)
     return philox + header + ") {" + body.rsplit("\n}", 1)[0] + increment + "}\n"
+
+
+def _tiled_wigner_source(source: str, real_type: str, reservoir_type: str,
+                         batched: bool, graph: bool) -> str:
+    """Fuse a Wigner increment into each final tiled cell write."""
+    import re
+
+    from polarism.noise.philox import cuda_source
+
+    precision = "single" if real_type == "float" else "double"
+    philox = cuda_source(precision).split('extern "C" __global__ void philox_words', 1)[0]
+    start = source.index('extern "C" __global__ void tiled_step')
+    header, body = source[start:].split(") {", 1)
+    header += ", " + _wigner_arguments(real_type, graph)
+    for suffix, variable in (("", "re"), ("+1", "im")):
+        pattern = rf"(?m)^(\s*)psi_out\[2\*gid{re.escape(suffix)}\] = (.*);$"
+        replacement = rf"\1{real_type} psi_final_{variable} = \2;"
+        body, count = re.subn(pattern, replacement, body, count=1)
+        if count != 1:
+            raise ValueError("tiled psi final write not found")
+    active_field = "nA" if reservoir_type == "double" else "nR"
+    active = f"(({active_field}_new < 0) ? 0 : {active_field}_new)"
+    last_field = "nR" if reservoir_type == "single" else "nI"
+    anchor = re.search(rf"(?m)^.*{last_field}_out\[gid\] = \({last_field}_new < 0\) \? 0 : {last_field}_new;", body)
+    if anchor is None:
+        raise ValueError("tiled reservoir final write not found")
+    increment = _wigner_increment(real_type, active,
+                                  "member" if batched else "0", "gid", "gid",
+                                  graph, tiled=True)
+    body = body[:anchor.end()] + increment + body[anchor.end():]
+    return philox + source[:start] + header + ") {" + body
 
 
 def _without_reservoir(source: str, real_type: str) -> str:
@@ -1681,8 +1727,8 @@ class RK4CudaSolver(AbstractSolver):
             props = self.xp.cuda.runtime.getDeviceProperties(
                 self.xp.cuda.runtime.getDevice()
             )
-            self._use_tiled = (self._reservoir_type != "none" and not self._extended and _prefer_tiled(
-                self._precision, props["major"], props["minor"]
+            self._use_tiled = (self._reservoir_type != "none" and not self._extended and (
+                _prefer_tiled(self._precision, props["major"], props["minor"])
             ))
             self._tiled_kernels = {}
             self._tile_shape = (self._select_tile_shape() if self._use_tiled else None)
@@ -1821,8 +1867,8 @@ class RK4CudaSolver(AbstractSolver):
         return _choose_tile_shape(self._real_type, self._reservoir_type,
                                   block_limit, sm_limit)
 
-    def _tiled_kernel(self, complex_potential, graph=False):
-        key = (complex_potential, graph)
+    def _tiled_kernel(self, complex_potential, graph=False, noise=False):
+        key = (complex_potential, graph, noise)
         if key not in self._tiled_kernels:
             import cupy as cp
 
@@ -1839,6 +1885,10 @@ class RK4CudaSolver(AbstractSolver):
                     self._laplacian_type, tile_x, tile_y, complex_potential, graph,
                     self._batched, self._physics_fields,
                 )
+            if noise:
+                source = _tiled_wigner_source(source, self._real_type,
+                                              self._reservoir_type, self._batched,
+                                              graph)
             suffix = {"single": "", "double": "_double",
                       "quadratic-double": "_qdouble"}[self._reservoir_type]
             name = "tiled_step_1d" if self.ndim == 1 else "tiled_step"
@@ -1999,9 +2049,17 @@ class RK4CudaSolver(AbstractSolver):
             return ((*self._feature_prefix, self._feature_buffer,
                      self._k_int(feature_offset + stage), self._k_int(self._members),
                      *self._feature_terms) if self._extended else ())
-        if self._use_tiled and self._tile_shape is not None and not self._fused_noise:
+        apply_noise = self._fused_noise and (noise_step is not None or scale_buffer is not None)
+        noise_args = ((self._noise._device_seeds, self._noise._device_gamma,
+                       self._noise._device_scattering, self._noise._device_strength,
+                       self._np_real(self._noise.dt / (4.0 * self._noise.volume)),
+                       *((self._noise_step_base, self._k_int(noise_graph_offset))
+                         if scale_buffer is not None else (self.xp.uint64(noise_step),)))
+                      if apply_noise else ())
+        if self._use_tiled and self._tile_shape is not None:
             kernel, shared_bytes = self._tiled_kernel(bool(v_im_scale),
-                                                       scale_buffer is not None)
+                                                       scale_buffer is not None,
+                                                       apply_noise)
             tile_x, tile_y = self._tile_shape
             scale_args = ((scale_buffer, self._k_int(scale_offset))
                           if scale_buffer is not None else pump_scales)
@@ -2017,7 +2075,7 @@ class RK4CudaSolver(AbstractSolver):
                  self._k_dt6, *self._k_rhs_parameters,
                  *((self._k_int(self._members), self._k_int(V_re.size),
                     *(self._k_int(pump.size) for pump in pumps), self._physics_device)
-                   if self._batched else ())),
+                   if self._batched else ()), *noise_args),
                 shared_mem=shared_bytes,
             )
             return
@@ -2026,7 +2084,6 @@ class RK4CudaSolver(AbstractSolver):
         parameters = self._k_rhs_parameters
         k_psi = self._k_psi
         k_reservoir = self._k_reservoir
-        apply_noise = self._fused_noise and (noise_step is not None or scale_buffer is not None)
         rhs, fused, final = (
             self._graph_kernels if scale_buffer is not None else
             (self._kern_rhs, self._kern_fused,
@@ -2072,12 +2129,7 @@ class RK4CudaSolver(AbstractSolver):
              k_psi[0], k_psi[1], *earlier_reservoir,
              *dimensions, *scale_args(2), v_im_scale,
              self._k_dt, self._k_dt6, *parameters, *batch_args(2), *feature_args(2),
-             *((self._noise._device_seeds, self._noise._device_gamma,
-                self._noise._device_scattering, self._noise._device_strength,
-                self._np_real(self._noise.dt / (4.0 * self._noise.volume)),
-                *((self._noise_step_base, self._k_int(noise_graph_offset))
-                  if scale_buffer is not None else (self.xp.uint64(noise_step),)))
-               if apply_noise else ())),
+             *noise_args),
         )
 
     def _compile_graph_kernels(self):
@@ -2133,8 +2185,9 @@ class RK4CudaSolver(AbstractSolver):
             self._graph_signature = signature
         if length in self._graph_cache:
             return self._graph_cache[length][0]
-        if self._use_tiled and self._tile_shape is not None and not self._fused_noise:
-            self._tiled_kernel(bool(v_im_scale), graph=True)
+        if self._use_tiled and self._tile_shape is not None:
+            self._tiled_kernel(bool(v_im_scale), graph=True,
+                               noise=self._fused_noise)
         else:
             self._compile_graph_kernels()
         psi, res = self._advance_buffers
