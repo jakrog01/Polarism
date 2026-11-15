@@ -159,6 +159,10 @@ member first for batched results. The energy axis includes the drive energy
 when the coherent drive is enabled. Spectra are not Wigner-corrected:
 vacuum noise follows the bare dispersion and is not a flat spectral floor.
 
+`examples/spectra_and_correlations.py` runs a pumped spot with adaptive steps,
+plots E(k) against the bare dispersion with μ marked, and shows n(k) and
+|g1|.
+
 ## Saving results
 
 ```python

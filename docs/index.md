@@ -9,6 +9,8 @@ Polarism is a Python package for 1-D and 2-D driven-dissipative Gross-Pitaevskii
 - Incoherent pumps built from spatial profiles, lattices and temporal envelopes, a coherent (resonant) drive, and time-dependent potentials.
 - Truncated-Wigner noise from a counter-based Philox generator, reproducible from one seed on CPU and GPU.
 - Finite-difference RK4, split-step FFT, ETD-RK2, interaction-picture RK4 and higher-order IFRK solvers on NumPy, CuPy or fused CUDA kernels, with CUDA graph chunks.
+- Accumulated observables: momentum distribution, g⁽¹⁾, g⁽²⁾ and Welch energy spectra E(k) and E(x). See [Output and Visualization](user-guide/output-and-visualization.md).
+- Adaptive time stepping for the embedded IFRK tableaus. See [Time Evolution](user-guide/time-evolution.md).
 - Batched parameter sweeps, checkpoint and restart, asynchronous HDF5/NPY/JSON output and a lazy result reader.
 - Registries for solvers, terms, dispersions, profiles, envelopes, initial conditions, observables and output formats.
 
