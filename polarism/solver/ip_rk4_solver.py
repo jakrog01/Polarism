@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable, Union
 
 from polarism.config.dtype_utils import complex_dtype, real_dtype
+from polarism.dispersion import apply_spinor_matrix, spinor_matrix_exponential
 from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
 from polarism.solver.abstract_solver import AbstractSolver, ACCEPTED, SolverCapabilities
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 class IPRK4Solver(AbstractSolver):
     """Solve the model with interaction-picture RK4."""
     capabilities = SolverCapabilities(
-        components=frozenset({1}), ndim=frozenset({1, 2}),
+        components=frozenset({1, 2}), ndim=frozenset({1, 2}),
         grid_types=frozenset({"periodic"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         custom_reservoirs="quantitative", potential=True,
         kinetic_relaxation=True, dispersion=frozenset({"*"}),
@@ -44,6 +45,18 @@ class IPRK4Solver(AbstractSolver):
         m_eff = self.batch_physics.get("m_eff")
 
         self._eta = self.batch_physics.get("kinetic_relaxation_eta")
+
+        self._spinor = model.components == 2
+        if self._spinor:
+            matrix = model.dispersion.matrix(grid, self.batch_physics, 2)
+            cdtype = complex_dtype(self.xp, getattr(config.solver, "precision", "double"))
+            self._exp_L_half = spinor_matrix_exponential(matrix, hbar, dt / 2, self.xp).astype(cdtype)
+            self._exp_L_full = spinor_matrix_exponential(matrix, hbar, dt, self.xp).astype(cdtype)
+            self._exp_L_neg_half = spinor_matrix_exponential(matrix, hbar, -dt / 2, self.xp).astype(cdtype)
+            self._exp_L_neg_full = spinor_matrix_exponential(matrix, hbar, -dt, self.xp).astype(cdtype)
+            self._L_eig = grid.k_squared.astype(real_dtype(self.xp, getattr(config.solver, "precision", "double")))
+            self._hbar_over_2m = hbar / (2.0 * m_eff)
+            return
 
         precision = getattr(config.solver, "precision", "double")
         cdtype = complex_dtype(self.xp, precision)
@@ -68,6 +81,17 @@ class IPRK4Solver(AbstractSolver):
         """Transform from spectral space back to real space."""
         return self._ifft(psi_k)
 
+    def _linear(self, propagator, field):
+        """Apply the spinor spectral propagator."""
+        return apply_spinor_matrix(propagator, field, self.xp)
+
+    def _reservoir_derivatives(self, model, field, pump, state):
+        """Evaluate component or shared reservoir rates."""
+        if model.reservoir_components == 2:
+            return model.reservoir.get_derivatives(field, pump * model.pump_weights, state)
+        density = (field.real * field.real + field.imag * field.imag).sum(axis=1, keepdims=True)
+        return model.reservoir.get_derivatives(field[:, :1], pump, state, rho=density)
+
     def _nonlinear_rhs(self, psi, nR, nI, potential, psi_k=None):
         """Compute the nonlinear right-hand side."""
         hbar = self.batch_physics.get("hbar")
@@ -79,6 +103,8 @@ class IPRK4Solver(AbstractSolver):
 
         rho = self.xp.abs(psi) ** 2
         eff_energy = potential + g_C * rho + g_R * nR + g_I * nI
+        if self._spinor:
+            eff_energy = eff_energy + self.batch_physics.get("alpha_2") * rho[:, ::-1]
         gain_loss = (R * nR - gamma_C) / 2.0
         rhs = (-1j / hbar) * eff_energy * psi + gain_loss * psi
 
@@ -96,7 +122,7 @@ class IPRK4Solver(AbstractSolver):
         pump = model.pump
         reservoir = model.reservoir
         boundary_condition = model.boundary
-        self.batch_physics.check(state.field)
+        self.batch_physics.check(state.field, getattr(state, "components", 1))
         dt = self.config.solver.dt
         t = state.t
         p0 = evaluate_pump(pump, t)
@@ -118,10 +144,10 @@ class IPRK4Solver(AbstractSolver):
             N1 = N1 + model.drive_contribution(psi0, t)
         N1_k = self._forward(N1)
         k1_u = N1_k
-        k1_res = reservoir.get_derivatives(psi0, p0, res0)
+        k1_res = self._reservoir_derivatives(model, psi0, p0, res0) if self._spinor else reservoir.get_derivatives(psi0, p0, res0)
 
         u_mid = psi0_k + (dt / 2) * k1_u
-        psi_mid_k = self._exp_L_half * u_mid
+        psi_mid_k = self._linear(self._exp_L_half, u_mid) if self._spinor else self._exp_L_half * u_mid
         psi_mid = self._inverse(psi_mid_k)
         res_mid = tuple(r + 0.5 * dt * k for r, k in zip(res0, k1_res))
         nR_mid = reservoir.get_active_density(res_mid)
@@ -134,11 +160,11 @@ class IPRK4Solver(AbstractSolver):
         if self._has_drive:
             N2 = N2 + model.drive_contribution(psi_mid, t + 0.5 * dt)
         N2_k = self._forward(N2)
-        k2_u = self._exp_L_neg_half * N2_k
-        k2_res = reservoir.get_derivatives(psi_mid, p_half, res_mid)
+        k2_u = self._linear(self._exp_L_neg_half, N2_k) if self._spinor else self._exp_L_neg_half * N2_k
+        k2_res = self._reservoir_derivatives(model, psi_mid, p_half, res_mid) if self._spinor else reservoir.get_derivatives(psi_mid, p_half, res_mid)
 
         u_mid2 = psi0_k + (dt / 2) * k2_u
-        psi_mid2_k = self._exp_L_half * u_mid2
+        psi_mid2_k = self._linear(self._exp_L_half, u_mid2) if self._spinor else self._exp_L_half * u_mid2
         psi_mid2 = self._inverse(psi_mid2_k)
         res_mid2 = tuple(r + 0.5 * dt * k for r, k in zip(res0, k2_res))
         nR_mid2 = reservoir.get_active_density(res_mid2)
@@ -151,11 +177,11 @@ class IPRK4Solver(AbstractSolver):
         if self._has_drive:
             N3 = N3 + model.drive_contribution(psi_mid2, t + 0.5 * dt)
         N3_k = self._forward(N3)
-        k3_u = self._exp_L_neg_half * N3_k
-        k3_res = reservoir.get_derivatives(psi_mid2, p_half, res_mid2)
+        k3_u = self._linear(self._exp_L_neg_half, N3_k) if self._spinor else self._exp_L_neg_half * N3_k
+        k3_res = self._reservoir_derivatives(model, psi_mid2, p_half, res_mid2) if self._spinor else reservoir.get_derivatives(psi_mid2, p_half, res_mid2)
 
         u_end = psi0_k + dt * k3_u
-        psi_end_k = self._exp_L_full * u_end
+        psi_end_k = self._linear(self._exp_L_full, u_end) if self._spinor else self._exp_L_full * u_end
         psi_end = self._inverse(psi_end_k)
         res_end = tuple(r + dt * k for r, k in zip(res0, k3_res))
         nR_end = reservoir.get_active_density(res_end)
@@ -168,11 +194,11 @@ class IPRK4Solver(AbstractSolver):
         if self._has_drive:
             N4 = N4 + model.drive_contribution(psi_end, t + dt)
         N4_k = self._forward(N4)
-        k4_u = self._exp_L_neg_full * N4_k
-        k4_res = reservoir.get_derivatives(psi_end, p1, res_end)
+        k4_u = self._linear(self._exp_L_neg_full, N4_k) if self._spinor else self._exp_L_neg_full * N4_k
+        k4_res = self._reservoir_derivatives(model, psi_end, p1, res_end) if self._spinor else reservoir.get_derivatives(psi_end, p1, res_end)
 
         u_new = psi0_k + (dt / 6.0) * (k1_u + 2 * k2_u + 2 * k3_u + k4_u)
-        psi_new_k = self._exp_L_full * u_new
+        psi_new_k = self._linear(self._exp_L_full, u_new) if self._spinor else self._exp_L_full * u_new
         state.field = self._inverse(psi_new_k)
 
         state.field = boundary_condition.after_step_action(state.field)

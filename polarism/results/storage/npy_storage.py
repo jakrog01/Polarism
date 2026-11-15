@@ -22,6 +22,8 @@ class NPYStorage(BaseStorage):
         """Set up NumPy batch storage."""
         super().__init__(output_dir, batch_size)
         self.ndim = config.grid.ndim if config is not None else (2 if y is not None else 1)
+        self.components = 2 if config is not None and config.physics.spin == "spinor" else 1
+        self.reservoir_components = (config.reservoir.components or self.components) if config is not None else 1
         self.batch_number = 0
         self._resume = getattr(config, "_storage_resume", False)
         metadata_path = self.output_dir / "metadata.json"

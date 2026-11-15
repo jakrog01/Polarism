@@ -43,6 +43,7 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         """Set up the single reservoir."""
         self.xp = compute_engine.xp
         self.config = reservoir_config
+        self.components = getattr(reservoir_config, "components", None) or (2 if getattr(physics, "spin", "scalar") == "spinor" else 1)
         self.batch_physics = BatchPhysics(physics, batch_physics, self.xp, precision, ndim=grid.ndim)
         self.R = self.batch_physics.get("R")
         self.gamma_r = self.batch_physics.get("gamma_R")
@@ -52,14 +53,14 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         self.grid_type = grid.boundary
         self._spatial_shape = grid.shape
         self._batched = False
-        self.nR = self.xp.zeros((1, 1, *grid.shape), dtype=real_dtype(self.xp, precision))
+        self.nR = self.xp.zeros((1, self.components, *grid.shape), dtype=real_dtype(self.xp, precision))
 
     def reset(self, batch_size: int | None = None) -> None:
         """Reset zero density fields, optionally with a leading batch axis."""
         if batch_size is not None and (isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1):
             raise ValueError("batch_size must be a positive integer")
         self._batched = batch_size is not None
-        shape = (1 if batch_size is None else batch_size, 1, *self._spatial_shape)
+        shape = (1 if batch_size is None else batch_size, self.components, *self._spatial_shape)
         self.nR = self.xp.zeros(shape, dtype=self.nR.dtype)
 
     def get_state(self) -> tuple[Union[np.ndarray, cp.ndarray]]:
@@ -85,7 +86,7 @@ class SingleReservoir(AbstractReservoir, ResultProvider):
         rho: Union[np.ndarray, cp.ndarray] | None = None,
     ) -> tuple[Union[np.ndarray, cp.ndarray]]:
         """Return the reservoir time derivatives."""
-        self.batch_physics.check(psi)
+        self.batch_physics.check(psi, self.components)
         self._check_state_shape(state, psi.shape)
         nR = state[0]
         abs_psi2 = rho if rho is not None else psi.real * psi.real + psi.imag * psi.imag

@@ -64,6 +64,7 @@ def validate_config(cfg: Config) -> None:
     _validate_boundary(cfg)
     _validate_potential(cfg)
     _validate_drive(cfg)
+    _validate_reservoir(cfg)
     _validate_laser(cfg)
     _warn_explicit_stability(cfg)
 
@@ -84,6 +85,14 @@ def _validate_grid(cfg: Config) -> None:
 
 def _validate_physics(cfg: Config) -> None:
     p = cfg.physics
+    if not isinstance(p.spin, str) or p.spin not in {"scalar", "spinor"}:
+        raise ConfigValidationError("physics.spin must be 'scalar' or 'spinor'")
+    for name in ("alpha_2", "zeeman", "te_tm"):
+        value = getattr(p, name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ConfigValidationError(f"physics.{name} must be a finite number")
+        if p.spin == "scalar" and value != 0:
+            warnings.warn(f"physics.{name} is ignored for scalar runs", UserWarning, stacklevel=2)
     if p.hbar <= 0.0:
         raise ConfigValidationError(f"physics.hbar must be > 0, got {p.hbar}")
     if p.m_eff <= 0.0:
@@ -183,6 +192,9 @@ def _validate_initial_condition(cfg: Config) -> None:
 def _validate_solver(cfg: Config) -> None:
     s = cfg.solver
     from polarism.solver.solver_compatibility import solver_capabilities
+    components = 2 if cfg.physics.spin == "spinor" else 1
+    if components not in solver_capabilities(s.method).components:
+        raise ConfigValidationError(f"solver.method={s.method!r} does not support {components} components")
     if cfg.grid.ndim not in solver_capabilities(s.method).ndim:
         raise ConfigValidationError(f"solver.method={s.method!r} does not support grid.ndim={cfg.grid.ndim}")
     if cfg.grid.ndim == 1 and s.laplacian == "isotropic-9pt":
@@ -311,6 +323,16 @@ def _validate_potential(cfg: Config) -> None:
 
 def _validate_drive(cfg: Config) -> None:
     drive = cfg.drive
+    if not isinstance(drive.polarization, (list, tuple)) or len(drive.polarization) != 2:
+        raise ConfigValidationError("drive.polarization must contain two complex amplitudes")
+    try:
+        polarization = [complex(value) for value in drive.polarization]
+    except (TypeError, ValueError) as exc:
+        raise ConfigValidationError("drive.polarization must contain two complex amplitudes") from exc
+    if not all(math.isfinite(value.real) and math.isfinite(value.imag) for value in polarization) or sum(abs(value) ** 2 for value in polarization) == 0:
+        raise ConfigValidationError("drive.polarization must have finite, nonzero norm")
+    if any(isinstance(value, complex) for value in drive.polarization):
+        drive.polarization = [str(value) if isinstance(value, complex) else value for value in drive.polarization]
     if type(drive.enabled) is not bool:
         raise ConfigValidationError("drive.enabled must be a boolean")
     for name in ("amplitude", "energy", "kx", "ky"):
@@ -326,8 +348,18 @@ def _validate_drive(cfg: Config) -> None:
         raise ConfigValidationError(f"drive profile/envelope: {exc}") from exc
 
 
+def _validate_reservoir(cfg: Config) -> None:
+    """Check the optional number of reservoir spin channels."""
+    if (cfg.reservoir.components is not None and
+            (type(cfg.reservoir.components) is not int or cfg.reservoir.components not in (1, 2))
+            or cfg.physics.spin == "scalar" and cfg.reservoir.components == 2):
+        raise ConfigValidationError("reservoir.components must be 1 or 2 and cannot exceed condensate components")
+
+
 def _validate_laser(cfg: Config) -> None:
     laser = cfg.laser
+    if isinstance(laser.circular_polarization, bool) or not isinstance(laser.circular_polarization, (int, float)) or not math.isfinite(laser.circular_polarization) or not -1 <= laser.circular_polarization <= 1:
+        raise ConfigValidationError("laser.circular_polarization must be in [-1, 1]")
     if cfg.reservoir.reservoir_type == "none" and (laser.P0 != 0 or laser.n_pulses > 0 or laser.mode == "multiple"):
         warnings.warn("Incoherent laser pump has no reservoir to feed when reservoir_type='none'.",
                       UserWarning, stacklevel=2)

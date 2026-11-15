@@ -1552,11 +1552,653 @@ def _auto_tune_block_size(kern_rhs, _N: int) -> int:
             continue
     return best_block
 
+
+def build_spinor_tiled_rhs_source(real_type: str, boundary: str,
+                                  tile_x: int, tile_y: int, terms=()) -> str:
+    """Build a two-field shared-memory stencil with corner halo samples."""
+    if real_type not in ("float", "double") or boundary not in ("periodic", "closed-interval"):
+        raise ValueError("Invalid spinor CUDA stencil variant")
+    periodic = 1 if boundary == "periodic" else 0
+    source = f'''typedef {real_type} real;
+__device__ __forceinline__ int spinor_coord(int value, int length) {{
+    if ({periodic}) return (value % length + length) % length;
+    if (length == 1) return 0;
+    while (value < 0 || value >= length) value = value < 0 ? -value : 2*length-2-value;
+    return value;
+}}
+extern "C" __global__ void spinor_tiled_rhs(
+    const real* field, const real* active, const real* inactive,
+    const real* potential_re, const real* potential_im,
+    const real* constants, real* output, int nx, int ny,
+    real inv_dx2, real inv_dy2, real inv_4dxdy) {{
+    const int tx = {tile_x}, ty = {tile_y}, pitch = tx+2, area = (tx+2)*(ty+2);
+    const int spatial_n = nx*ny, member = blockIdx.z, lane = threadIdx.x;
+    const int base_x = blockIdx.x*tx, base_y = blockIdx.y*ty;
+    extern __shared__ real scratch[];
+    for (int p = lane; p < area; p += blockDim.x) {{
+        int x = spinor_coord(base_x+p%pitch-1, nx);
+        int y = spinor_coord(base_y+p/pitch-1, ny);
+        int cell = y*nx+x;
+        for (int c = 0; c < 2; ++c) {{
+            int source = (member*2+c)*spatial_n+cell;
+            scratch[(2*c)*area+p] = field[2*source];
+            scratch[(2*c+1)*area+p] = field[2*source+1];
+        }}
+    }}
+    __syncthreads();
+    if (lane >= tx*ty) return;
+    int local_x = lane%tx, local_y = lane/tx;
+    int gx = base_x+local_x, gy = base_y+local_y;
+    if (gx >= nx || gy >= ny) return;
+    int cell = gy*nx+gx, p = (local_y+1)*pitch+local_x+1;
+    const real* q = constants+11*member;
+    real hbar = q[0], mass = q[1], gC = q[2], alpha2 = q[3];
+    real zeeman = q[4], beta = q[5], gR = q[6], gI = q[7];
+    real R = q[8], gammaC = q[9], eta = q[10];
+    real kinetic = -hbar*hbar/((real)2*mass), relax = eta*hbar/((real)2*mass);
+    real inv_hbar = (real)1/hbar;
+    real densities[2];
+    for (int c = 0; c < 2; ++c) {{
+        real re = scratch[(2*c)*area+p], im = scratch[(2*c+1)*area+p];
+        densities[c] = re*re+im*im;
+    }}
+    real lap[2][2], dif[2][2], crs[2][2];
+    for (int c = 0; c < 2; ++c) {{
+        for (int part = 0; part < 2; ++part) {{
+            const int plane = (2*c+part)*area;
+            real centre = scratch[plane+p];
+            real sx = scratch[plane+p+1]+scratch[plane+p-1]-2*centre;
+            real second_x = sx*inv_dx2;
+            lap[c][part] = second_x;
+            dif[c][part] = second_x;
+            crs[c][part] = 0;
+            if (ny > 1) {{
+                real sy = scratch[plane+p+pitch]+scratch[plane+p-pitch]-2*centre;
+                lap[c][part] += sy*inv_dy2;
+                dif[c][part] -= sy*inv_dy2;
+                crs[c][part] = (scratch[plane+p+pitch+1]-scratch[plane+p+pitch-1]
+                              -scratch[plane+p-pitch+1]+scratch[plane+p-pitch-1])*inv_4dxdy;
+            }}
+        }}
+    }}
+    for (int c = 0; c < 2; ++c) {{
+        int index = (member*2+c)*spatial_n+cell, other = 1-c;
+        real re = scratch[(2*c)*area+p], im = scratch[(2*c+1)*area+p];
+        real lap_re = lap[c][0], lap_im = lap[c][1];
+        real diff_re = dif[other][0], diff_im = dif[other][1];
+        real cross_re = crs[other][0], cross_im = crs[other][1];
+        real sign = c == 0 ? (real)1 : (real)-1;
+        real te_re = -beta*(diff_re+2*sign*cross_im);
+        real te_im = -beta*(diff_im-2*sign*cross_re);
+        real nr = active[index], ni = inactive[index];
+        real energy = potential_re[index]+gC*densities[c]+alpha2*densities[other]
+                    +sign*zeeman*(real)0.5+gR*nr+gI*ni;
+        real gain = (R*nr-gammaC)*(real)0.5+potential_im[index]*inv_hbar;
+        output[2*index] = gain*re+(energy*im+kinetic*lap_im+te_im)*inv_hbar+relax*nr*lap_re;
+        output[2*index+1] = gain*im-(energy*re+kinetic*lap_re+te_re)*inv_hbar+relax*nr*lap_im;
+    }}
+}}
+'''
+    if not terms:
+        return source
+    import re
+
+    declarations = ("const real* x_coords", "const real* y_coords", "real t_stage")
+    loads = []
+    energy_terms = []
+    rate_terms = []
+    for number, term in enumerate(terms):
+        expression = term.cuda.expression
+        for ctype, name, *layout in term.cuda.arguments:
+            kind = layout[0] if layout else "raw"
+            kernel_name = f"term_{number}_{name}"
+            declared_name = kernel_name if kind == "raw" else f"{kernel_name}_arg"
+            declarations += (f"{ctype.replace('{REAL}', real_type)} {declared_name}",)
+            if kind != "raw":
+                if "*" not in ctype:
+                    raise ValueError("Shared or batched CUDA arguments must be arrays")
+                value_type = ctype.replace("const", "").replace("*", "").replace(
+                    "{REAL}", real_type).strip()
+                offset = "cell" if kind == "shared" else "member*spatial_n+cell"
+                loads.append(f"        const {value_type} {kernel_name} = "
+                             f"{declared_name}[{offset}];")
+            expression = re.sub(rf"\b{name}\b", kernel_name, expression)
+        if term.category == "energy":
+            energy_terms.append(f"({expression})")
+        else:
+            rate_terms.append(f"({expression})")
+    source = source.replace("real inv_dx2, real inv_dy2, real inv_4dxdy) {",
+                            "real inv_dx2, real inv_dy2, real inv_4dxdy, "
+                            + ", ".join(declarations) + ") {")
+    local = ("        real rho = densities[c], n_active = nr, n_inactive = ni;\n"
+             "        real psi_re = re, psi_im = im;\n"
+             "        real x = x_coords[cell], y = y_coords[cell];\n")
+    if loads:
+        local += "\n".join(loads) + "\n"
+    local += ("        real extra_energy = " + (" + ".join(energy_terms) or "(real)0") + ";\n"
+              "        real extra_rate = " + (" + ".join(rate_terms) or "(real)0") + ";\n")
+    source = source.replace("        real energy = potential_re[index]", local +
+                            "        real energy = potential_re[index]")
+    source = source.replace("+sign*zeeman*(real)0.5+gR*nr+gI*ni;",
+                            "+sign*zeeman*(real)0.5+gR*nr+gI*ni+extra_energy;")
+    source = source.replace("+potential_im[index]*inv_hbar;",
+                            "+potential_im[index]*inv_hbar+extra_rate;")
+    return source
+
+
+def build_spinor_tiled_stage_source(real_type, boundary, tile_x, tile_y,
+                                     terms=(), graph=False,
+                                     varying_potential=False, drive=False):
+    """Build one paired field and reservoir RK derivative stage."""
+    source = build_spinor_tiled_rhs_source(real_type, boundary, tile_x, tile_y, terms)
+    source = source.replace("void spinor_tiled_rhs(", "void spinor_tiled_stage(")
+    source = source.replace(
+        "const real* field, const real* active, const real* inactive,",
+        "const real* field0, const real* previous_field,\n"
+        "    const real* active0, const real* inactive0,\n"
+        "    const real* previous_active, const real* previous_inactive,")
+    scale_args = ("const real* scales, int scale_index" if graph else "real scale")
+    scale = "scales[scale_index]" if graph else "scale"
+    source = source.replace(
+        "real inv_dx2, real inv_dy2, real inv_4dxdy",
+        "real inv_dx2, real inv_dy2, real inv_4dxdy,\n"
+        "    const real* pump, int pump_n, const real* weights, int res_components,\n"
+        f"    int reservoir_model, real factor, {scale_args},\n"
+        "    real* derivative_active, real* derivative_inactive")
+    source = source.replace("constants+11*member", "constants+17*member")
+    source = source.replace(
+        "scratch[(2*c)*area+p] = field[2*source];\n"
+        "            scratch[(2*c+1)*area+p] = field[2*source+1];",
+        "scratch[(2*c)*area+p] = field0[2*source]+factor*previous_field[2*source];\n"
+        "            scratch[(2*c+1)*area+p] = field0[2*source+1]+factor*previous_field[2*source+1];")
+    source = source.replace(
+        "real nr = active[index], ni = inactive[index];",
+        "int rindex = (member*res_components+(res_components == 1 ? 0 : c))*spatial_n+cell;\n"
+        "        real nr = reservoir_model == 3 ? (real)0 : active0[rindex]+factor*previous_active[rindex];\n"
+        "        real ni = (reservoir_model == 0 || reservoir_model == 3) ? (real)0 :\n"
+        "            inactive0[rindex]+factor*previous_inactive[rindex];")
+    anchor = "        output[2*index+1] = gain*im-(energy*re+kinetic*lap_re+te_re)*inv_hbar+relax*nr*lap_im;"
+    reservoir = f'''
+        if (reservoir_model != 3 && (res_components == 2 || c == 0)) {{
+            real density = res_components == 1 ? densities[0]+densities[1] : densities[c];
+            real weight = res_components == 1 ? (real)1 : weights[2*member+c];
+            real source = {scale}*pump[pump_n == spatial_n ? cell : member*spatial_n+cell]*weight;
+            real gammaR=q[11], gammaI=q[12], gammaA=q[13];
+            real ria=q[14], rai=q[15], kappa=q[16];
+            if (reservoir_model == 0) {{
+                derivative_active[rindex] = source-(gammaR+R*density)*nr;
+            }} else if (reservoir_model == 1) {{
+                derivative_active[rindex] = ria*ni-(gammaA+rai+R*density)*nr;
+                derivative_inactive[rindex] = source-(gammaI+ria)*ni+rai*nr;
+            }} else {{
+                real transfer=kappa*ni*ni;
+                derivative_active[rindex] = transfer-(gammaR+R*density)*nr;
+                derivative_inactive[rindex] = source-transfer-gammaI*ni;
+            }}
+        }}'''
+    source = source.replace(anchor, anchor + reservoir)
+    if varying_potential or drive:
+        feature_args = []
+        if varying_potential:
+            feature_args.extend(("const real* cap_re", "const real* cap_im"))
+        if drive:
+            feature_args.extend(("const real* drive_re", "const real* drive_im",
+                                 "const real* drive_energy"))
+        feature_args.extend(("const real* feature_values", "int feature_index",
+                             "int feature_members"))
+        source = source.replace(
+            "real* derivative_active, real* derivative_inactive",
+            "real* derivative_active, real* derivative_inactive,\n    " +
+            ", ".join(feature_args))
+        source = source.replace("const real* q = constants+17*member;",
+            "const real* q = constants+17*member;\n"
+            "    int feature_offset=(feature_index*feature_members+member)*3;\n"
+            "    real potential_scale=feature_values[feature_offset];\n"
+            "    real drive_scale=feature_values[feature_offset+1];")
+        if varying_potential:
+            source = source.replace("potential_re[index]+gC",
+                "(potential_re[index]*potential_scale+cap_re[index])+gC")
+            source = source.replace("+potential_im[index]*inv_hbar",
+                "+(potential_im[index]*potential_scale+cap_im[index])*inv_hbar")
+        if drive:
+            if varying_potential:
+                source = source.replace(
+                    "(potential_re[index]*potential_scale+cap_re[index])+gC",
+                    "(potential_re[index]*potential_scale+cap_re[index]-drive_energy[index])+gC")
+            else:
+                source = source.replace("potential_re[index]+gC",
+                    "(potential_re[index]-drive_energy[index])+gC")
+            source = source.replace("+relax*nr*lap_re;",
+                "+relax*nr*lap_re+drive_scale*drive_im[index]*inv_hbar;")
+            source = source.replace("+relax*nr*lap_im;",
+                "+relax*nr*lap_im-drive_scale*drive_re[index]*inv_hbar;")
+    if graph:
+        source = source.replace("real t_stage", "const real* stage_times, int stage_index")
+        source = source.replace("t_stage", "stage_times[stage_index]")
+    return source
+
+
+def build_spinor_finish_source(real_type):
+    """Combine four paired field and reservoir derivatives."""
+    return f'''typedef {real_type} real;
+extern "C" __global__ void spinor_finish(
+    const real* field0, const real* k0, const real* k1, const real* k2, const real* k3,
+    const real* active0, const real* a0, const real* a1, const real* a2, const real* a3,
+    const real* inactive0, const real* b0, const real* b1, const real* b2, const real* b3,
+    real* field_out, real* active_out, real* inactive_out,
+    int field_n, int reservoir_n, int reservoir_model, real sixth) {{
+    int j=blockIdx.x*blockDim.x+threadIdx.x;
+    if (j < 2*field_n) {{
+        field_out[j]=field0[j]+sixth*(k0[j]+(real)2*k1[j]+(real)2*k2[j]+k3[j]);
+    }}
+    if (j < reservoir_n && reservoir_model != 3) {{
+        active_out[j]=fmax((real)0,active0[j]+sixth*(a0[j]+(real)2*a1[j]+(real)2*a2[j]+a3[j]));
+        if (reservoir_model != 0) {{
+            inactive_out[j]=fmax((real)0,inactive0[j]+sixth*(b0[j]+(real)2*b1[j]+(real)2*b2[j]+b3[j]));
+        }}
+    }}
+}}
+'''
+
+
+_SPINOR_RESERVOIR_MODELS = {"SingleReservoir": 0, "DoubleReservoir": 1,
+                            "QuadraticDoubleReservoir": 2, "NoReservoir": 3}
+_SPINOR_STEP_RESERVOIR_PLANES = {0: 1, 1: 2, 2: 2, 3: 0}
+_SPINOR_STEP_STAGES = {"whole": (0, 4), "first": (0, 2), "second": (2, 4)}
+
+
+def spinor_step_planes(reservoir_model: int, res_components: int) -> int:
+    """Count the shared-memory planes of one spinor state bank."""
+    return 4 + _SPINOR_STEP_RESERVOIR_PLANES[reservoir_model] * (
+        res_components if reservoir_model != 3 else 0)
+
+
+def _spinor_step_bytes(tile_x, tile_y, two_d, planes, real_type, halo):
+    rows = tile_y + (2 * halo if two_d else 0)
+    return 2 * planes * (tile_x + 2 * halo) * rows * (4 if real_type == "float" else 8)
+
+
+def choose_spinor_step_tile(real_type, two_d, planes, block_limit, sm_limit, halo):
+    """Pick the largest spinor step tile that fits shared memory."""
+    candidates = ((32, 16), (32, 8), (16, 16), (16, 8), (8, 8)) if two_d else (
+        (256, 1), (128, 1), (64, 1))
+    for tile in candidates:
+        needed = _spinor_step_bytes(*tile, two_d, planes, real_type, halo)
+        if needed <= block_limit and 2 * needed <= sm_limit:
+            return tile
+    for tile in candidates:
+        if _spinor_step_bytes(*tile, two_d, planes, real_type, halo) <= block_limit:
+            return tile
+    return None
+
+
+def build_spinor_step_source(real_type, tile_x, tile_y, two_d, reservoir_model,
+                             res_components, terms=(), graph=False,
+                             varying_potential=False, drive=False, phase="whole",
+                             relaxation=True):
+    """Build a periodic spinor RK4 kernel covering stages of one step.
+
+    ``whole`` runs all four stages with a four-cell tile halo. ``first`` runs
+    stages 0-1 and stores the stage-1 derivative with the running weighted sum;
+    ``second`` resumes from those arrays and runs stages 2-3.
+    """
+    import re
+
+    if real_type not in ("float", "double") or phase not in _SPINOR_STEP_STAGES:
+        raise ValueError("Invalid spinor CUDA step variant")
+    begin, end = _SPINOR_STEP_STAGES[phase]
+    halo = end - begin
+    model = reservoir_model
+    comps = res_components if model != 3 else 0
+    has_inactive = _SPINOR_STEP_RESERVOIR_PLANES[model] == 2
+    planes = spinor_step_planes(model, res_components)
+    halo_y = halo if two_d else 0
+    rows = tile_y + 2 * halo_y
+    block = 256
+    iterations = ((tile_x + 2 * halo) * rows + block - 1) // block
+
+    def cell(plane, offset=""):
+        return f"bank[{plane}+p{offset}]"
+
+    def lap_expression(component, part, sign):
+        text = f"inv_dx2*sums_x[{component}][{part}]"
+        if two_d:
+            text += f"{sign}inv_dy2*sums_y[{component}][{part}]"
+        return text
+
+    if relaxation:
+        operator_definitions = (
+            f"                const real lap_re = {lap_expression('c', 0, '+')};\n"
+            f"                const real lap_im = {lap_expression('c', 1, '+')};\n"
+            f"                const real diff_re = {lap_expression('other', 0, '-')};\n"
+            f"                const real diff_im = {lap_expression('other', 1, '-')};\n")
+        relaxed_definition = "                const real relaxed = relax*nr;\n"
+        operator_re = "kinetic_h*lap_im+relaxed*lap_re-beta_h*diff_im"
+        operator_im = "-kinetic_h*lap_re+relaxed*lap_im+beta_h*diff_re"
+    else:
+        operator_definitions = relaxed_definition = ""
+        operator_re = ("kinetic_x*sums_x[c][1]-beta_x*sums_x[other][1]" + (
+            "+kinetic_y*sums_y[c][1]+beta_y*sums_y[other][1]" if two_d else ""))
+        operator_im = ("-kinetic_x*sums_x[c][0]+beta_x*sums_x[other][0]" + (
+            "-kinetic_y*sums_y[c][0]-beta_y*sums_y[other][0]" if two_d else ""))
+    cross_definition = ("                const real cross_term = "
+                        "c == 0 ? cross_coupling : -cross_coupling;\n" if two_d else "")
+    cross_re = "+cross_term*crs[other][0]" if two_d else ""
+    cross_im = "+cross_term*crs[other][1]" if two_d else ""
+    gr_term = "" if model == 3 else "+gR*nr"
+    gi_term = "+gI*ni" if has_inactive else ""
+    energy_terms = []
+    rate_terms = []
+    loads = []
+    declarations = []
+    if varying_potential:
+        declarations.extend(("const real* cap_re", "const real* cap_im"))
+    if drive:
+        declarations.extend(("const real* drive_re", "const real* drive_im",
+                             "const real* drive_energy"))
+    if varying_potential or drive:
+        declarations.extend(("const real* feature_values", "int feature_index",
+                             "int feature_members"))
+    if terms:
+        declarations.extend(("const real* x_coords", "const real* y_coords"))
+        declarations.append("const real* stage_times, int stage_index" if graph
+                            else "real time0, real time1, real time2")
+    for number, term in enumerate(terms):
+        expression = term.cuda.expression
+        for ctype, name, *layout in term.cuda.arguments:
+            kind = layout[0] if layout else "raw"
+            kernel_name = f"term_{number}_{name}"
+            concrete = ctype.replace("{REAL}", real_type)
+            if kind == "raw":
+                declarations.append(f"{concrete} {kernel_name}")
+            else:
+                if "*" not in ctype:
+                    raise ValueError("Shared or batched CUDA arguments must be arrays")
+                declarations.append(f"{concrete} {kernel_name}_arg")
+                value_type = concrete.replace("const", "").replace("*", "").strip()
+                offset = "cell" if kind == "shared" else "member*spatial_n+cell"
+                loads.append(f"                const {value_type} {kernel_name} = "
+                             f"{kernel_name}_arg[{offset}];")
+            expression = re.sub(rf"\b{name}\b", kernel_name, expression)
+        (energy_terms if term.category == "energy" else rate_terms).append(
+            f"({expression})")
+    scale_args = ("const real* scales, int scale_index" if graph else
+                  "real scale0, real scale1, real scale2")
+    scale_values = ("scales[scale_index+stage_slot]" if graph else
+                    "(stage_slot == 0 ? scale0 : (stage_slot == 1 ? scale1 : scale2))")
+    partial = ("real* __restrict__ {0}_field, real* __restrict__ {0}_active, "
+               "real* __restrict__ {0}_inactive")
+    partial_in = partial.replace("real* __restrict__", "const real* __restrict__")
+    outputs = {"whole": ["real* __restrict__ field_out", "real* __restrict__ active_out",
+                         "real* __restrict__ inactive_out"],
+               "first": [partial.format("k"), partial.format("acc")],
+               "second": ["real* __restrict__ field_out", "real* __restrict__ active_out",
+                          "real* __restrict__ inactive_out", partial_in.format("k"),
+                          partial_in.format("acc")]}[phase]
+    signature = ["const real* __restrict__ field0", "const real* __restrict__ active0",
+                 "const real* __restrict__ inactive0",
+                 "const real* __restrict__ potential_re",
+                 "const real* __restrict__ potential_im",
+                 "const real* __restrict__ constants", "const real* __restrict__ pump",
+                 "int pump_n", "const real* __restrict__ weights", *outputs,
+                 "int nx", "int ny", "real inv_dx2", "real inv_dy2", "real inv_4dxdy",
+                 "real half_dt", "real dt", "real dt6", scale_args, *declarations]
+    feature_setup = ""
+    if varying_potential or drive:
+        feature_setup = (
+            "        const int feature_offset="
+            "((feature_index+stage_slot)*feature_members+member)*3;\n"
+            "        const real potential_scale=feature_values[feature_offset];\n"
+            "        const real drive_scale=feature_values[feature_offset+1];\n")
+    term_time = ""
+    if terms:
+        term_time = ("        const real t_stage="
+                     + ("stage_times[stage_index+stage_slot];\n" if graph else
+                        "(stage_slot == 0 ? time0 : (stage_slot == 1 ? time1 : time2));\n"))
+    potential_re = "potential_re[index]"
+    potential_im = "potential_im[index]"
+    if varying_potential:
+        potential_re = "(potential_re[index]*potential_scale+cap_re[index])"
+        potential_im = "(potential_im[index]*potential_scale+cap_im[index])"
+    if drive:
+        potential_re = f"({potential_re}-drive_energy[index])"
+    drive_re = "+drive_scale*drive_im[index]*inv_hbar" if drive else ""
+    drive_im = "-drive_scale*drive_re[index]*inv_hbar" if drive else ""
+    extra = ""
+    extra_energy = extra_rate = ""
+    if terms:
+        extra = ("                const real rho = densities[c], n_active = nr, n_inactive = ni;\n"
+                 "                const real psi_re = re, psi_im = im;\n"
+                 "                const real x = x_coords[cell], y = y_coords[cell];\n")
+        if loads:
+            extra += "\n".join(loads) + "\n"
+        extra += ("                const real extra_energy = " +
+                  (" + ".join(energy_terms) or "(real)0") + ";\n"
+                  "                const real extra_rate = " +
+                  (" + ".join(rate_terms) or "(real)0") + ";\n")
+        extra_energy = "+extra_energy"
+        extra_rate = "+extra_rate"
+    reservoir_block = ""
+    if model != 3:
+        reservoir_derivative = {
+            0: "d[4+rc] = source-(gammaR+R*density)*nr;",
+            1: ("d[4+rc] = ria*ni-(gammaA+rai+R*density)*nr;\n"
+                f"                    d[4+{comps}+rc] = source-(gammaI+ria)*ni+rai*nr;"),
+            2: ("const real transfer = kappa*ni*ni;\n"
+                "                    d[4+rc] = transfer-(gammaR+R*density)*nr;\n"
+                f"                    d[4+{comps}+rc] = source-transfer-gammaI*ni;"),
+        }[model]
+        reservoir_block = f'''
+                if ({comps} == 2 || c == 0) {{
+                    const real density = {comps} == 1 ? densities[0]+densities[1] : densities[c];
+                    const real weight = {comps} == 1 ? (real)1 : weights[2*member+c];
+                    const real source = stage_scale*pump_value[it]*weight;
+                    {reservoir_derivative}
+                }}'''
+    nr_load = "(real)0" if model == 3 else "bank[(4+rc)*area+p]"
+    ni_load = "(real)0" if not has_inactive else f"bank[(4+{comps}+rc)*area+p]"
+    final_value = ("init[it][{k}]+dt6*(acc[it][{k}]+d[{k}])")
+
+    def field_loop(body):
+        return ("                    for (int c = 0; c < 2; ++c) {\n"
+                "                        const int target = (member*2+c)*spatial_n+cell;\n"
+                + body + "                    }\n")
+
+    def reservoir_loop(body):
+        if model == 3:
+            return ""
+        return (f"                    for (int r = 0; r < {comps}; ++r) {{\n"
+                f"                        const int rindex = (member*{comps}+r)*spatial_n+cell;\n"
+                + body + "                    }\n")
+
+    def write_all(field_name, active_name, inactive_name, value):
+        text = field_loop(
+            f"                        {field_name}[2*target] = {value.format(k='2*c')};\n"
+            f"                        {field_name}[2*target+1] = {value.format(k='2*c+1')};\n")
+        text += reservoir_loop(
+            f"                        {active_name}[rindex] = {value.format(k='4+r')};\n" + (
+                f"                        {inactive_name}[rindex] = "
+                f"{value.format(k=f'4+{comps}+r')};\n" if has_inactive else ""))
+        return text
+
+    clamped = "fmax((real)0, " + final_value + ")"
+    final_write = (field_loop(
+        "                        field_out[2*target] = " + final_value.format(k="2*c") + ";\n"
+        "                        field_out[2*target+1] = " + final_value.format(k="2*c+1") + ";\n"
+        ) + reservoir_loop(
+        "                        active_out[rindex] = " + clamped.format(k="4+r") + ";\n" + (
+            "                        inactive_out[rindex] = " +
+            clamped.format(k=f"4+{comps}+r") + ";\n" if has_inactive else "")))
+    partial_write = (write_all("k_field", "k_active", "k_inactive", "d[{k}]")
+                     + write_all("acc_field", "acc_active", "acc_inactive", "acc[it][{k}]"))
+    load_extra = ""
+    if phase == "second":
+        load_extra = f'''
+            real kin[{planes}];
+            for (int c = 0; c < 2; ++c) {{
+                const int source = (member*2+c)*spatial_n+cell;
+                kin[2*c] = k_field[2*source];
+                kin[2*c+1] = k_field[2*source+1];
+            }}''' + ("" if model == 3 else f'''
+            for (int r = 0; r < {comps}; ++r) {{
+                const int rindex = (member*{comps}+r)*spatial_n+cell;
+                kin[4+r] = k_active[rindex];''' + (f'''
+                kin[4+{comps}+r] = k_inactive[rindex];''' if has_inactive else "") + '''
+            }''') + f'''
+            for (int k = 0; k < {planes}; ++k) staged[k] = init[it][k]+half_dt*kin[k];
+            if (px >= {halo} && px < {halo}+tx && py >= {halo_y} && py < {halo_y}+{tile_y}) {{
+                for (int c = 0; c < 2; ++c) {{
+                    const int source = (member*2+c)*spatial_n+cell;
+                    acc[it][2*c] = acc_field[2*source];
+                    acc[it][2*c+1] = acc_field[2*source+1];
+                }}''' + ("" if model == 3 else f'''
+                for (int r = 0; r < {comps}; ++r) {{
+                    const int rindex = (member*{comps}+r)*spatial_n+cell;
+                    acc[it][4+r] = acc_active[rindex];''' + (f'''
+                    acc[it][4+{comps}+r] = acc_inactive[rindex];''' if has_inactive else "") + '''
+                }''') + '''
+            }'''
+    else:
+        load_extra = f'''
+            for (int k = 0; k < {planes}; ++k) staged[k] = init[it][k];'''
+    load_reservoir = ""
+    if model != 3:
+        load_reservoir = f'''
+            for (int r = 0; r < {comps}; ++r) {{
+                const int rindex = (member*{comps}+r)*spatial_n+cell;
+                init[it][4+r] = active0[rindex];'''
+        if has_inactive:
+            load_reservoir += f'''
+                init[it][4+{comps}+r] = inactive0[rindex];'''
+        load_reservoir += "\n            }"
+    last = end - 1
+    stage_end = "write_partial" if phase == "first" else "next_input"
+    source = f'''typedef {real_type} real;
+extern "C" __global__ void __launch_bounds__(256, 2) spinor_tiled_step(
+    {(","+chr(10)+"    ").join(signature)}) {{
+    const int tx = {tile_x}, pitch = tx+{2*halo}, rows = {rows}, area = pitch*rows;
+    const int spatial_n = nx*ny, member = blockIdx.z, lane = threadIdx.x;
+    const int base_x = blockIdx.x*tx, base_y = blockIdx.y*{tile_y};
+    extern __shared__ real scratch[];
+    const real* q = constants+17*member;
+    const real hbar = q[0], mass = q[1], gC = q[2], alpha2 = q[3];
+    const real zeeman = q[4], beta = q[5], gR = q[6], gI = q[7];
+    const real R = q[8], gammaC = q[9], eta = q[10];
+    const real gammaR = q[11], gammaI = q[12], gammaA = q[13];
+    const real ria = q[14], rai = q[15], kappa = q[16];
+    const real relax = eta*hbar/((real)2*mass);
+    const real inv_hbar = (real)1/hbar;
+    const real kinetic_h = -hbar/((real)2*mass), beta_h = beta*inv_hbar;
+    const real cross_coupling = (real)2*beta_h*inv_4dxdy;
+    const real half_R = R*(real)0.5, half_gammaC = gammaC*(real)0.5;
+    const real zeeman_half = zeeman*(real)0.5;
+    const real kinetic_x = kinetic_h*inv_dx2, kinetic_y = kinetic_h*inv_dy2;
+    const real beta_x = beta_h*inv_dx2, beta_y = beta_h*inv_dy2;
+    real init[{iterations}][{planes}], acc[{iterations}][{planes}];
+    int cells[{iterations}];
+    real pump_value[{iterations}];
+    #pragma unroll
+    for (int it = 0; it < {iterations}; ++it) {{
+        const int p = lane+it*{block};
+        if (p < area) {{
+            const int px = p%pitch, py = p/pitch;
+            const int x = (base_x+px-{halo}+nx*8)%nx;
+            const int y = {f"(base_y+py-{halo_y}+ny*8)%ny" if two_d else "0"};
+            const int cell = y*nx+x;
+            real staged[{planes}];
+            cells[it] = cell;
+            pump_value[it] = pump[pump_n == spatial_n ? cell : member*spatial_n+cell];
+            for (int c = 0; c < 2; ++c) {{
+                const int source = (member*2+c)*spatial_n+cell;
+                init[it][2*c] = field0[2*source];
+                init[it][2*c+1] = field0[2*source+1];
+            }}{load_reservoir}{load_extra}
+            for (int k = 0; k < {planes}; ++k) scratch[k*area+p] = staged[k];
+        }}
+    }}
+    __syncthreads();
+    #pragma unroll 1
+    for (int stage = {begin}; stage < {end}; ++stage) {{
+        const int local = stage-{begin};
+        const int stage_slot = stage == 0 ? 0 : (stage == 3 ? 2 : 1);
+        const real c_dt = stage == 2 ? dt : half_dt;
+        const real stage_scale = {scale_values};
+{feature_setup}{term_time}        const int in_offset = (local & 1)*{planes}*area;
+        const int out_offset = ((local+1) & 1)*{planes}*area;
+        const real* bank = scratch+in_offset;
+        #pragma unroll
+        for (int it = 0; it < {iterations}; ++it) {{
+            const int p = lane+it*{block};
+            const int px = p%pitch, py = p/pitch;
+            if (p >= area || px < local+1 || px >= pitch-local-1 ||
+                {"py < local+1 || py >= rows-local-1" if two_d else "false"}) continue;
+            const int cell = cells[it];
+            real d[{planes}];
+            real densities[2];
+            real sums_x[2][2]{", sums_y[2][2], crs[2][2]" if two_d else ""};
+            for (int c = 0; c < 2; ++c) {{
+                const real re = bank[(2*c)*area+p], im = bank[(2*c+1)*area+p];
+                densities[c] = re*re+im*im;
+                for (int part = 0; part < 2; ++part) {{
+                    const int plane = (2*c+part)*area;
+                    const real centre = {cell("plane")};
+                    sums_x[c][part] = {cell("plane", "+1")}+{cell("plane", "-1")}-2*centre;{"" if not two_d else f"""
+                    sums_y[c][part] = {cell("plane", "+pitch")}+{cell("plane", "-pitch")}-2*centre;
+                    crs[c][part] = {cell("plane", "+pitch+1")}-{cell("plane", "+pitch-1")}
+                                  -{cell("plane", "-pitch+1")}+{cell("plane", "-pitch-1")};"""}
+                }}
+            }}
+            for (int c = 0; c < 2; ++c) {{
+                const int other = 1-c, rc = {comps} == 1 ? 0 : c;
+                const int index = (member*2+c)*spatial_n+cell;
+                const real re = bank[(2*c)*area+p], im = bank[(2*c+1)*area+p];
+{operator_definitions}{cross_definition}                const real nr = {nr_load}, ni = {ni_load};
+{relaxed_definition}{extra}                const real energy_h = ({potential_re}+gC*densities[c]+alpha2*densities[other]
+                    +(c == 0 ? zeeman_half : -zeeman_half){gr_term}{gi_term}{extra_energy})*inv_hbar;
+                const real gain = half_R*nr-half_gammaC+{potential_im}*inv_hbar{extra_rate};
+                d[2*c] = gain*re+energy_h*im+{operator_re}{cross_re}{drive_re};
+                d[2*c+1] = gain*im-energy_h*re+{operator_im}{cross_im}{drive_im};{reservoir_block}
+            }}
+            const int vx = base_x+px-{halo}, vy = base_y+py-{halo_y};
+            const bool interior = px >= {halo} && px < {halo}+tx &&
+                py >= {halo_y} && py < {halo_y}+{tile_y} && vx < nx && vy < ny;
+            if (stage < 3) {{
+                for (int k = 0; k < {planes}; ++k) {{
+                    acc[it][k] = stage == 0 ? d[k] : acc[it][k]+(real)2*d[k];
+                }}
+{f"""                if (stage < {last}) {{
+                    for (int k = 0; k < {planes}; ++k) {{
+                        scratch[out_offset+k*area+p] = init[it][k]+c_dt*d[k];
+                    }}
+                }}
+""" if phase == "first" else f"""                for (int k = 0; k < {planes}; ++k) {{
+                    scratch[out_offset+k*area+p] = init[it][k]+c_dt*d[k];
+                }}
+"""}{f"""                if (stage == {last} && interior) {{
+{partial_write}                }}
+""" if phase == "first" else ""}            }}{f"""
+            else if (interior) {{
+{final_write}            }}""" if phase != "first" else ""}
+        }}
+        __syncthreads();
+    }}
+}}
+'''
+    lines = source.split("\n")
+    unrolled = []
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("for (int ") and "#pragma" not in unrolled[-1]:
+            unrolled.append(line[:len(line) - len(stripped)] + "#pragma unroll")
+        unrolled.append(line)
+    return "\n".join(unrolled)
+
+
 @register_solver("rk4-cuda")
 class RK4CudaSolver(AbstractSolver):
     """Generic fused RK4 CUDA solver with overridable kernel and launch hooks."""
     capabilities = SolverCapabilities(
-        components=frozenset({1}), ndim=frozenset({1, 2}),
+        components=frozenset({1, 2}), ndim=frozenset({1, 2}),
         grid_types=frozenset({"periodic", "closed-interval"}), reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         custom_reservoirs="unsupported", potential=True,
         kinetic_relaxation=True, dispersion=frozenset({"parabolic"}), terms=True,
@@ -1569,6 +2211,10 @@ class RK4CudaSolver(AbstractSolver):
     def __init__(self, config: Config, grid: SimulationGrid, model):
         """Set up the rk 4 cuda solver."""
         super().__init__(config, grid, model)
+        self._spinor = model.components == 2
+        if self._spinor:
+            self._init_spinor(config, grid, model)
+            return
         self.ndim = grid.ndim
         self.nx = grid.nx
         self.ny = grid.ny if grid.ndim == 2 else None
@@ -1786,6 +2432,556 @@ class RK4CudaSolver(AbstractSolver):
         self._compile_kernels()
         self._init_gpu_buffers()
         self._batch_ready = True
+
+    def _init_spinor(self, config, grid, model):
+        import numpy as np
+
+        self._spinor_grid = grid
+        self._spinor_dt = config.solver.dt
+        self._spinor_real = np.float32 if config.solver.precision == "single" else np.float64
+        self._spinor_complex = self.xp.complex64 if config.solver.precision == "single" else self.xp.complex128
+        self._spinor_kernel = None
+        self._spinor_tile_shape = None
+        self._spinor_term_codegen = False
+        self._spinor_term_arguments = ()
+        self._spinor_graphs = {}
+        self._spinor_graphs_failed = False
+        if not hasattr(self.xp, "cuda"):
+            return
+        members = self.batch_physics.size or 1
+        names = ("hbar", "m_eff", "g_C", "alpha_2", "zeeman", "te_tm",
+                 "g_R", "g_I", "R", "gamma_C", "kinetic_relaxation_eta")
+        columns = [np.asarray(self.batch_physics.host.get(
+            name, np.full(members, getattr(config.physics, name))), dtype=self._spinor_real)
+            for name in names]
+        self._spinor_constants = self.xp.asarray(np.stack(columns, axis=1).ravel())
+        reservoir_names = ("gamma_R", "gamma_I", "gamma_A", "R_IA", "R_AI", "kappa")
+        reservoir_columns = [np.asarray(self.batch_physics.host.get(
+            name, np.full(members, getattr(config.physics, name))), dtype=self._spinor_real)
+            for name in reservoir_names]
+        self._spinor_stage_constants = self.xp.asarray(
+            np.stack(columns + reservoir_columns, axis=1).ravel())
+        self._spinor_weights = (self.xp.ascontiguousarray(
+            model.pump_weights, dtype=self._spinor_real).ravel()
+            if model.pump_weights is not None else
+            self.xp.ones(2 * members, dtype=self._spinor_real))
+        self._spinor_feature_arrays = ()
+        if model.time_dependent_potential or model.drive is not None:
+            shape = (members, 2, *grid.shape)
+            arrays = []
+            if model.time_dependent_potential:
+                cap = self.xp.broadcast_to(model.cap, shape)
+                arrays.extend((self.xp.ascontiguousarray(
+                    self.xp.real(cap), dtype=self._spinor_real).ravel(),
+                    self.xp.ascontiguousarray(
+                    self.xp.imag(cap), dtype=self._spinor_real).ravel()))
+            if model.drive is not None:
+                drive = self.xp.broadcast_to(self.xp.asarray(model.drive.spatial), shape)
+                energy = self.xp.broadcast_to(self.xp.asarray(model.drive.energy), shape)
+                arrays.extend((self.xp.ascontiguousarray(
+                    self.xp.real(drive), dtype=self._spinor_real).ravel(),
+                    self.xp.ascontiguousarray(
+                    self.xp.imag(drive), dtype=self._spinor_real).ravel(),
+                    self.xp.ascontiguousarray(energy, dtype=self._spinor_real).ravel()))
+            self._spinor_feature_arrays = tuple(arrays)
+            self._spinor_feature_values = self.xp.empty(64 * 3 * members * 3,
+                                                         dtype=self._spinor_real)
+        props = self.xp.cuda.runtime.getDeviceProperties(self.xp.cuda.runtime.getDevice())
+        block_limit = props.get("sharedMemPerBlockOptin", props["sharedMemPerBlock"])
+        sm_limit = props.get("sharedMemPerMultiprocessor", block_limit)
+        real_type = "float" if config.solver.precision == "single" else "double"
+        if grid.ndim == 1:
+            tile_x = _choose_tile_x(real_type, "single", block_limit, sm_limit)
+            self._spinor_tile_shape = (tile_x or 128, 1)
+        else:
+            self._spinor_tile_shape = (_choose_tile_shape(real_type, "single", block_limit,
+                                                          sm_limit) or (8, 8))
+        tile_x, tile_y = self._spinor_tile_shape
+        self._spinor_term_codegen = bool(model.terms) and all(
+            term.cuda is not None for term in model.terms)
+        if self._spinor_term_codegen:
+            xp = self.xp
+            self._spinor_x_coords = xp.ascontiguousarray(grid.X, dtype=self._spinor_real).ravel()
+            self._spinor_y_coords = (xp.ascontiguousarray(grid.Y, dtype=self._spinor_real).ravel()
+                                     if grid.ndim == 2 else xp.zeros(grid.nx, dtype=self._spinor_real))
+            arguments = []
+            for term in model.terms:
+                values = term.cuda_values()
+                for ctype, name, *layout in term.cuda.arguments:
+                    value = values[name]
+                    if "*" in ctype:
+                        dtype = (xp.uint64 if "long long" in ctype else
+                                 xp.uint32 if "unsigned int" in ctype else
+                                 xp.int32 if "int" in ctype else
+                                 xp.float64 if "double" in ctype else
+                                 xp.float32 if "float" in ctype else
+                                 self._spinor_real)
+                        arguments.append(xp.ascontiguousarray(value, dtype=dtype).ravel())
+                    elif "int" in ctype:
+                        arguments.append(np.int32(value))
+                    else:
+                        arguments.append(np.float64(value) if "double" in ctype else
+                                         np.float32(value) if "float" in ctype else
+                                         self._spinor_real(value))
+            self._spinor_term_arguments = tuple(arguments)
+        source = build_spinor_tiled_rhs_source(
+            real_type, grid.boundary, tile_x, tile_y,
+            model.terms if self._spinor_term_codegen else ())
+        self._spinor_kernel = self.xp.RawKernel(source, "spinor_tiled_rhs")
+        stage_source = build_spinor_tiled_stage_source(
+            real_type, grid.boundary, tile_x, tile_y,
+            model.terms if self._spinor_term_codegen else (),
+            varying_potential=model.time_dependent_potential,
+            drive=model.drive is not None)
+        self._spinor_stage_kernel = self.xp.RawKernel(stage_source, "spinor_tiled_stage")
+        self._spinor_graph_stage_kernel = self.xp.RawKernel(
+            build_spinor_tiled_stage_source(real_type, grid.boundary, tile_x, tile_y,
+                model.terms if self._spinor_term_codegen else (), graph=True,
+                varying_potential=model.time_dependent_potential,
+                drive=model.drive is not None),
+            "spinor_tiled_stage")
+        self._spinor_finish_kernel = self.xp.RawKernel(
+            build_spinor_finish_source(real_type), "spinor_finish")
+        relaxation = bool(self.batch_physics.any_nonzero("kinetic_relaxation_eta"))
+        self._spinor_step_phases = ()
+        self._spinor_step_kernels = {}
+        reservoir_model = _SPINOR_RESERVOIR_MODELS.get(type(model.reservoir).__name__)
+        if grid.boundary == "periodic" and reservoir_model is not None:
+            planes = spinor_step_planes(reservoir_model, model.reservoir_components)
+            phases = (("whole",) if _prefer_tiled(config.solver.precision, props["major"],
+                                                  props["minor"]) else ("first", "second"))
+            tiles = {phase: choose_spinor_step_tile(
+                real_type, grid.ndim == 2, planes, block_limit, sm_limit,
+                _SPINOR_STEP_STAGES[phase][1] - _SPINOR_STEP_STAGES[phase][0])
+                for phase in phases}
+            if all(tile is not None for tile in tiles.values()):
+                self._spinor_step_phases = phases
+                for phase, (tile_x_step, tile_y_step) in tiles.items():
+                    halo = _SPINOR_STEP_STAGES[phase][1] - _SPINOR_STEP_STAGES[phase][0]
+                    shared = _spinor_step_bytes(tile_x_step, tile_y_step, grid.ndim == 2,
+                                                planes, real_type, halo)
+                    for graph in (False, True):
+                        kernel = self.xp.RawKernel(build_spinor_step_source(
+                            real_type, tile_x_step, tile_y_step, grid.ndim == 2,
+                            reservoir_model, model.reservoir_components,
+                            model.terms if self._spinor_term_codegen else (), graph,
+                            model.time_dependent_potential, model.drive is not None, phase,
+                            relaxation),
+                            "spinor_tiled_step")
+                        if shared > props["sharedMemPerBlock"]:
+                            kernel.max_dynamic_shared_size_bytes = shared
+                        self._spinor_step_kernels[(phase, graph)] = (
+                            kernel, (tile_x_step, tile_y_step), shared)
+        self._spinor_buffers = None
+        self._spinor_static_potential = None
+        self._spinor_pump_cache = None
+        if model.noise is not None and model.noise.active:
+            from polarism.noise.philox import cuda_source
+
+            noise_source = cuda_source(config.solver.precision)
+            noise_source = noise_source.replace(
+                "int member = j / spatial_n;",
+                "int member = j / (2*spatial_n); int component = (j / spatial_n) % 2;")
+            noise_source = noise_source.replace(
+                "unsigned int d = 1U;", "unsigned int d = 1U + (unsigned int)component;")
+            noise_source = noise_source.replace("0x1p-24f", "5.960464477539063e-8f")
+            noise_source = noise_source.replace("0x1p-53", "1.1102230246251565e-16")
+            noise_source = noise_source.replace("active[j]",
+                f"active[(member*{model.reservoir_components}+(component*({model.reservoir_components}==2)))*spatial_n+j%spatial_n]")
+            noise_source = noise_source.replace(
+                "unsigned long long step, int spatial_n, int total_n,",
+                "const unsigned long long* step_base, unsigned int step_offset, int spatial_n, int total_n,")
+            noise_source = noise_source.replace(
+                "    unsigned int b = (unsigned int)step;",
+                "    unsigned long long step = step_base[0] + step_offset;\n"
+                "    unsigned int b = (unsigned int)step;")
+            self._spinor_noise_graph_kernel = self.xp.RawKernel(
+                noise_source, f"add_wigner_{config.solver.precision}")
+            self._spinor_noise_base = self.xp.zeros(1, dtype=self.xp.uint64)
+        self._spinor_shared_bytes = 4 * (tile_x + 2) * (tile_y + 2) * self._spinor_real().nbytes
+
+    def _spinor_rhs(self, model, field, reservoir_fields, t):
+        from polarism.laser.pump_field import evaluate_pump
+        import numpy as np
+
+        if self._spinor_kernel is None:
+            return model.rhs(field, reservoir_fields, t)
+        xp = self.xp
+        pump = evaluate_pump(model.pump, t)
+        if model.reservoir_components == 1:
+            density = (field.real * field.real + field.imag * field.imag).sum(axis=1, keepdims=True)
+            res_derivs = model.reservoir.get_derivatives(field[:, :1], pump,
+                                                          reservoir_fields, rho=density)
+        else:
+            res_derivs = model.reservoir.get_derivatives(field, pump * model.pump_weights,
+                                                          reservoir_fields)
+        active = model.reservoir.get_active_density(reservoir_fields)
+        inactive = model.reservoir.get_inactive_density(reservoir_fields)
+        zero = xp.zeros(field.shape, dtype=field.real.dtype)
+        active = zero if xp.ndim(active) == 0 else xp.ascontiguousarray(xp.broadcast_to(active, field.shape))
+        inactive = zero if xp.ndim(inactive) == 0 else xp.ascontiguousarray(xp.broadcast_to(inactive, field.shape))
+        potential = model.potential_at(t)
+        vr = xp.ascontiguousarray(xp.broadcast_to(xp.real(potential), field.shape))
+        vi = (xp.ascontiguousarray(xp.broadcast_to(xp.imag(potential), field.shape))
+              if xp.iscomplexobj(potential) else zero)
+        result = xp.empty_like(field)
+        tile_x, tile_y = self._spinor_tile_shape
+        grid = self._spinor_grid
+        arguments = (xp.ascontiguousarray(field).view(field.real.dtype).ravel(),
+                     active.ravel(), inactive.ravel(), vr.ravel(), vi.ravel(),
+                     self._spinor_constants, result.view(field.real.dtype).ravel(),
+                     np.int32(grid.nx), np.int32(grid.ny if grid.ndim == 2 else 1),
+                     self._spinor_real(1 / grid.dx**2),
+                     self._spinor_real(1 / grid.dy**2 if grid.ndim == 2 else 0),
+                     self._spinor_real(1 / (4 * grid.dx * grid.dy) if grid.ndim == 2 else 0))
+        if self._spinor_term_codegen:
+            arguments += (self._spinor_x_coords, self._spinor_y_coords,
+                          self._spinor_real(t), *self._spinor_term_arguments)
+        self._spinor_kernel(((grid.nx + tile_x - 1) // tile_x,
+                             ((grid.ny + tile_y - 1) // tile_y if grid.ndim == 2 else 1),
+                             field.shape[0]), (max(256, tile_x * tile_y),),
+                            arguments,
+                            shared_mem=self._spinor_shared_bytes)
+        if model.terms and not self._spinor_term_codegen:
+            result += model.extra_rhs(field, reservoir_fields, t)
+        if model.drive is not None:
+            result += model.drive_contribution(field, t)
+        return result, res_derivs
+
+    def _step_spinor(self, model, state, dt):
+        self.batch_physics.check(state.field, 2)
+        if self._spinor_fast_supported(model, state):
+            return self._spinor_fast_step(model, state, dt)
+        reservoir = model.reservoir
+        field = state.field
+        initial = reservoir.get_state()
+        time = state.t
+        half = 0.5 * dt
+        k1, r1 = self._spinor_rhs(model, field, initial, time)
+        k2, r2 = self._spinor_rhs(model, field + half * k1,
+                                  tuple(a + half * b for a, b in zip(initial, r1)), time + half)
+        k3, r3 = self._spinor_rhs(model, field + half * k2,
+                                  tuple(a + half * b for a, b in zip(initial, r2)), time + half)
+        k4, r4 = self._spinor_rhs(model, field + dt * k3,
+                                  tuple(a + dt * b for a, b in zip(initial, r3)), time + dt)
+        sixth = dt / 6.0
+        result = field + sixth * (k1 + 2 * k2 + 2 * k3 + k4)
+        state.field = model.boundary.after_step_action(result.astype(field.dtype, copy=False))
+        reservoir.set_state(tuple(a + sixth * (b + 2 * c + 2 * d + e)
+                                  for a, b, c, d, e in zip(initial, r1, r2, r3, r4)))
+        state.step += 1
+        state.t = state.t0 + state.step * dt
+        return ACCEPTED
+
+    def _spinor_fast_supported(self, model, state):
+        import numpy as np
+
+        if self._spinor_kernel is None or (model.terms and not self._spinor_term_codegen):
+            return False
+        reservoir = model.reservoir
+        if type(reservoir).__name__ not in _SPINOR_RESERVOIR_MODELS:
+            return False
+        if (hasattr(reservoir, "batch_physics") and
+                any(reservoir.batch_physics.any_nonzero(name) for name in
+                    ("reservoir_diffusion_R", "reservoir_diffusion_A", "reservoir_diffusion_I"))):
+            return False
+        terms = model.pump.separable_terms() if hasattr(model.pump, "separable_terms") else None
+        if terms is None or len(terms) > 1:
+            return False
+        if terms and np.ndim(terms[0][1](state.t)) != 0:
+            return False
+        return True
+
+    def _spinor_feature_samples(self, model, times):
+        import numpy as np
+
+        members = self.batch_physics.size or 1
+        result = np.empty((len(times), members, 3), dtype=self._spinor_real)
+        def sample(value):
+            host = np.asarray(value.get() if hasattr(value, "get") else value)
+            return np.broadcast_to(host.reshape(-1), (members,))
+        for index, time in enumerate(times):
+            result[index, :, 0] = (sample(model.potential_envelope(time))
+                                   if model.time_dependent_potential else 1)
+            result[index, :, 1] = (sample(model.drive.envelope(time))
+                                   if model.drive is not None else 0)
+            result[index, :, 2] = time
+        return result.ravel()
+
+    def _spinor_fast_step(self, model, state, dt, graph_scales=None,
+                          graph_times=None, graph_offset=0):
+        import numpy as np
+
+        xp = self.xp
+        field = state.field
+        reservoir = model.reservoir
+        initial = reservoir.get_state()
+        res_components = model.reservoir_components
+        grid = self._spinor_grid
+        spatial_n = grid.nx * (grid.ny if grid.ndim == 2 else 1)
+        shape_key = (field.shape, len(initial), res_components)
+        if self._spinor_buffers is None or self._spinor_buffers[0] != shape_key:
+            reservoir_shape = (field.shape[0], res_components, *grid.shape)
+            zero_field = xp.zeros_like(field)
+            zero_res = xp.zeros(reservoir_shape, dtype=self._spinor_real)
+            staged = not self._spinor_step_phases
+            field_derivatives = tuple(xp.empty_like(field) for _ in range(4 if staged else 0))
+            res_derivatives = tuple(tuple(xp.empty(reservoir_shape, dtype=self._spinor_real)
+                                          for _ in initial) for _ in range(4 if staged else 0))
+            field_out = xp.empty_like(field)
+            res_out = tuple(xp.empty_like(item) for item in initial)
+            partials = (tuple((xp.empty_like(field), tuple(xp.empty_like(item) for item in initial))
+                              for _ in range(2)) if self._spinor_step_phases == ("first", "second")
+                        else ())
+            self._spinor_buffers = (shape_key, zero_field, zero_res,
+                                    field_derivatives, res_derivatives, field_out, res_out,
+                                    partials)
+            self._spinor_graphs.clear()
+        _, zero_field, zero_res, k, dr, out, out_res, partials = self._spinor_buffers
+        potential_source = (model.potential_static if model.time_dependent_potential
+                            else model.potential)
+        potential_key = (id(potential_source), field.shape)
+        if self._spinor_static_potential is None or self._spinor_static_potential[0] != potential_key:
+            potential = xp.broadcast_to(potential_source, field.shape)
+            vr = xp.ascontiguousarray(xp.real(potential), dtype=self._spinor_real).ravel()
+            vi = xp.ascontiguousarray(xp.imag(potential), dtype=self._spinor_real).ravel()
+            self._spinor_static_potential = (potential_key, vr, vi)
+        _, vr, vi = self._spinor_static_potential
+        terms = model.pump.separable_terms()
+        if terms:
+            envelope, coefficient = terms[0]
+            if self._spinor_pump_cache is None or self._spinor_pump_cache[0] is not envelope:
+                self._spinor_pump_cache = (
+                    envelope, xp.ascontiguousarray(envelope, dtype=self._spinor_real).ravel())
+            pump = self._spinor_pump_cache[1]
+            scales = tuple(self._spinor_real(coefficient(t)) for t in
+                           (state.t, state.t + dt / 2, state.t + dt))
+        else:
+            if not hasattr(self, "_spinor_zero_pump"):
+                self._spinor_zero_pump = xp.zeros(spatial_n, dtype=self._spinor_real)
+            pump = self._spinor_zero_pump
+            scales = (self._spinor_real(1),) * 3
+        model_id = _SPINOR_RESERVOIR_MODELS[type(reservoir).__name__]
+        real = self._spinor_real
+        has_features = model.time_dependent_potential or model.drive is not None
+        if has_features and graph_scales is None:
+            samples = self._spinor_feature_samples(
+                model, (state.t, state.t + dt / 2, state.t + dt))
+            self._spinor_feature_values[:samples.size].set(samples)
+        field_view = field.view(field.real.dtype).ravel()
+        a0 = initial[0].ravel() if initial else zero_res.ravel()
+        b0 = initial[1].ravel() if len(initial) > 1 else zero_res.ravel()
+        if self._spinor_step_phases:
+            self._spinor_fused_step(model, state, dt, field, field_view, a0, b0, out,
+                                    out_res, partials, vr, vi, pump, scales, graph_scales,
+                                    graph_times, graph_offset, has_features, zero_res)
+        else:
+            self._spinor_staged_step(model, state, dt, field, field_view, a0, b0, k, dr,
+                                     out, out_res, vr, vi, pump, scales, graph_scales,
+                                     graph_times, graph_offset, spatial_n, model_id,
+                                     has_features, zero_field, zero_res)
+        field_n = field.size
+        if graph_scales is not None and model.noise is not None and model.noise.active:
+            noise = model.noise
+            self._spinor_noise_graph_kernel(((field_n + 255) // 256,), (256,),
+                (out.view(field.real.dtype).ravel(),
+                 out_res[0].ravel() if initial else zero_res.ravel(),
+                 noise._device_seeds, noise._device_gamma, noise._device_scattering,
+                 noise._device_strength, self._spinor_noise_base,
+                 np.uint32(graph_offset), np.int32(spatial_n), np.int32(field_n),
+                 real(noise.dt / (4.0 * noise.volume))))
+        state.field = model.boundary.after_step_action(out)
+        for name, value in zip(reservoir.state_names, out_res):
+            setattr(reservoir, name, value)
+        state.step += 1
+        state.t = state.t0 + state.step * dt
+        return ACCEPTED
+
+    def _spinor_fused_step(self, model, state, dt, field, field_view, a0, b0, out,
+                           out_res, partials, vr, vi, pump, scales, graph_scales,
+                           graph_times, graph_offset, has_features, zero_res):
+        import numpy as np
+
+        grid = self._spinor_grid
+        real = self._spinor_real
+        two_d = grid.ndim == 2
+        initial = model.reservoir.get_state()
+        graph = graph_scales is not None
+        reservoir_arrays = lambda items: (
+            items[0].ravel() if initial else zero_res.ravel(),
+            items[1].ravel() if len(initial) > 1 else zero_res.ravel())
+        outputs = (out.view(field.real.dtype).ravel(), *reservoir_arrays(out_res))
+        partial_arrays = tuple(
+            (partial.view(field.real.dtype).ravel(), *reservoir_arrays(items))
+            for partial, items in partials)
+        common = (field_view, a0, b0, vr, vi, self._spinor_stage_constants, pump,
+                  np.int32(pump.size), self._spinor_weights)
+        geometry = (np.int32(grid.nx), np.int32(grid.ny if two_d else 1),
+                    real(1 / grid.dx**2), real(1 / grid.dy**2 if two_d else 0),
+                    real(1 / (4 * grid.dx * grid.dy) if two_d else 0),
+                    real(dt / 2), real(dt), real(dt / 6))
+        tail = scales if not graph else (graph_scales, np.int32(graph_offset * 3))
+        if has_features:
+            tail += (*self._spinor_feature_arrays, self._spinor_feature_values,
+                     np.int32(graph_offset * 3 if graph else 0), np.int32(field.shape[0]))
+        if self._spinor_term_codegen:
+            tail += (self._spinor_x_coords, self._spinor_y_coords)
+            if graph_times is None:
+                tail += tuple(real(state.t + fraction * dt) for fraction in (0, 0.5, 1))
+            else:
+                tail += (graph_times, np.int32(graph_offset * 3))
+            tail += self._spinor_term_arguments
+        for phase in self._spinor_step_phases:
+            kernel, (tile_x, tile_y), shared = self._spinor_step_kernels[(phase, graph)]
+            produced = (outputs if phase == "whole" else
+                        sum(partial_arrays, outputs if phase == "second" else ()))
+            kernel(((grid.nx + tile_x - 1) // tile_x,
+                    (grid.ny + tile_y - 1) // tile_y if two_d else 1, field.shape[0]),
+                   (256,), common + produced + geometry + tail, shared_mem=shared)
+
+    def _spinor_staged_step(self, model, state, dt, field, field_view, a0, b0, k, dr,
+                            out, out_res, vr, vi, pump, scales, graph_scales,
+                            graph_times, graph_offset, spatial_n, model_id, has_features,
+                            zero_field, zero_res):
+        import numpy as np
+
+        real = self._spinor_real
+        grid = self._spinor_grid
+        initial = model.reservoir.get_state()
+        res_components = model.reservoir_components
+        tile_x, tile_y = self._spinor_tile_shape
+        launch = ((grid.nx + tile_x - 1) // tile_x,
+                  ((grid.ny + tile_y - 1) // tile_y if grid.ndim == 2 else 1),
+                  field.shape[0])
+        zero_view = zero_field.view(field.real.dtype).ravel()
+        for stage in range(4):
+            prior = stage - 1
+            prev_field = k[prior].view(field.real.dtype).ravel() if stage else zero_view
+            prev_active = dr[prior][0].ravel() if stage and initial else zero_res.ravel()
+            prev_inactive = (dr[prior][1].ravel() if stage and len(initial) > 1
+                             else zero_res.ravel())
+            active_out = dr[stage][0].ravel() if initial else zero_res.ravel()
+            inactive_out = dr[stage][1].ravel() if len(initial) > 1 else zero_res.ravel()
+            factor = real((0, dt / 2, dt / 2, dt)[stage])
+            args = (field_view, prev_field, a0, b0, prev_active, prev_inactive,
+                    vr, vi, self._spinor_stage_constants,
+                    k[stage].view(field.real.dtype).ravel(), np.int32(grid.nx),
+                    np.int32(grid.ny if grid.ndim == 2 else 1),
+                    real(1 / grid.dx**2),
+                    real(1 / grid.dy**2 if grid.ndim == 2 else 0),
+                    real(1 / (4 * grid.dx * grid.dy) if grid.ndim == 2 else 0),
+                    pump, np.int32(pump.size), self._spinor_weights,
+                    np.int32(res_components), np.int32(model_id), factor)
+            if graph_scales is None:
+                args += (scales[(0, 1, 1, 2)[stage]],)
+            else:
+                args += (graph_scales, np.int32(graph_offset * 3 +
+                                               (0, 1, 1, 2)[stage]))
+            args += (active_out, inactive_out)
+            if has_features:
+                args += (*self._spinor_feature_arrays, self._spinor_feature_values,
+                         np.int32((graph_offset * 3 if graph_scales is not None else 0) +
+                                  (0, 1, 1, 2)[stage]), np.int32(field.shape[0]))
+            if self._spinor_term_codegen:
+                args += (self._spinor_x_coords, self._spinor_y_coords)
+                if graph_times is None:
+                    args += (real(state.t + (0, 0.5, 0.5, 1)[stage] * dt),)
+                else:
+                    args += (graph_times, np.int32(graph_offset * 3 +
+                                                  (0, 1, 1, 2)[stage]))
+                args += self._spinor_term_arguments
+            kernel = (self._spinor_graph_stage_kernel if graph_scales is not None
+                      else self._spinor_stage_kernel)
+            kernel(launch, (max(256, tile_x * tile_y),), args,
+                   shared_mem=self._spinor_shared_bytes)
+        field_n = field.size
+        reservoir_n = field.shape[0] * res_components * spatial_n if initial else 0
+        a = tuple(item[0].ravel() if initial else zero_res.ravel() for item in dr)
+        b = tuple(item[1].ravel() if len(initial) > 1 else zero_res.ravel()
+                  for item in dr)
+        self._spinor_finish_kernel(((2 * field_n + 255) // 256,), (256,),
+            (field_view, *(item.view(field.real.dtype).ravel() for item in k),
+             a0, *a, b0, *b, out.view(field.real.dtype).ravel(),
+             out_res[0].ravel() if initial else zero_res.ravel(),
+             out_res[1].ravel() if len(initial) > 1 else zero_res.ravel(),
+             np.int32(field_n), np.int32(reservoir_n), np.int32(model_id), real(dt / 6)))
+
+    def _advance_spinor_graph(self, model, state, n_steps):
+        import numpy as np
+
+        if n_steps <= 0:
+            return
+        dt = self.config.solver.dt
+        self._spinor_fast_step(model, state, dt)
+        if model.noise is not None and model.noise.active:
+            model.noise.apply_to_state(state, model.reservoir, state.step - 1)
+        if n_steps == 1:
+            return
+        xp = self.xp
+        if not hasattr(self, "_spinor_graph_stream"):
+            self._spinor_graph_stream = xp.cuda.Stream(non_blocking=True)
+            self._spinor_graph_scales = xp.empty(64 * 3, self._spinor_real)
+            self._spinor_graph_times = xp.empty(64 * 3, self._spinor_real)
+        self._spinor_graph_stage_kernel.compile()
+        self._spinor_finish_kernel.compile()
+        if model.noise is not None and model.noise.active:
+            self._spinor_noise_graph_kernel.compile()
+        xp.cuda.get_current_stream().synchronize()
+        stream = self._spinor_graph_stream
+        term = model.pump.separable_terms()
+        coefficient = term[0][1] if term else None
+        remaining = n_steps - 1
+        pending_hosts = []
+        with stream:
+            while remaining:
+                length = min(64, remaining)
+                if length not in self._spinor_graphs:
+                    start_step, start_time = state.step, state.t
+                    stream.synchronize()
+                    stream.begin_capture()
+                    try:
+                        for offset in range(length):
+                            self._spinor_fast_step(model, state, dt,
+                                self._spinor_graph_scales, self._spinor_graph_times,
+                                offset)
+                        graph = stream.end_capture()
+                    except Exception:
+                        try:
+                            stream.end_capture()
+                        except Exception:
+                            pass
+                        state.step, state.t = start_step, start_time
+                        raise
+                    state.step, state.t = start_step, start_time
+                    self._spinor_graphs[length] = graph
+                times = np.asarray([state.t0+(state.step+k)*dt+c*dt
+                                    for k in range(length) for c in (0, 0.5, 1)])
+                scales = (np.asarray([coefficient(t) for t in times],
+                                     dtype=self._spinor_real) if coefficient is not None
+                          else np.ones(length * 3, dtype=self._spinor_real))
+                self._spinor_graph_scales[:length*3].set(scales, stream=stream)
+                pending_hosts.append(scales)
+                if self._spinor_term_codegen:
+                    stage_times = times.astype(self._spinor_real)
+                    self._spinor_graph_times[:length*3].set(stage_times, stream=stream)
+                    pending_hosts.append(stage_times)
+                if model.time_dependent_potential or model.drive is not None:
+                    feature_values = self._spinor_feature_samples(model, times)
+                    self._spinor_feature_values[:feature_values.size].set(
+                        feature_values, stream=stream)
+                    pending_hosts.append(feature_values)
+                if model.noise is not None and model.noise.active:
+                    step_base = np.asarray([state.step], dtype=np.uint64)
+                    self._spinor_noise_base.set(step_base, stream=stream)
+                    pending_hosts.append(step_base)
+                self._spinor_graphs[length].launch(stream=stream)
+                state.step += length
+                state.t = state.t0 + state.step * dt
+                remaining -= length
+                if len(pending_hosts) >= 32:
+                    stream.synchronize()
+                    pending_hosts.clear()
+            stream.synchronize()
 
     def _build_kernel_source(
         self, bc_type: str, real_type: str, reservoir_type: str
@@ -2233,6 +3429,29 @@ class RK4CudaSolver(AbstractSolver):
 
     def advance(self, model, state, n_steps: int) -> None:
         """Run CUDA chunks; custom reservoirs or boundary actions need individual steps."""
+        if self._spinor:
+            if (self.config.solver.cuda_graphs and not self._spinor_graphs_failed and
+                    getattr(model.boundary.absorption, "after_step_is_noop", False) and
+                    self._spinor_fast_supported(model, state)):
+                field_backup = state.field.copy()
+                reservoir_backup = tuple(value.copy() for value in model.reservoir.get_state())
+                start_step, start_time = state.step, state.t
+                try:
+                    return self._advance_spinor_graph(model, state, n_steps)
+                except Exception as exc:
+                    import sys
+
+                    self._spinor_graphs_failed = True
+                    self._spinor_graphs.clear()
+                    print(f"rk4-cuda: spinor CUDA graphs unavailable ({exc}); using regular launches.",
+                          file=sys.stderr)
+                    self.xp.cuda.get_current_stream().synchronize()
+                    state.field = field_backup
+                    for name, value in zip(model.reservoir.state_names, reservoir_backup):
+                        setattr(model.reservoir, name, value)
+                    state.step, state.t = start_step, start_time
+                    return super().advance(model, state, n_steps)
+            return super().advance(model, state, n_steps)
         potential = model.potential
         pump = model.pump
         reservoir = model.reservoir
@@ -2552,6 +3771,8 @@ class RK4CudaSolver(AbstractSolver):
 
     def step(self, model, state, dt):
         """Advance with CUDA kernels or CuPy stages for a custom reservoir model."""
+        if self._spinor:
+            return self._step_spinor(model, state, dt)
         potential = model.potential
         pump = model.pump
         reservoir = model.reservoir

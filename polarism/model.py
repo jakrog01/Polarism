@@ -24,7 +24,8 @@ class Model:
 
     def __init__(self, grid, physics, precision, potential, pump, reservoir,
                  boundary, noise=None, terms=(), dispersion=None, drive=None,
-                 potential_static=None, cap=None, potential_envelope=None):
+                 potential_static=None, cap=None, potential_envelope=None,
+                 pump_weights=None, reservoir_components=1):
         self.grid = grid
         self.physics = physics
         self.precision = precision
@@ -43,6 +44,9 @@ class Model:
         self.terms = tuple(terms)
         self.dispersion = ParabolicDispersion() if dispersion is None else dispersion
         self._laplacian_buf = None
+        self.components = 2 if getattr(physics.physics, "spin", "scalar") == "spinor" else 1
+        self.pump_weights = pump_weights
+        self.reservoir_components = reservoir_components
 
     def potential_at(self, t):
         """Return V(r) f(t) + CAP, keeping the absorber time independent."""
@@ -84,6 +88,8 @@ class Model:
 
     def rhs(self, field, reservoir_fields, t, out=None):
         """Evaluate the finite-difference reference right-hand side."""
+        if self.components == 2:
+            return self._spinor_rhs(field, reservoir_fields, t, out)
         from polarism.laser.pump_field import evaluate_pump
 
         pump = evaluate_pump(self.pump, t)
@@ -119,6 +125,87 @@ class Model:
         if self._has_drive:
             dfield = dfield + self.drive_contribution(field, t)
         return dfield, res_derivs
+
+    def _spinor_rhs(self, field, reservoir_fields, t, out=None):
+        """Evaluate circular-basis spinor dynamics.
+
+        The TE–TM contribution is ``-β(∂x ∓ i∂y)² ψ∓`` in energy,
+        giving ``+β(kx ∓ i ky)²`` off diagonal in Fourier space.
+        """
+        from polarism.laser.pump_field import evaluate_pump
+
+        xp = self.xp
+        physics = self.physics
+        pump = evaluate_pump(self.pump, t)
+        if self.reservoir_components == 1:
+            density = (field.real * field.real + field.imag * field.imag).sum(axis=1, keepdims=True)
+            res_derivs = self.reservoir.get_derivatives(field[:, :1], pump, reservoir_fields, rho=density)
+        else:
+            res_derivs = self.reservoir.get_derivatives(field, pump * self.pump_weights, reservoir_fields)
+        n_active = self.reservoir.get_active_density(reservoir_fields)
+        n_inactive = self.reservoir.get_inactive_density(reservoir_fields)
+        lap = out
+        if lap is None:
+            if self._laplacian_buf is None or self._laplacian_buf.shape != field.shape:
+                self._laplacian_buf = xp.zeros_like(field)
+            lap = self._laplacian_buf
+        self._laplacian(field, lap)
+        density = xp.abs(field) ** 2
+        other_density = density[:, ::-1]
+        zeeman_sign = xp.asarray([1, -1]).reshape((1, 2, *(1,) * self.grid.ndim))
+        kinetic = -(physics.get("hbar")**2) / (2 * physics.get("m_eff")) * lap
+        eff_energy = (
+            self.potential_at(t) + physics.get("g_C") * density
+            + physics.get("alpha_2") * other_density
+            + physics.get("zeeman") * zeeman_sign / 2
+            + physics.get("g_R") * n_active + physics.get("g_I") * n_inactive
+        )
+        gain_loss = (physics.get("R") * n_active - physics.get("gamma_C")) / 2.0
+        eta = physics.get("kinetic_relaxation_eta")
+        hbar_over_2m = physics.get("hbar") / (2.0 * physics.get("m_eff"))
+        dfield = (-1j / physics.get("hbar")) * (
+            kinetic + eff_energy * field + self._te_tm_energy(field)
+        ) + gain_loss * field + eta * n_active * hbar_over_2m * lap
+        if self.terms:
+            dfield = dfield + self.extra_rhs(field, reservoir_fields, t)
+        if self._has_drive:
+            dfield = dfield + self.drive_contribution(field, t)
+        return dfield, res_derivs
+
+    def _te_tm_energy(self, field):
+        """Use central ∂xx−∂yy and a nine-point central ∂xy stencil.
+
+        Periodic edges wrap. Closed-interval edges mirror the adjacent
+        interior value, so the normal derivative and corner cross term vanish.
+        """
+        beta = self.physics.get("te_tm")
+        if not self.physics.any_nonzero("te_tm"):
+            return 0
+        xp = self.xp
+        other = field[:, ::-1]
+        dx = self.grid.dx
+        if self.grid.boundary == "periodic":
+            dxx = (xp.roll(other, -1, axis=-1) - 2 * other + xp.roll(other, 1, axis=-1)) / dx**2
+            if self.grid.ndim == 1:
+                return -beta * dxx
+            dy = self.grid.dy
+            dyy = (xp.roll(other, -1, axis=-2) - 2 * other + xp.roll(other, 1, axis=-2)) / dy**2
+            dxy = (xp.roll(xp.roll(other, -1, axis=-2), -1, axis=-1)
+                   - xp.roll(xp.roll(other, -1, axis=-2), 1, axis=-1)
+                   - xp.roll(xp.roll(other, 1, axis=-2), -1, axis=-1)
+                   + xp.roll(xp.roll(other, 1, axis=-2), 1, axis=-1)) / (4 * dx * dy)
+        else:
+            padded = xp.pad(other, ((0, 0), (0, 0), *((1, 1),) * self.grid.ndim), mode="reflect")
+            if self.grid.ndim == 1:
+                dxx = (padded[..., 2:] - 2 * other + padded[..., :-2]) / dx**2
+                return -beta * dxx
+            dy = self.grid.dy
+            dxx = (padded[..., 1:-1, 2:] - 2 * other + padded[..., 1:-1, :-2]) / dx**2
+            dyy = (padded[..., 2:, 1:-1] - 2 * other + padded[..., :-2, 1:-1]) / dy**2
+            dxy = (padded[..., 2:, 2:] - padded[..., 2:, :-2]
+                   - padded[..., :-2, 2:] + padded[..., :-2, :-2]) / (4 * dx * dy)
+        cross = xp.stack((-2j * dxy[:, 0], 2j * dxy[:, 1]), axis=1)
+        return -beta * (dxx - dyy + cross)
 
     def _laplacian(self, field, out):
         """Apply the grid's finite-difference Laplacian."""

@@ -31,6 +31,8 @@ class HDF5Storage(BaseStorage):
         """Open the HDF5 output file."""
         super().__init__(output_dir, batch_size)
         self.ndim = config.grid.ndim if config is not None else (2 if y is not None else 1)
+        self.components = 2 if config is not None and config.physics.spin == "spinor" else 1
+        self.reservoir_components = (config.reservoir.components or self.components) if config is not None else 1
         self.h5_path = self.output_dir / "results.h5"
         self.h5_file = h5py.File(self.h5_path, "a" if getattr(config, "_storage_resume", False) else "w")
         self.h5_datasets = {}
@@ -41,7 +43,7 @@ class HDF5Storage(BaseStorage):
         self.h5_file.attrs["format_version"] = 3
         self.h5_file.attrs["ndim"] = self.ndim
         self.h5_file.attrs["grid_type"] = config.grid.grid_type if config is not None else ""
-        self.h5_file.attrs["components"] = ["scalar"]
+        self.h5_file.attrs["components"] = (["plus", "minus"] if self.components == 2 else ["scalar"])
         self.h5_file.attrs["units"] = json.dumps({"x": "µm", "y": "µm", "time": "ps"})
         self.members = getattr(config, "_storage_members", None)
         if self.members is not None:
@@ -82,7 +84,11 @@ class HDF5Storage(BaseStorage):
         for field_name, field_list in self.field_buffers.items():
             field_array = np.array(field_list)
             component_axis = 2 if self.members is not None else 1
-            field_array = np.expand_dims(field_array, axis=component_axis)
+            has_components = (self.h5_file.attrs["components"].shape[0] == 2
+                              and field_name != "stokes"
+                              and field_array.ndim == self.ndim + (3 if self.members is not None else 2))
+            if not has_components and field_name != "stokes":
+                field_array = np.expand_dims(field_array, axis=component_axis)
             self._write_dataset(f"fields/{field_name}", field_array, is_scalar=False)
 
         for scalar_name, scalar_list in self.scalar_buffers.items():
@@ -136,7 +142,7 @@ class HDF5Storage(BaseStorage):
                 metadata = {"label": "time", "units": "ps", "dims": ["time"]}
             else:
                 metadata = self.dataset_metadata(leaf, field=not is_scalar)
-                if not is_scalar:
+                if not is_scalar and leaf != "stokes" and "component" not in metadata["dims"]:
                     metadata["dims"].insert(2 if self.members is not None else 1, "component")
             self.h5_datasets[name].attrs.update(metadata)
         else:

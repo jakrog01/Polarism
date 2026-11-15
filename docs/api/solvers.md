@@ -16,10 +16,12 @@ Solver classes publish a frozen `SolverCapabilities` declaration, which
 validation reads through the solver registry. See [Solver plugins](../plugins/solvers.md)
 for the full contract.
 
-Fields and reservoir state tuples use `(B, 1, *S)` arrays. Public `state.psi`
-and `state.psi_k` omit the component axis, and omit the member axis in an
-unbatched run. `S` is `(nx,)` in 1D or `(ny, nx)` in 2D. A shared potential or
-pump array uses `grid.shape`; batched inputs use `(B, 1, *S)`.
+Scalar fields and reservoir state tuples use `(B, 1, *S)` arrays. Spinor
+fields use `(B, 2, *S)`; their reservoirs use `(B, 2, *S)` by default or
+`(B, 1, *S)` when shared. Public `state.psi` and `state.psi_k` omit the
+member axis in an unbatched run and omit the component axis only for scalar
+runs. `S` is `(nx,)` in 1D or `(ny, nx)` in 2D. A shared potential or pump
+array uses `grid.shape`; batched inputs use `(B, 1, *S)`.
 
 The RK4 methods sample `model.pump` at `t`, `t + dt/2`, and `t + dt`.
 `etd-rk2` uses `t + dt/2`; split-step methods use `t + dt/4` and
@@ -28,6 +30,14 @@ A `PumpField` may expose separable spatial and temporal terms, allowing fused
 CUDA solvers to scale a cached envelope inside kernels.
 
 ## Available solver methods
+
+| `solver.method` | Spinor components |
+| --- | --- |
+| `rk4-fdm` | 2, on periodic and closed-interval grids |
+| `split-step-fft`, `ip-rk4`, `etd-rk2` | 2, on periodic grids |
+| `rk4-cuda` | 2, on periodic and closed-interval grids |
+| `split-step-fft-cuda`, `ifrk-fft-cuda`, `ifrk4-fft-cuda` | 2, on periodic grids |
+| `rk4-fdm-fused` | 1 only |
 
 | `solver.method` | Family | Intended role |
 | --- | --- | --- |
@@ -96,9 +106,10 @@ The package includes explicit compatibility checks and warnings. In practice:
 - CUDA solvers are meaningful only when the GPU backend is actually active
 - `reservoir_type: none` is supported by all solvers except `rk4-fdm-fused`
 
-`split-step-fft-cuda` keeps the wavefunction in Fourier space between steps and
-uses two cuFFT transforms per step. Its local kernel combines two reservoir RK2
-half-steps with the exact condensate step. It supports all built-in reservoirs,
+For scalar runs, `split-step-fft-cuda` keeps the wavefunction in Fourier space
+between steps and uses two cuFFT transforms per step. Its local kernel combines
+two reservoir RK2 half-steps with the exact condensate step. It supports all
+built-in reservoirs,
 including reservoir diffusion via a slower periodic stencil path, and custom
 reservoirs through their `step` method. A mask absorber costs two additional
 transforms; CAP absorption stays on the fast path. It requires an active CUDA
@@ -108,6 +119,19 @@ With coherent drive, it places source half-steps around the local condensate
 step and evaluates the envelope at `t + dt/2`. A varying potential is sampled
 at the same midpoint while CAP remains static. Extra terms use their CUDA
 snippets in the local factor.
+
+For spinors, `rk4-cuda` evaluates each RK stage with a tiled two-field stencil.
+The shared-memory tile includes all four halo corners for the nine-point
+mixed derivative. Its tile shape comes from `_choose_tile_shape` in 2D and
+`_choose_tile_x` in 1D; double precision can select a smaller tile when
+shared-memory occupancy is limited. Stage combinations and reservoir updates
+use CuPy arrays. Supported extra terms are generated from their CUDA snippets
+inside the tiled RHS. This path has more launches and memory traffic than the
+scalar fused path. The spectral CUDA solvers apply the 2×2 propagator to both
+Fourier components with a dedicated CUDA matrix kernel; their spinor local and
+reservoir steps use CuPy array operations. Spinor runs currently execute
+ordinary launches when `cuda_graphs: true`. Benchmark spinor throughput and
+FP64 tile occupancy on the target GPU before production use.
 
 For CUDA graph eligibility, precision guidance, benchmarking, and device
 selection, see [Running on GPUs](../user-guide/running-on-gpus.md).

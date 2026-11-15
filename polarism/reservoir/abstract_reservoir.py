@@ -18,6 +18,8 @@ class AbstractReservoir(ABC):
 
     def _public_density(self, field):
         """Return a public-shape view of a canonical reservoir field."""
+        if getattr(self, "components", 1) == 2:
+            return field if self._batched else field[0]
         return field[:, 0] if self._batched else field[0, 0]
 
     def _check_state_shape(self, state, shape):

@@ -64,6 +64,29 @@ def _compute_density(**ctx):
     return xp.abs(ctx["state"].psi) ** 2
 
 
+def _compute_stokes(**ctx):
+    """Return S0, S1, S2, S3 in the circular basis."""
+    xp = compute_engine.xp
+    state = ctx["state"]
+    plus = state.psi_plus
+    minus = state.psi_minus
+    coherence = xp.conj(plus) * minus
+    axis = 1 if state.batched else 0
+    return xp.stack((xp.abs(plus) ** 2 + xp.abs(minus) ** 2,
+                     2 * coherence.real, 2 * coherence.imag,
+                     xp.abs(plus) ** 2 - xp.abs(minus) ** 2), axis=axis)
+
+
+def _compute_degree_of_polarization(**ctx):
+    """Return the local Stokes-vector length divided by S0."""
+    xp = compute_engine.xp
+    stokes = _compute_stokes(**ctx)
+    axis = 1 if ctx["state"].batched else 0
+    s0 = xp.take(stokes, 0, axis=axis)
+    polarized = xp.sqrt((xp.take(stokes, xp.asarray([1, 2, 3]), axis=axis) ** 2).sum(axis=axis))
+    return xp.where(s0 > 0, polarized / xp.maximum(s0, 1e-30), 0)
+
+
 def _compute_total_norm(**ctx):
     """Compute the total condensate norm."""
     xp = compute_engine.xp
@@ -71,6 +94,8 @@ def _compute_total_norm(**ctx):
     psi = ctx["state"].psi
     total = ((xp.abs(psi) ** 2).sum(axis=tuple(range(-grid.ndim, 0)))
              if ctx["state"].batched else (xp.abs(psi) ** 2).sum())
+    if ctx["state"].components == 2 and ctx["state"].batched:
+        total = total.sum(axis=1)
     for spacing in reversed(grid.spacing):
         total = total * spacing
     return total
@@ -227,6 +252,7 @@ class SimulationController:
                 k_cutoff_um=member.noise.initial_k_cutoff_um,
                 seed=member.noise.seed,
                 initial_condition=member.initial_condition,
+                components=2 if member.physics.spin == "spinor" else 1,
             ) for member in member_configs]
             initial_fields = self.xp.stack([state.psi for state in states])
             self.state = states[0]
@@ -247,6 +273,7 @@ class SimulationController:
                 k_cutoff_um=cfg.noise.initial_k_cutoff_um,
                 seed=cfg.noise.seed,
                 initial_condition=cfg.initial_condition,
+                components=2 if cfg.physics.spin == "spinor" else 1,
             )
         self._batch_physics = batch_physics
         self.max_laser_power = self._compute_max_laser_power()
@@ -468,6 +495,21 @@ class SimulationController:
                 is_field=False,
             ),
         ]
+        if self.state.components == 2:
+            for name, component in (("density_plus", 0), ("density_minus", 1)):
+                nodes.append(ResultNode(
+                    name=name, label=name, compute_fn=lambda component=component, **ctx:
+                    self.xp.abs(ctx["state"].psi_plus if component == 0 else ctx["state"].psi_minus) ** 2,
+                    reduce_dim_fn=lambda f: float(f.sum()), cmap="magma", scaling=None,
+                    clim=None, expose=True, save=True, cut=None, is_field=True,
+                ))
+            for name, compute in (("stokes", _compute_stokes),
+                                  ("degree_of_polarization", _compute_degree_of_polarization)):
+                nodes.append(ResultNode(
+                    name=name, label=name, compute_fn=compute,
+                    reduce_dim_fn=lambda f: f, cmap=None, scaling=None,
+                    clim=None, expose=False, save=True, cut=None, is_field=True,
+                ))
         if hasattr(self.reservoir, "make_result_nodes"):
             nodes.extend(self.reservoir.make_result_nodes())
         if self._batched:
@@ -476,7 +518,7 @@ class SimulationController:
                 if not node.is_field and node.name.endswith("_max"):
                     field_node = field_nodes.get(node.name[:-4])
                     if field_node is not None:
-                        axes = tuple(range(-self.grid.ndim, 0))
+                        axes = tuple(range(-self.grid.ndim - (1 if self.state.components == 2 and getattr(self.reservoir, "components", 1) == 2 else 0), 0))
                         node.compute_fn = lambda field_node=field_node, axes=axes, **ctx: field_node.compute_fn(**ctx).max(axis=axes)
                         node.reduce_dim_fn = lambda value: value
 
@@ -528,6 +570,10 @@ class SimulationController:
     def _drive_result_field(self):
         """Return the static drive magnitude with a batch axis when needed."""
         field = self.xp.abs(self.model.drive.spatial)
+        if self.state.components == 2:
+            if self._batched and field.ndim == self.grid.ndim + 1:
+                return self.xp.broadcast_to(field, (len(self._member_configs), *field.shape))
+            return field
         if self._batched:
             if field.ndim == self.grid.ndim:
                 return self.xp.broadcast_to(field, (len(self._member_configs), *self.grid.shape))
@@ -546,15 +592,18 @@ class SimulationController:
         """Set a real-space initial field and optional reservoir densities."""
         shape = tuple(psi.shape)
         spatial = self.grid.shape
-        if shape[-self.grid.ndim:] != spatial or len(shape) not in (self.grid.ndim, self.grid.ndim + 1):
+        public_rank = self.grid.ndim + (1 if self.state.components == 2 else 0)
+        if shape[-self.grid.ndim:] != spatial or len(shape) not in (public_rank, public_rank + 1):
             raise ValueError(f"psi grid shape must end in {spatial}, got {shape}")
-        if len(shape) == self.grid.ndim + 1 and shape[0] < 1:
+        if self.state.components == 2 and shape[-self.grid.ndim - 1] != 2:
+            raise ValueError("psi component axis must have length 2")
+        if len(shape) == public_rank + 1 and shape[0] < 1:
             raise ValueError("psi batch shape must have at least one member")
         if not np.isfinite(t) or t < 0:
             raise ValueError("t must be finite and nonnegative")
         dtype = complex_dtype(self.xp, self.cfg.solver.precision)
-        self.state.batch_size = shape[0] if len(shape) == self.grid.ndim + 1 else 1
-        self.state.batched = len(shape) == self.grid.ndim + 1
+        self.state.batch_size = shape[0] if len(shape) == public_rank + 1 else 1
+        self.state.batched = len(shape) == public_rank + 1
         self.state.psi = self.xp.asarray(psi, dtype=dtype).copy()
         self.state.t0 = float(t)
         self.state.t = float(t)
@@ -566,7 +615,12 @@ class SimulationController:
             expected = self.reservoir.get_state()
             if len(fields) != len(expected):
                 raise ValueError("reservoir state field count mismatch")
-            if any(tuple(field.shape) != shape for field in fields):
+            if self.state.components == 2:
+                expected_shape = (self.state.batch_size, getattr(self.reservoir, "components", 1), *spatial)
+                public_shape = ((self.state.batch_size, *spatial) if self.state.batched else spatial) if expected_shape[1] == 1 else (expected_shape if self.state.batched else expected_shape[1:])
+                if any(tuple(field.shape) not in (expected_shape, public_shape) for field in fields):
+                    raise ValueError("reservoir batch or grid shape mismatch")
+            elif any(tuple(field.shape) != shape for field in fields):
                 raise ValueError("reservoir batch or grid shape mismatch")
             self._restore_reservoir(fields)
         else:
@@ -588,7 +642,7 @@ class SimulationController:
         from polarism.reservoir.single_reservoir import SingleReservoir
 
         dtype = real_dtype(self.xp, self.cfg.solver.precision) if cast else None
-        shape = self.state.field.shape
+        shape = (self.state.batch_size, getattr(self.reservoir, "components", 1), *self.grid.shape)
         arrays = tuple(self.xp.asarray(field, dtype=dtype).reshape(shape).copy() for field in fields)
         if hasattr(self.reservoir, "_batched"):
             self.reservoir._batched = self.state.batched
@@ -625,7 +679,9 @@ class SimulationController:
         psi = snapshot(self.state.psi)
         density = np.abs(psi) ** 2
         density.setflags(write=False)
-        reservoir = tuple(snapshot(field[:, 0] if self.state.batched else field[0, 0])
+        reservoir = tuple(snapshot(field if self.state.batched and getattr(self.reservoir, "components", 1) == 2 else
+                                   field[:, 0] if self.state.batched else
+                                   field[0] if getattr(self.reservoir, "components", 1) == 2 else field[0, 0])
                           for field in self.reservoir.get_state())
         return RunEventView(self.state.t, self.state.step, psi, density, reservoir,
                             self.state.batched, self.state.batch_size)
@@ -646,6 +702,8 @@ class SimulationController:
         """Compare norm and density against the preceding scheduled check."""
         xp = self.xp
         density = xp.abs(self.state.psi) ** 2
+        if self.state.components == 2:
+            density = density.sum(axis=1 if self.state.batched else 0)
         axes = tuple(range(-self.grid.ndim, 0))
         cell = 1.0
         for spacing in self.grid.spacing:
@@ -761,7 +819,7 @@ class SimulationController:
             if shape[-self.grid.ndim:] != self.grid.shape or len(shape) != self.grid.ndim + 2:
                 raise ValueError("checkpoint field shape mismatch")
             batched = bool(h5.attrs["batched"])
-            public_shape = (shape[0], *self.grid.shape) if batched else self.grid.shape
+            public_shape = ((shape[0], *shape[1:]) if batched else shape[1:]) if self.state.components == 2 else ((shape[0], *self.grid.shape) if batched else self.grid.shape)
             if not batched and shape[0] != 1:
                 raise ValueError("checkpoint batch shape mismatch")
             if self._state_shape_explicit and public_shape != self.state.psi.shape:
@@ -770,7 +828,8 @@ class SimulationController:
             if set(h5["reservoir"]) != set(names):
                 raise ValueError("checkpoint reservoir names mismatch")
             fields = tuple(h5["reservoir"][name][:] for name in names)
-            if len(fields) != len(self.reservoir.get_state()) or any(x.shape != shape for x in fields):
+            reservoir_shape = (shape[0], getattr(self.reservoir, "components", 1), *self.grid.shape)
+            if len(fields) != len(self.reservoir.get_state()) or any(x.shape != reservoir_shape for x in fields):
                 raise ValueError("checkpoint reservoir batch shape mismatch")
             step = int(h5.attrs["step"])
             t = float(h5.attrs["t"])
@@ -790,8 +849,9 @@ class SimulationController:
             steady_density = h5["steady_density"][:] if "steady_density" in h5 else None
             if (steady_norm is None) != (steady_density is None):
                 raise ValueError("checkpoint steady-state reference is incomplete")
+            steady_shape = ((shape[0], *self.grid.shape) if batched else self.grid.shape)
             if steady_norm is not None and (np.shape(steady_norm) != (shape[0],)
-                                            or steady_density.shape != public_shape):
+                                            or steady_density.shape != steady_shape):
                 raise ValueError("checkpoint steady-state reference shape mismatch")
             if steady_last_step > step or steady_last_step < -1:
                 raise ValueError("checkpoint steady-state check step mismatch")
@@ -839,9 +899,13 @@ class SimulationController:
                 if self.grid.ndim == 2:
                     phase = phase + member.drive.ky * self.grid.Y
                 source = member.drive.amplitude * create_profile(member.drive.profile, self.grid) * self.xp.exp(1j * phase)
+                if self.state.components == 2:
+                    polarization = self.xp.asarray([complex(value) for value in member.drive.polarization], dtype=complex_dtype(self.xp, cfg.solver.precision))
+                    polarization = polarization / self.xp.sqrt((self.xp.abs(polarization) ** 2).sum())
+                    source = polarization.reshape((2, *(1,) * self.grid.ndim)) * source
                 spatial.append(self.xp.asarray(source, dtype=complex_dtype(self.xp, cfg.solver.precision)))
             source = (spatial[0] if len(spatial) == 1 or all(bool(self.xp.array_equal(spatial[0], item)) for item in spatial[1:])
-                      else self.xp.stack(spatial)[:, None])
+                      else self.xp.stack(spatial)[:, None] if self.state.components == 1 else self.xp.stack(spatial))
             energies = [member.drive.energy for member in members]
             energy = (energies[0] if len(energies) == 1 or all(value == energies[0] for value in energies[1:])
                       else self.xp.asarray(energies, dtype=real_dtype(self.xp, cfg.solver.precision)).reshape((-1, 1, *(1,) * self.grid.ndim)))
@@ -849,12 +913,19 @@ class SimulationController:
         potential_envelope = None
         if self._potential_dynamic:
             potential_envelope = self._member_envelope([member.potential.envelope for member in members])
+        pump_weights = None
+        if self.state.components == 2:
+            weights = self.xp.asarray([[(1 + member.laser.circular_polarization) / 2,
+                                       (1 - member.laser.circular_polarization) / 2]
+                                      for member in members], dtype=real_dtype(self.xp, cfg.solver.precision))
+            pump_weights = weights.reshape((len(members), 2, *(1,) * self.grid.ndim))
         return Model(self.grid, physics, cfg.solver.precision, self.potential,
                      self.pump_field, self.reservoir, self.boundary_condition, noise,
                      terms, dispersion, drive,
                      self._potential_static if self._potential_dynamic else None,
                      self._potential_cap if self._potential_dynamic else None,
-                     potential_envelope)
+                     potential_envelope, pump_weights,
+                     getattr(self.reservoir, "components", 1))
 
     def _member_envelope(self, specs):
         """Build one scalar envelope or a member-broadcast coefficient."""

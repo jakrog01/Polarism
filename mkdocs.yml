@@ -24,6 +24,7 @@ nav:
       - Grid and Parameters: user-guide/grid-and-parameters.md
       - Potentials and Pumps: user-guide/potentials-and-pumps.md
       - Coherent Drive: user-guide/coherent-drive.md
+      - Spin and Polarization: user-guide/spin-and-polarization.md
       - Profiles and Envelopes: user-guide/profiles-and-envelopes.md
       - Time Evolution: user-guide/time-evolution.md
       - Output and Visualization: user-guide/output-and-visualization.md

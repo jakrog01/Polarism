@@ -38,7 +38,8 @@ def _read_hdf5(path: Path, frame: int):
     """Read a field from a Polarism results file or a checkpoint v2."""
     with h5py.File(path, "r") as h5:
         if h5.attrs.get("checkpoint_version") == 2:
-            return h5["field"][0, 0]
+            field = h5["field"]
+            return field[0] if field.shape[1] == 2 else field[0, 0]
         if "fields/psi" not in h5:
             raise ValueError(
                 f"initial_condition.path {str(path)!r} is neither a checkpoint v2 nor a "
@@ -52,8 +53,8 @@ def _read_hdf5(path: Path, frame: int):
             )
         index = frame if frame >= 0 else count + frame
         if "member" in dataset.attrs["dims"]:
-            return dataset[index, 0, 0]
-        return dataset[index, 0]
+            return dataset[index, 0] if dataset.shape[2] == 2 else dataset[index, 0, 0]
+        return dataset[index] if dataset.shape[1] == 2 else dataset[index, 0]
 
 
 @register_initial_condition("file")
@@ -70,7 +71,7 @@ def from_file(grid, cfg, xp, cdtype):
         raise ValueError(
             f"initial_condition.path {str(path)!r} must be a .npy, .h5 or .hdf5 file"
         )
-    if tuple(psi.shape) != tuple(grid.shape):
+    if tuple(psi.shape) not in (tuple(grid.shape), (2, *grid.shape)):
         raise ValueError(
             f"initial_condition.path {str(path)!r} holds a field of shape {tuple(psi.shape)}, "
             f"but the grid shape is {tuple(grid.shape)}; interpolation is not supported"

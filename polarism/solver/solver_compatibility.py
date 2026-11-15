@@ -38,8 +38,9 @@ def check_solver_compatibility(cfg) -> None:
         raise SolverCompatibilityError(
             f"solver.method={solver!r} does not support grid.ndim={cfg.grid.ndim}"
         )
-    if 1 not in caps.components:
-        raise SolverCompatibilityError(f"Solver '{solver}' does not support one component")
+    components = 2 if cfg.physics.spin == "spinor" else 1
+    if components not in caps.components:
+        raise SolverCompatibilityError(f"Solver '{solver}' does not support {components} components")
     if boundary not in caps.grid_types:
         raise SolverCompatibilityError(
             f"Solver '{solver}' does not support grid_type='{grid_type}' "

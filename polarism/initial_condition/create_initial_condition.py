@@ -14,9 +14,9 @@ def create_initial_condition(grid, cfg: InitialConditionParameters, xp, cdtype):
     if cfg.type == "zero":
         return None
     psi = factory(grid, cfg, xp, cdtype)
-    if tuple(psi.shape) != tuple(grid.shape):
+    if tuple(psi.shape) not in (tuple(grid.shape), (2, *grid.shape)):
         raise ValueError(
             f"Initial condition '{cfg.type}' returned shape {tuple(psi.shape)}, "
-            f"expected the grid shape {tuple(grid.shape)}"
+            f"expected the grid shape {tuple(grid.shape)} or a two-component field"
         )
     return xp.asarray(psi, dtype=cdtype)
