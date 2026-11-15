@@ -145,7 +145,7 @@ terms. Choose the fixed-step tableau with `cfg.solver.tableau`. The default is
 
 | Tableau | Order | Stages | Embedded order | Coefficient source |
 | --- | ---: | ---: | ---: | --- |
-| `rk4` | 4 | 4 | — | Classical RK4 |
+| `rk4` | 4 | 4 | none | Classical RK4 |
 | `dp5` | 5 | 7 | 4 | SciPy RK45, Dormand–Prince 1980 |
 | `vern7` | 7 | 10 | 6 | OrdinaryDiffEq.jl, Verner 2010 |
 | `dop853` | 8 | 12 | 5 and 3 | SciPy DOP853, Prince–Dormand / Hairer–Nørsett–Wanner |
@@ -172,9 +172,9 @@ cheaper.
 
 | solver | tableau | dt [ps] | error | wall time |
 | --- | --- | ---: | ---: | ---: |
-| `split-step-fft-cuda` | — | 0.1 | 1.7e-7 | 0.05 s |
-| `split-step-fft-cuda` | — | 0.025 | 1.1e-8 | 0.18 s |
-| `split-step-fft-cuda` | — | 0.00625 | 6.8e-10 | 0.73 s |
+| `split-step-fft-cuda` | n/a | 0.1 | 1.7e-7 | 0.05 s |
+| `split-step-fft-cuda` | n/a | 0.025 | 1.1e-8 | 0.18 s |
+| `split-step-fft-cuda` | n/a | 0.00625 | 6.8e-10 | 0.73 s |
 | `ifrk-fft-cuda` | `rk4` | 0.2 | 1.5e-8 | 0.10 s |
 | `ifrk-fft-cuda` | `rk4` | 0.1 | 2.5e-9 | 0.20 s |
 | `ifrk-fft-cuda` | `rk4` | 0.05 | 6.2e-10 | 0.40 s |

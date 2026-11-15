@@ -17,6 +17,13 @@ This project was created as part of the NCN OPUS grant, in collaboration with th
       <div class="about-name">Krzysztof Tyszka, PhD</div>
     </div>
   </div>
+  <div class="about-card">
+    <img src="../assets/about/andrzej-opala.png" alt="Andrzej Opala">
+    <div>
+      <div class="about-role">Scientific support</div>
+      <div class="about-name">Andrzej Opala, PhD</div>
+    </div>
+  </div>
 </div>
 
 ## Partners

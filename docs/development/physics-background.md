@@ -170,7 +170,7 @@ The `double` reservoir is retained as a sanity-check / reference model only.
 | 1.25        | 3e-5            | tighter spots need stronger relaxation   |
 | any         | 1e-4            | aggressive upper-bound diagnostic only   |
 
-**Acceptance criteria — check with k-space metrics:**
+**Acceptance criteria (check with k-space metrics):**
 
 | metric                   | GOOD                        | BAD (unphysical UV growth)         |
 |--------------------------|-----------------------------|------------------------------------|

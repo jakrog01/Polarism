@@ -105,7 +105,7 @@ source density at the Gaussian centre when `power_definition: peak_amplitude`,
 and the integrated per-pulse dose when `power_definition: pulse_energy`
 (see the section below).
 
-### `power_definition` — peak amplitude vs pulse energy
+### `power_definition`: peak amplitude vs pulse energy
 
 `pulse-gaussian` supports two interpretations of `power` controlled by the
 `power_definition` laser field (`cfg.laser.power_definition` or a per-laser YAML entry):
