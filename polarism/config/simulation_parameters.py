@@ -1,13 +1,34 @@
 """Simulation config dataclasses."""
 from dataclasses import asdict, dataclass, field, fields
+from difflib import get_close_matches
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 
+def unknown_field_message(owner: str, name: str, known) -> str:
+    """Describe an unknown config field and suggest the closest known names."""
+    known = list(known)
+    matches = [item for item in known if item.lower() == name.lower()]
+    matches += [item for item in get_close_matches(name, known, n=3, cutoff=0.6) if item not in matches]
+    hint = f"; did you mean {', '.join(repr(item) for item in matches)}?" if matches else ""
+    key = name if owner == "Config" else f"{owner}.{name}"
+    return f"Unknown config key '{key}'{hint}"
+
+
+class StrictFields:
+    """Reject assignment to public attributes that are not declared dataclass fields."""
+
+    def __setattr__(self, name, value):
+        if name not in self.__dataclass_fields__ and not name.startswith("_"):
+            owner = _SECTION_NAMES.get(type(self), type(self).__name__)
+            raise AttributeError(unknown_field_message(owner, name, self.__dataclass_fields__))
+        object.__setattr__(self, name, value)
+
+
 @dataclass
-class GridParameters:
+class GridParameters(StrictFields):
     """Store grid size and box-length settings."""
     nx: int = 256
     ny: int = 256
@@ -20,7 +41,7 @@ class GridParameters:
 
 
 @dataclass
-class PhysicsConstants:
+class PhysicsConstants(StrictFields):
     """Store the physics constants for the model."""
     hbar: float = 0.6582119514
     m_eff: float = 0.284
@@ -47,7 +68,7 @@ class PhysicsConstants:
 
 
 @dataclass
-class NoiseParameters:
+class NoiseParameters(StrictFields):
     """Control initial and per-step condensate noise."""
     enabled: bool = True
     seed: int | None = None
@@ -59,7 +80,7 @@ class NoiseParameters:
 
 
 @dataclass
-class InitialConditionParameters:
+class InitialConditionParameters(StrictFields):
     """Select the deterministic part of the initial wavefunction."""
     type: str = "zero"
     amplitude: float = 1.0
@@ -75,7 +96,7 @@ class InitialConditionParameters:
 
 
 @dataclass
-class BoundaryConditionParameters:
+class BoundaryConditionParameters(StrictFields):
     """Store boundary absorption settings."""
     profile_type: str = "sin2"
     strength: float = 1.0
@@ -84,7 +105,7 @@ class BoundaryConditionParameters:
 
 
 @dataclass
-class PotentialParameters:
+class PotentialParameters(StrictFields):
     """Store potential settings."""
     expose_results: bool = True
     potential_type: str = "zero"
@@ -102,7 +123,7 @@ class PotentialParameters:
 
 
 @dataclass
-class LaserParameters:
+class LaserParameters(StrictFields):
     """Store laser settings."""
     expose_results: bool = True
     mode: str = "single"
@@ -126,7 +147,7 @@ class LaserParameters:
 
 
 @dataclass
-class DriveParameters:
+class DriveParameters(StrictFields):
     """Store the coherent source and its rotating-frame energy."""
     enabled: bool = False
     amplitude: float = 0.0
@@ -139,7 +160,7 @@ class DriveParameters:
 
 
 @dataclass
-class ReservoirParameters:
+class ReservoirParameters(StrictFields):
     """Store reservoir settings."""
     expose_results: bool = True
     reservoir_type: str = "double"
@@ -148,7 +169,7 @@ class ReservoirParameters:
 
 
 @dataclass
-class SolverParameters:
+class SolverParameters(StrictFields):
     """Store solver settings."""
     total_time: float = 5.0
     dt: float = 1e-3
@@ -164,7 +185,7 @@ class SolverParameters:
 
 
 @dataclass
-class ResultParameters:
+class ResultParameters(StrictFields):
     """Store result-output settings."""
     real_time_view: bool = False
     view_member: int = 0
@@ -192,14 +213,14 @@ class ResultParameters:
 
 
 @dataclass
-class ComputeEngineParameters:
+class ComputeEngineParameters(StrictFields):
     """Store backend settings."""
     use_gpu: bool = False
     gpu_device: int = 0
 
 
 @dataclass
-class CheckpointParameters:
+class CheckpointParameters(StrictFields):
     """Control periodic and signal-triggered checkpoints."""
     every: float = 0.0
     path: str | None = None
@@ -208,7 +229,7 @@ class CheckpointParameters:
 
 
 @dataclass
-class StopParameters:
+class StopParameters(StrictFields):
     """Control optional steady-state stopping."""
     steady_state: bool = False
     rtol: float = 1e-6
@@ -217,7 +238,7 @@ class StopParameters:
 
 
 @dataclass
-class SweepParameters:
+class SweepParameters(StrictFields):
     """Control sweep batching and GPU memory use."""
     batch_size: int | None = None
     memory_fraction: float = 0.8
@@ -225,7 +246,7 @@ class SweepParameters:
 
 
 @dataclass
-class Config:
+class Config(StrictFields):
     """Store the full simulation configuration."""
     grid: GridParameters = field(default_factory=GridParameters)
     boundary_condition: BoundaryConditionParameters = field(
@@ -263,7 +284,7 @@ class Config:
         sections = {item.name for item in fields(cls)}
         for section, values in data.items():
             if section not in sections:
-                raise ValueError(f"Unknown config key '{section}'")
+                raise ValueError(unknown_field_message("Config", section, sections))
             if not isinstance(values, dict):
                 raise ValueError(f"Config section '{section}' must be a mapping")
             if section == "terms":
@@ -272,9 +293,8 @@ class Config:
             target = getattr(cfg, section)
             known = {item.name for item in fields(target)}
             for name, value in values.items():
-                dotted = f"{section}.{name}"
                 if name not in known:
-                    raise ValueError(f"Unknown config key '{dotted}'")
+                    raise ValueError(unknown_field_message(section, name, known))
                 if isinstance(getattr(target, name), tuple) and isinstance(value, list):
                     value = tuple(value)
                 setattr(target, name, value)
@@ -287,3 +307,7 @@ class Config:
         with output.open("w", encoding="utf-8") as handle:
             yaml.safe_dump(asdict(self), handle, sort_keys=False)
         return output
+
+
+_SECTION_NAMES = {item.default_factory: item.name for item in fields(Config)
+                  if isinstance(item.default_factory, type) and issubclass(item.default_factory, StrictFields)}

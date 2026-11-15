@@ -2,6 +2,19 @@
 
 `Config` is the root user-facing configuration object. It is composed of dataclass blocks so that physics parameters, numerics, output controls, and backend choices stay separated.
 
+Field names are checked. Assigning an unknown field in Python raises
+`AttributeError`, and an unknown key in YAML raises `ValueError`. Both
+messages suggest the closest names, so a typo never silently leaves a default
+in place:
+
+```python
+cfg.physics.g_c = 0.01
+```
+
+```text
+AttributeError: Unknown config key 'physics.g_c'; did you mean 'g_C', 'g_R', 'g_I'?
+```
+
 ## Top-level blocks
 
 | Block | Purpose |
