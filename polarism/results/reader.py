@@ -230,7 +230,7 @@ def _load_hdf5(path: Path) -> Results:
         attrs = dict(handle.attrs)
         version = attrs.get("format_version")
         if version != 3:
-            raise ValueError(f"results format v{version} is not supported by Polarism 0.7; supported: 3")
+            raise ValueError(f"results format v{version} is not supported by this Polarism version; supported: 3")
         config = json.loads(handle["config"].attrs["json"]) if "config" in handle else {}
         grid = handle.get("grid")
         x = grid["x"][:] if grid is not None and "x" in grid else None
@@ -252,7 +252,7 @@ def _load_npy(path: Path) -> Results:
     metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
     version = metadata.get("format_version")
     if version != 3:
-        raise ValueError(f"results format v{version} is not supported by Polarism 0.7; supported: 3")
+        raise ValueError(f"results format v{version} is not supported by this Polarism version; supported: 3")
     batches = sorted(path.glob("batch_*.npz"))
     if not batches:
         raise FileNotFoundError(f"No NumPy result batches in {path}")
@@ -285,7 +285,7 @@ def _load_json(path: Path) -> Results:
     metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
     version = metadata.get("format_version")
     if version != 3:
-        raise ValueError(f"results format v{version} is not supported by Polarism 0.7; supported: 3")
+        raise ValueError(f"results format v{version} is not supported by this Polarism version; supported: 3")
     data = [json.loads(file.read_text()) for file in batches]
 
     def decode(value):

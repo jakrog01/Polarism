@@ -2,7 +2,7 @@
 
 # Polarism
 
-Polarism is a Python package for 2-D driven-dissipative Gross-Pitaevskii simulations of exciton-polariton systems. It provides configurable pumps, reservoirs, solvers, and result output for CPU and optional CUDA runs.
+Polarism is a Python package for 1-D and 2-D driven-dissipative Gross-Pitaevskii simulations of exciton-polariton systems. It provides configurable pumps, reservoirs, solvers, and result output for CPU and optional CUDA runs.
 
 [![PyPI version](https://img.shields.io/pypi/v/polarism.svg)](https://pypi.org/project/polarism/) [![Python versions](https://img.shields.io/pypi/pyversions/polarism.svg)](https://pypi.org/project/polarism/) [![Tests](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/jakrog01/Polarism/actions/workflows/tests.yml) [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://jakrog01.github.io/Polarism/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/jakrog01/Polarism/blob/master/LICENSE) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jakrog01/Polarism/blob/master/examples/colab_quickstart.ipynb) [![DOI](https://zenodo.org/badge/1412443657.svg)](https://doi.org/10.5281/zenodo.23531116)
 

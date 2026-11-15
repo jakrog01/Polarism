@@ -780,7 +780,7 @@ class SimulationController:
         with h5py.File(path, "r") as h5:
             version = h5.attrs.get("checkpoint_version")
             if version != 2:
-                raise ValueError(f"checkpoint format v{version} is not supported by Polarism 0.7; supported: 2")
+                raise ValueError(f"checkpoint format v{version} is not supported by this Polarism version; supported: 2")
             if h5.attrs["reservoir_type"] != self.cfg.reservoir.reservoir_type:
                 raise ValueError("reservoir type mismatch")
             if h5.attrs["dt"] != self.cfg.solver.dt:

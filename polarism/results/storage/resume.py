@@ -22,7 +22,7 @@ def _trim_hdf5(path: Path, checkpoint_time: float) -> None:
     with h5py.File(path, "r+") as handle:
         version = handle.attrs.get("format_version")
         if version != 3:
-            raise ValueError(f"results format v{version} is not supported by Polarism 0.7; supported: 3")
+            raise ValueError(f"results format v{version} is not supported by this Polarism version; supported: 3")
         if "time" not in handle:
             return
         keep = _keep_count(handle["time"][:], checkpoint_time)
@@ -124,7 +124,7 @@ def trim_saved_frames(directory: Path, checkpoint_time: float, names, *, compres
             version = (json.loads(metadata_path.read_text()).get("format_version")
                        if metadata_path.exists() else None)
             if version != 3:
-                raise ValueError(f"results format v{version} is not supported by Polarism 0.7; supported: 3")
+                raise ValueError(f"results format v{version} is not supported by this Polarism version; supported: 3")
     if "hdf5" in names:
         _trim_hdf5(directory / "results.h5", checkpoint_time)
     if "npy" in names:

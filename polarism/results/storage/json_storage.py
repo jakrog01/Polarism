@@ -29,7 +29,7 @@ class JSONStorage(BaseStorage):
         if self._resume and metadata_path.exists():
             found = json.loads(metadata_path.read_text()).get("format_version")
             if found != 3:
-                raise ValueError(f"results format v{found} is not supported by Polarism 0.7; supported: 3")
+                raise ValueError(f"results format v{found} is not supported by this Polarism version; supported: 3")
         self.members = getattr(config, "_storage_members", None)
         if self._resume:
             self.batch_number = len(list(self.output_dir.glob("batch_*.json")))

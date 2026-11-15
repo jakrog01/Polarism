@@ -1,12 +1,18 @@
 # Polarism
 
-Polarism is a Python package for 2-D driven-dissipative Gross-Pitaevskii simulations of exciton-polariton systems. Start with `pip install polarism`, then follow the [quickstart](getting-started/quickstart.md).
+Polarism is a Python package for 1-D and 2-D driven-dissipative Gross-Pitaevskii simulations of exciton-polariton systems. Start with `pip install polarism`, then follow the [quickstart](getting-started/quickstart.md).
 
-## In 0.3.x
+## Highlights
 
-- PyPI installation includes optional CUDA 12 and CUDA 13 extras.
-- `split-step-fft-cuda` joins the CUDA solver options; eligible runs of it and `rk4-cuda` support CUDA graph chunks.
-- `polarism-bench` compares per-step and chunked execution on the current GPU.
+- Scalar or spinor (ψ+, ψ−) polaritons with TE–TM splitting, Zeeman splitting and cross-spin interaction. See [Spin and Polarization](user-guide/spin-and-polarization.md).
+- Single, double, quadratic-double or no reservoir, shared or per spin component.
+- Incoherent pumps built from spatial profiles, lattices and temporal envelopes, a coherent (resonant) drive, and time-dependent potentials.
+- Truncated-Wigner noise from a counter-based Philox generator, reproducible from one seed on CPU and GPU.
+- Finite-difference RK4, split-step FFT, ETD-RK2, interaction-picture RK4 and higher-order IFRK solvers on NumPy, CuPy or fused CUDA kernels, with CUDA graph chunks.
+- Batched parameter sweeps, checkpoint and restart, asynchronous HDF5/NPY/JSON output and a lazy result reader.
+- Registries for solvers, terms, dispersions, profiles, envelopes, initial conditions, observables and output formats.
+
+Release notes for each version are on the [GitHub releases page](https://github.com/jakrog01/Polarism/releases).
 
 ## What is documented here
 
@@ -26,7 +32,7 @@ The repository is split along clean responsibility boundaries:
 ## Core capabilities
 
 - CPU and optional CuPy-backed GPU execution through a shared compute engine abstraction.
-- Multiple solver families, including finite-difference RK4, fused CUDA RK4, split-step FFT, ETD-RK2, and interaction-picture RK4.
+- Multiple solver families, including finite-difference RK4, fused CUDA RK4, split-step FFT, ETD-RK2, interaction-picture RK4, and IFRK with RK4/DP5/DOP853/Verner tableaus.
 - Configurable grid topology, boundary absorption, pumps, reservoirs, and result storage.
 - Batch-oriented HDF5, JSON, and NumPy output paths plus real-time visualization hooks.
 
@@ -34,7 +40,7 @@ The repository is split along clean responsibility boundaries:
 
 ### Getting Started
 
-Use this section when you want the shortest path to a working environment and a first 2-D run.
+Use this section when you want the shortest path to a working environment and a first run.
 Start with [Getting Started](getting-started/index.md), then continue to [Installation](getting-started/installation.md) or [Quickstart](getting-started/quickstart.md).
 
 ### User Guide

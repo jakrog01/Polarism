@@ -57,6 +57,7 @@ Potentials are chosen by `cfg.potential.potential_type` and built as spatial fie
 | --- | --- |
 | `zero` | no external potential |
 | `double-well-supergaussian` | structured two-well profile with configurable centers, amplitudes, widths, and order |
+| `profile` | registered spatial profile, optionally multiplied by a temporal envelope |
 
 ## Laser interface and factory
 
@@ -75,6 +76,7 @@ Pump profiles share the `AbstractLaser` contract:
 | `continuous-exp` | localized continuous pump with exponential radial decay |
 | `continuous-exp-length` | localized continuous pump with a length-consistent exponential radial decay |
 | `pulse-gaussian` | repeated Gaussian pulses with Gaussian spatial profile; the first peak is phase-shifted after `delay`, and per-pulse strength ramps from `P0` toward `Pmax` |
+| `profile` | registered spatial profile with a temporal envelope |
 
 For `pulse-gaussian`, the `power_definition` field decides what that strength
 means.  `peak_amplitude` is the legacy interpretation: `P0` is the local peak
@@ -99,7 +101,7 @@ the 1/e radial decay length should use `continuous-exp-length`, which evaluates
 
 Reservoir models share the `AbstractReservoir` contract:
 
-- store current state tuples as `(B, 1, *S)` arrays
+- store current state tuples as `(B, C, *S)` arrays, where `C` is the configured reservoir component count
 - expose the active density that couples to the condensate
 - compute reservoir derivatives
 - advance the reservoir in time

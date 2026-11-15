@@ -46,7 +46,7 @@ Physics, laser, potential, `noise.seed`, `noise.initial*`, and
 `noise.stochastic_strength` can vary inside a batch, as can every
 `initial_condition.*` field except `type` and `path`. `noise.enabled`,
 `noise.stochastic`, `initial_condition.type` and `initial_condition.path` form
-separate groups, as do `physics.dispersion` and all
+separate groups, as do `physics.spin`, `physics.dispersion` and all
 `terms.*` parameters. Grid, solver,
 reservoir type, boundary condition, compute engine, result, checkpoint, and
 sweep settings form separate groups. These settings control array shapes,
@@ -109,8 +109,8 @@ A saved sweep gets one timestamped directory under `result.output_directory`.
 Its `sweep.json` records member parameters, group and batch assignments, the
 resolved seed, and each member's seed. Each `batch_NNN/` directory holds normal result files and, when
 enabled, its own `checkpoint.h5`. Dynamic field datasets have shape
-`(frames, members, *S)` and scalar datasets `(frames, members)`, where `S` is
-`(nx,)` in 1D or `(ny, nx)` in 2D. Identical
+`(frames, members, *S)` for scalar fields and scalar datasets `(frames, members)`, where `S` is
+`(nx,)` in 1D or `(ny, nx)` in 2D. Spinor fields retain a component axis after the member axis. Identical
 static fields may be stored once without a member axis.
 
 ```python

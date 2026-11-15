@@ -15,6 +15,8 @@ plots and movie titles use the display label.
 | `norm` | `N(t)` | scalar | always |
 | `psi` | `psi` | complex field | `cfg.result.save_psi = True` |
 | `pump` | `Pump` | field | `cfg.laser.expose_results = True` (default) |
+| `drive` | `|F(r)|` | static field | `cfg.drive.enabled = True` |
+| `density_plus`, `density_minus`, `stokes`, `degree_of_polarization` | | fields | spinor runs |
 | `N_R`, `N_R_max` | | field, scalar | `single` reservoir |
 | `nA`, `nI`, `nA_max`, `nI_max` | | fields, scalars | `double` reservoir |
 | `nR`, `nI`, `nR_max`, `nI_max` | | fields, scalars | `quadratic-double` reservoir |
@@ -154,20 +156,21 @@ The HDF5 results layout (`format_version = 3`) is:
 | Path | Content |
 | --- | --- |
 | `time` | frame times in ps |
-| `fields/<name>` | field frames, shape `(time, component, *S)` for one run or `(time, member, component, *S)` for a batch |
+| `fields/<name>` | field frames, with a `member` axis for batches and a `component` or `stokes` axis where applicable; each dataset's `dims` attribute gives the exact axes |
 | `scalars/<name>` | scalar series |
 | `scalar_groups/<group>/<label>` | grouped scalar series |
 | `static/<name>` | time-independent fields |
 | `grid/x` and, in 2D, `grid/y` | spatial grid coordinates in µm |
 | `config` | attribute `json` with the full configuration |
 
-The root stores `ndim`, `grid_type`, `components = ["scalar"]`,
+The root stores `ndim`, `grid_type`, `components` (`["scalar"]` or `["plus", "minus"]`),
 `polarism_version`, and coordinate and time units. Every dataset has `dims`
 and `units` attributes. Coordinates use µm and time uses ps. Density has units
 µm⁻ⁿᵈⁱᵐ, wavefunction has µm⁻ⁿᵈⁱᵐᐟ², and potential has meV; unknown units are
 an empty string. Static fields omit the time dimension. In 1D, HDF5 stores
 `grid/x` without `grid/y`. `load_results` hides the scalar component axis;
-the public field shape remains `(time, *S)` or `(time, member, *S)`.
+the public scalar field shape remains `(time, *S)` or `(time, member, *S)`;
+spinor fields retain their component axis.
 
 NPY and JSON fields keep those public shapes. Their `metadata.json` records
 `format_version = 3`, `ndim`, and each array's `dims` and `units`. Older result

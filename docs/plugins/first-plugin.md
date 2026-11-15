@@ -16,7 +16,7 @@ my_project/
 │   └── laser/
 │       └── ring_laser.py
 ├── run.py
-└── lasers.yaml              # optional, for multiple-laser mode
+└── lasers.yaml
 ```
 
 ```bash
@@ -139,7 +139,6 @@ import polarism as ps
 
 
 def test_ring_runs(monkeypatch, tmp_path):
-    # Copy your plugin tree into tmp_path before changing directories.
     import shutil
     shutil.copytree("polarism_plugins", tmp_path / "polarism_plugins")
     monkeypatch.chdir(tmp_path)

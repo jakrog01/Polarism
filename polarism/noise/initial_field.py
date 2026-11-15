@@ -123,7 +123,7 @@ def make_initial_psi(
             raise ValueError(
                 f"filtered_complex_gaussian produced a near-zero wavefunction after "
                 f"low-pass filtering (rms={rms:.3g}). noise.initial_k_cutoff_um={k_cutoff_um} "
-                "is too small for this grid — increase it or use a finer grid."
+                "is too small for this grid; increase it or use a finer grid."
             )
         return ((eps / rms) * psi).astype(cdtype)
 
