@@ -125,6 +125,40 @@ For ensemble correlations, sweep `noise.seed`, call
 the stored `g1` and `g2` ratios should be recomputed from the ensemble means.
 For a 1D batched array, pass `ndim=1` to `g1`.
 
+### Energy spectra
+
+`spectrum-k` samples the `ky=0` momentum row in 2D or the full momentum
+axis in 1D. `spectrum-x` samples the real-space row nearest `y` in 2D or the
+full x axis in 1D. Omit `y` for 1D runs.
+
+```yaml
+result:
+  accumulators:
+    spectrum-k: {start: 500.0, every: 0.1, segment: 1024}
+    spectrum-x: {start: 500.0, every: 0.1, segment: 1024, y: 0.0}
+```
+
+The even `segment` length defaults to 1024 and needs at least that many
+samples between `start` and `stop` or `solver.total_time`. Spectra use a
+periodic Hann window and 50% overlap. The energy bin width is
+`2πħ / (segment × every)` and the window spans `±πħ / every` around the
+drive energy (or zero without a drive); choose `every` small enough that the
+emission lies inside it. The ring buffer uses
+`segment × members × components × n × itemsize` bytes, where `n` is the
+number of x points and `itemsize` is the field dtype size. The float64 PSD
+sum and FFT workspace need additional memory. If a run stops before one
+segment completes, Polarism warns and emits no spectrum.
+
+`spectrum_k` is in particles/mode/meV; `spectrum_x` is in µm⁻ᵈ meV⁻¹.
+The energy arrays `spectrum_k_energy` and `spectrum_x_energy` are in meV.
+For a chemical potential estimate, sum the spectrum over positions or
+wavenumbers and components, then use
+`energy[argmax(spectrum.sum(axis=(-1, -3)))]` for a spinor spectrum, or
+`energy[argmax(spectrum.sum(axis=-1))]` for a scalar spectrum. Select a
+member first for batched results. The energy axis includes the drive energy
+when the coherent drive is enabled. Spectra are not Wigner-corrected:
+vacuum noise follows the bare dispersion and is not a flat spectral floor.
+
 ## Saving results
 
 ```python

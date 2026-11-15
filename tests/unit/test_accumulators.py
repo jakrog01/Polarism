@@ -240,3 +240,193 @@ def test_gpu_parity_and_graph_capture():
         np.testing.assert_allclose(gpu.accumulated[name].value,
                                    cpu.accumulated[name].value, rtol=1e-12, atol=1e-12)
     assert gpu.solver._fused._graph_cache
+
+
+def spectrum_config(axis="k", ndim=2):
+    cfg = config()
+    cfg.grid.ndim = ndim
+    cfg.solver.total_time = 0.15
+    cfg.result.accumulators = {f"spectrum-{axis}": {"every": 0.01, "segment": 8}}
+    return cfg
+
+
+def test_spectrum_k_plane_wave_peak_and_sum_rule():
+    cfg = spectrum_config()
+    controller = SimulationController(cfg)
+    grid = controller.grid
+    accumulator = controller._accumulators["spectrum-k"]
+    every = 0.01
+    energy_bin = 2 * np.pi * cfg.physics.hbar / (8 * every)
+    energy = 2 * energy_bin
+    amplitude = 0.7
+    spatial = amplitude * np.exp(2j * np.pi * grid.X / grid.lx)
+    for index in range(16):
+        controller.state.psi = spatial * np.exp(-1j * energy * index * every / cfg.physics.hbar)
+        accumulator.update(controller.state, index * every)
+    spectrum, energy_axis = accumulator.results()
+    value = np.asarray(spectrum.value)
+    energies = np.asarray(energy_axis.value)
+    assert accumulator.segments == 3
+    peak = np.unravel_index(np.argmax(value), value.shape)
+    assert abs(energies[peak[0]] - energy) <= energy_bin
+    np.testing.assert_allclose(controller.grid.kx[1], 2 * np.pi / grid.lx)
+    assert peak[1] == grid.nx // 2 + 1
+    expected = amplitude ** 2 * grid.ny ** 2 * grid.nx ** 2 * accumulator.cell / accumulator.cells
+    np.testing.assert_allclose(value[:, peak[1]].sum() * energy_bin, expected, rtol=1e-12)
+    assert spectrum.linear and not spectrum.wigner_corrected
+
+
+def test_spectrum_drive_shift():
+    cfg = spectrum_config()
+    cfg.drive.enabled = True
+    cfg.drive.energy = 1.5
+    controller = SimulationController(cfg)
+    accumulator = controller._accumulators["spectrum-k"]
+    every = 0.01
+    energy_bin = 2 * np.pi * cfg.physics.hbar / (8 * every)
+    spatial = np.exp(2j * np.pi * controller.grid.X / controller.grid.lx)
+    for index in range(8):
+        controller.state.psi = spatial * np.exp(-1j * energy_bin * index * every / cfg.physics.hbar)
+        accumulator.update(controller.state, index * every)
+    spectrum, energy_axis = accumulator.results()
+    peak = np.unravel_index(np.argmax(spectrum.value), spectrum.value.shape)
+    np.testing.assert_allclose(energy_axis.value[peak[0]], energy_bin + cfg.drive.energy)
+
+
+def test_spectrum_drive_shift_per_member():
+    cfg = spectrum_config()
+    cfg.drive.enabled = True
+    controller = SimulationController(cfg, members=[{"drive.energy": 0.5}, {"drive.energy": 1.5}])
+    accumulator = controller._accumulators["spectrum-k"]
+    for index in range(8):
+        accumulator.update(controller.state, index * 0.01)
+    spectrum, energy = accumulator.results()
+    assert spectrum.dims == ("member", "E", "kx")
+    assert energy.dims == ("member", "E")
+    np.testing.assert_allclose(np.asarray(energy.value)[1] - np.asarray(energy.value)[0], 1.0)
+
+
+@pytest.mark.parametrize("ndim", [1, 2])
+def test_spectrum_x_row_and_shape(ndim):
+    cfg = spectrum_config("x", ndim)
+    if ndim == 2:
+        cfg.result.accumulators["spectrum-x"]["y"] = 1.0
+    controller = SimulationController(cfg)
+    accumulator = controller._accumulators["spectrum-x"]
+    if ndim == 2:
+        assert accumulator.row == np.argmin(np.abs(controller.grid.Y[:, 0] - 1.0))
+    field = np.arange(np.prod(controller.grid.shape)).reshape(controller.grid.shape).astype(complex)
+    for index in range(8):
+        controller.state.psi = field
+        accumulator.update(controller.state, index * 0.01)
+    spectrum, energy = accumulator.results()
+    assert spectrum.value.shape == (8, cfg.grid.nx)
+    assert energy.value.shape == (8,)
+    expected = field[accumulator.row] if ndim == 2 else field
+    delta = 2 * np.pi * cfg.physics.hbar / 0.08
+    np.testing.assert_allclose(np.asarray(spectrum.value).sum(axis=0) * delta,
+                               np.abs(expected) ** 2, rtol=1e-12, atol=1e-12)
+
+
+def test_spectrum_overlap_count():
+    controller = SimulationController(spectrum_config())
+    accumulator = controller._accumulators["spectrum-k"]
+    for index in range(8 + 3 * 4):
+        accumulator.update(controller.state, index * 0.01)
+    assert accumulator.segments == 4
+
+
+def test_spectrum_without_completed_segment_warns():
+    controller = SimulationController(spectrum_config())
+    accumulator = controller._accumulators["spectrum-k"]
+    with pytest.warns(UserWarning, match="no completed segments"):
+        assert accumulator.results() == []
+
+
+def test_spectrum_checkpoint_resume_bitwise(tmp_path):
+    full_cfg = spectrum_config()
+    full_cfg.result.save_results = True
+    full_cfg.result.formats = ("hdf5",)
+    full = SimulationController(full_cfg, output_dir=tmp_path / "full")
+    full.run()
+    first_cfg = spectrum_config()
+    first_cfg.solver.total_time = 0.10
+    first_cfg.checkpoint.path = str(tmp_path / "spectrum_checkpoint.h5")
+    first = SimulationController(first_cfg, output_dir=tmp_path / "split")
+    first.run()
+    with h5py.File(first_cfg.checkpoint.path) as handle:
+        assert handle["accumulators/spectrum-k/since_segment"][0] == 3
+    resumed_cfg = spectrum_config()
+    resumed_cfg.result.save_results = True
+    resumed_cfg.result.formats = ("hdf5",)
+    resumed_cfg.checkpoint.resume_from = first_cfg.checkpoint.path
+    resumed = SimulationController(resumed_cfg, output_dir=tmp_path / "split")
+    resumed.run()
+    for name in full.accumulated:
+        np.testing.assert_array_equal(resumed.accumulated[name].value, full.accumulated[name].value)
+
+
+@pytest.mark.parametrize("fmt", ["hdf5", "npy", "json"])
+def test_spectrum_storage_and_linear_mean(tmp_path, fmt):
+    cfg = spectrum_config()
+    cfg.result.save_results = True
+    cfg.result.formats = (fmt,)
+    controller = SimulationController(cfg, output_dir=tmp_path)
+    controller.run()
+    with load_results(tmp_path) as results:
+        for name, result in controller.accumulated.items():
+            np.testing.assert_array_equal(np.asarray(results.accumulated[name]), result.value)
+            assert bool(results.accumulated_meta[name]["linear"]) == result.linear
+    from polarism.sweep import Sweep
+
+    cfg.result.output_directory = str(tmp_path / "sweep")
+    cfg.sweep.batch_size = 1
+    cfg.noise.enabled = True
+    cfg.noise.initial_amplitude = 0.1
+    cfg.result.accumulators["g2"] = {"every": 0.01}
+    sweep = Sweep(cfg, {"noise.seed": [1, 2]})
+    sweep.run()
+    with load_results(sweep.run_directory) as results:
+        values = [np.asarray(results.member(i).accumulated["spectrum_k"]) for i in range(2)]
+        np.testing.assert_allclose(results.mean("spectrum_k"), np.mean(values, axis=0))
+        with pytest.raises(ValueError, match="linear"):
+            results.mean("g2")
+
+
+@pytest.mark.parametrize("axis,ndim,params", [
+    ("k", 2, {"segment": 7}),
+    ("k", 2, {"segment": 6}),
+    ("k", 2, {"segment": 20}),
+    ("x", 1, {"y": 0.0}),
+])
+def test_spectrum_validation(axis, ndim, params):
+    cfg = spectrum_config(axis, ndim)
+    cfg.result.accumulators[f"spectrum-{axis}"].update(params)
+    with pytest.raises(ConfigValidationError, match="accumulator"):
+        validate_config(cfg)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not has_cuda_device(), reason="CUDA unavailable")
+def test_spectrum_gpu_parity():
+    import cupy as cp
+    from polarism.config.simulation_parameters import ComputeEngineParameters
+
+    cpu = SimulationController(spectrum_config())
+    cpu_acc = cpu._accumulators["spectrum-k"]
+    grid = cpu.grid
+    fields = [np.exp(2j * np.pi * grid.X / grid.lx - 0.3j * index)
+              for index in range(8)]
+    for index, field in enumerate(fields):
+        cpu.state.psi = field
+        cpu_acc.update(cpu.state, index * 0.01)
+    cpu_value = cpu_acc.results()[0].value
+    gpu_cfg = spectrum_config()
+    gpu_cfg.compute_engine = ComputeEngineParameters(use_gpu=True)
+    gpu = SimulationController(gpu_cfg)
+    gpu_acc = gpu._accumulators["spectrum-k"]
+    for index, field in enumerate(fields):
+        gpu.state.psi = cp.asarray(field)
+        gpu_acc.update(gpu.state, index * 0.01)
+    np.testing.assert_allclose(cp.asnumpy(gpu_acc.results()[0].value), cpu_value,
+                               rtol=1e-12, atol=1e-12)

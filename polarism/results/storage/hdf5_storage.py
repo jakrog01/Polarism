@@ -198,5 +198,6 @@ class HDF5Storage(BaseStorage):
             dataset.attrs["units"] = result.units
             dataset.attrs["label"] = result.label
             dataset.attrs["wigner_corrected"] = result.wigner_corrected
+            dataset.attrs["linear"] = result.linear
             group.attrs.update(metadata[name])
         self.h5_file.flush()

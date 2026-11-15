@@ -136,4 +136,5 @@ class NPYStorage(BaseStorage):
             self.metadata["accumulated"][name] = {
                 **metadata[name], "dims": result.dims, "units": result.units,
                 "label": result.label, "wigner_corrected": result.wigner_corrected,
+                "linear": result.linear,
             }

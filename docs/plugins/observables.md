@@ -48,7 +48,9 @@ t)` using `compute_engine.xp` device operations without host reads or syncs.
 Keep raw sums in float64 or complex128 arrays. `state_dict()` returns those
 arrays together with base sampling metadata; `load_state_dict(values)` restores
 them for checkpoint resume. `results()` returns `AccumulatedResult` instances
-with `name`, `value`, `dims`, `units`, and `label`. Include a leading `member`
+with `name`, `value`, `dims`, `units`, `label`, `wigner_corrected`, and
+`linear`. Set `linear=True` for values that can be averaged across sweep
+members; `SweepResults.mean` checks this field. Include a leading `member`
 dimension in batched runs. The base class tracks `samples`, `t_first`, and
 `t_last`; call `_sampled(t)` once per update. Finalized results are written at
 the end of the run and exposed through `controller.accumulated`.

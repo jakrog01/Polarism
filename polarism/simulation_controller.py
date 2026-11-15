@@ -1121,7 +1121,7 @@ class SimulationController:
                     self.accumulated = {
                         result.name: AccumulatedResult(result.name, compute_engine.to_cpu(result.value),
                                                        result.dims, result.units, result.label,
-                                                       result.wigner_corrected)
+                                                       result.wigner_corrected, result.linear)
                         for _, result in finalized
                     }
                     if self.storage_visitor is not None:

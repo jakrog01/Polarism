@@ -185,7 +185,7 @@ with reduced grid-direction anisotropy.
 | `save_hdf5`, `save_json`, `save_npy` | storage backends | booleans |
 | `formats` | additional registered storage formats, combined with enabled `save_*` options | tuple of names, default `()` |
 | `observables` | registered observable factories that add result nodes; built in: `angular-momentum`, `center-of-mass`, `current`, `momentum-density`, `vortices` (the first and last are 2D only) | tuple of names, default `()` |
-| `accumulators` | mapping from registered accumulator name to parameters; built in: `momentum-distribution`, `g2` | `start`, `stop`, `every` in ps; default `{}` |
+| `accumulators` | mapping from registered accumulator name to parameters; built in: `momentum-distribution`, `g2`, `spectrum-k`, `spectrum-x` | `start`, `stop`, `every` in ps; spectra also accept even `segment` >= 8 (default 1024); `spectrum-x` accepts `y` in µm for 2D; default `{}` |
 | `save_every` | time in ps between writes after the initial state; defaults to one `solver.dt` | positive multiple of `solver.dt` |
 | `batch_size` | maximum frames buffered before a write; a batch is also written once its fields reach 256 MiB | positive integer |
 | `compression` | compression for saved HDF5 result frames | `none` (default), `lzf`, `gzip` |

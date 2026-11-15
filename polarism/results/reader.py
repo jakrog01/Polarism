@@ -251,7 +251,7 @@ class SweepResults:
 
     def mean(self, name: str, members=None):
         """Return the sample-weighted mean of a linear accumulated result."""
-        if name not in {"momentum_distribution", "density_mean", "density_squared_mean"}:
+        if not self._results[0].accumulated_meta.get(name, {}).get("linear", False):
             raise ValueError(f"{name!r} is not a linear accumulated result")
         selected = range(len(self)) if members is None else members
         numerator = None

@@ -269,6 +269,23 @@ def _validate_result(cfg: Config) -> None:
             _validate_time_multiple(f"result.accumulators.{name}.{key}", value, cfg.solver.dt)
         if params.get("stop") is not None and params["stop"] < params.get("start", 0):
             raise ConfigValidationError(f"result.accumulators.{name}.stop must be >= start")
+        if name in {"spectrum-k", "spectrum-x"}:
+            segment = params.get("segment", 1024)
+            if type(segment) is not int or segment < 8 or segment % 2:
+                raise ConfigValidationError(f"result.accumulators.{name}.segment must be an even integer >= 8")
+            if "y" in params:
+                y = params["y"]
+                if cfg.grid.ndim == 1:
+                    raise ConfigValidationError(f"result.accumulators.{name}.y requires a 2D grid")
+                if isinstance(y, bool) or not isinstance(y, (int, float)) or not math.isfinite(y):
+                    raise ConfigValidationError(f"result.accumulators.{name}.y must be a finite number in µm")
+            start = round(params.get("start", 0) / cfg.solver.dt)
+            stop = params.get("stop")
+            end = round(min(stop if stop is not None else cfg.solver.total_time,
+                            cfg.solver.total_time) / cfg.solver.dt)
+            every = round((params.get("every") or r.save_every or cfg.solver.dt) / cfg.solver.dt)
+            if end < start or (end - start) // every + 1 < segment:
+                raise ConfigValidationError(f"result.accumulators.{name} requires at least {segment} samples")
     if r.batch_size < 1:
         raise ConfigValidationError(f"result.batch_size must be >= 1, got {r.batch_size}")
 
