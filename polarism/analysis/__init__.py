@@ -13,8 +13,11 @@ from polarism.analysis.condensation import (
     psi_sq_floor,
     validate_sampling,
 )
+from polarism.analysis.correlations import g1, g2
 
 __all__ = [
+    "g1",
+    "g2",
     "CONDENSATION_PSI_SQ_FLOOR",
     "CondensationVerdict",
     "CrossingResult",

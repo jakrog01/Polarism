@@ -36,7 +36,7 @@ class Results:
     """Saved arrays and metadata, with an optional open HDF5 handle."""
 
     def __init__(self, time, fields, scalars, scalar_groups, static, config, x, y, attrs,
-                 handle=None):
+                 handle=None, accumulated=None, accumulated_meta=None):
         self.time = time
         self.fields = fields
         self.scalars = scalars
@@ -46,7 +46,37 @@ class Results:
         self.x = x
         self.y = y
         self.attrs = attrs
+        self.accumulated = accumulated if accumulated is not None else {}
+        self.accumulated_meta = accumulated_meta if accumulated_meta is not None else {}
         self._handle = handle
+
+    @property
+    def kx(self):
+        """FFT-shifted angular x wavenumbers in inverse micrometres."""
+        if self.x is not None and len(self.x) > 1:
+            size, spacing = len(self.x), self.x[1] - self.x[0]
+        else:
+            grid = self.config.get("grid", {})
+            size = grid.get("nx")
+            if size is None:
+                return None
+            spacing = grid["lx"] / (size if grid.get("grid_type") == "periodic" else max(size - 1, 1))
+        return 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(size, spacing))
+
+    @property
+    def ky(self):
+        """FFT-shifted angular y wavenumbers in inverse micrometres."""
+        if self.y is not None and len(self.y) > 1:
+            size, spacing = len(self.y), self.y[1] - self.y[0]
+        else:
+            grid = self.config.get("grid", {})
+            if grid.get("ndim") == 1:
+                return None
+            size = grid.get("ny")
+            if size is None:
+                return None
+            spacing = grid["ly"] / (size if grid.get("grid_type") == "periodic" else max(size - 1, 1))
+        return 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(size, spacing))
 
     def close(self):
         """Close an open HDF5 file."""
@@ -204,13 +234,37 @@ class SweepResults:
                                  spatial_ndim=int(result.attrs.get("ndim", 2)))
             for name, value in mapping.items()
         }
+        accumulated = {
+            name: (_MemberDataset(value, position, static=True,
+                                  spatial_ndim=int(result.attrs.get("ndim", 2)))
+                   if "member" in result.accumulated_meta[name]["dims"] else value)
+            for name, value in result.accumulated.items()
+        }
         return Results(result.time, select(result.fields), select(result.scalars),
                        {name: select(group) for name, group in result.scalar_groups.items()},
                        select(result.static, static=True), config, result.x, result.y,
                        {**result.attrs, "member_index": index,
                         **({"stop_time": float(result.attrs["stop_time"][position])}
                            if "stop_time" in result.attrs else {}),
-                        "parameters": self.parameters[index]})
+                        "parameters": self.parameters[index]},
+                       accumulated=accumulated, accumulated_meta=result.accumulated_meta)
+
+    def mean(self, name: str, members=None):
+        """Return the sample-weighted mean of a linear accumulated result."""
+        if name not in {"momentum_distribution", "density_mean", "density_squared_mean"}:
+            raise ValueError(f"{name!r} is not a linear accumulated result")
+        selected = range(len(self)) if members is None else members
+        numerator = None
+        total = 0
+        for index in selected:
+            result = self.member(index)
+            count = int(result.accumulated_meta[name]["samples"])
+            value = np.asarray(result.accumulated[name])
+            numerator = value * count if numerator is None else numerator + value * count
+            total += count
+        if total == 0:
+            raise ValueError("members must contain at least one sampled member")
+        return numerator / total
 
     def close(self):
         """Close every underlying batch result file."""
@@ -237,10 +291,17 @@ def _load_hdf5(path: Path) -> Results:
         y = grid["y"][:] if grid is not None and "y" in grid else None
         groups = handle.get("scalar_groups")
         scalar_groups = {name: _LazyDatasets(group) for name, group in groups.items()} if groups else {}
+        accumulated_group = handle.get("accumulated")
+        accumulated = {name: group["value"] for name, group in accumulated_group.items()} if accumulated_group else {}
+        accumulated_meta = {
+            name: {**dict(group.attrs), **dict(group["value"].attrs)}
+            for name, group in accumulated_group.items()
+        } if accumulated_group else {}
         return Results(
             handle["time"][:], _LazyDatasets(handle.get("fields"), field=True),
             _LazyDatasets(handle.get("scalars")), scalar_groups,
             _LazyDatasets(handle.get("static")), config, x, y, attrs, handle,
+            accumulated, accumulated_meta,
         )
     except BaseException:
         handle.close()
@@ -271,10 +332,14 @@ def _load_npy(path: Path) -> Results:
             scalar_groups.setdefault(group, {})[label] = value
     static = {file.stem[7:]: np.load(file) for file in path.glob("static_*.npy")}
     x_path, y_path = path / "grid_x.npy", path / "grid_y.npy"
+    accumulated_meta = metadata.get("accumulated", {})
+    accumulated = {name: np.load(path / f"accumulated_{name}.npy", mmap_mode="r")
+                   for name in accumulated_meta}
     return Results(combined["time"], fields, scalars, scalar_groups, static,
                    metadata.get("config", {}), np.load(x_path) if x_path.exists() else None,
                    np.load(y_path) if y_path.exists() else None,
-                   {key: value for key, value in metadata.items() if key != "config"})
+                   {key: value for key, value in metadata.items() if key != "config"},
+                   accumulated=accumulated, accumulated_meta=accumulated_meta)
 
 
 def _load_json(path: Path) -> Results:
@@ -307,11 +372,14 @@ def _load_json(path: Path) -> Results:
               for name, labels in data[0]["scalar_groups"].items()}
     static = {name: decode(value) for name, value in data[0].get("static", {}).items()}
     x_path, y_path = path / "grid_x.json", path / "grid_y.json"
+    accumulated_meta = metadata.get("accumulated", {})
+    accumulated = {name: decode(value["value"]) for name, value in accumulated_meta.items()}
     return Results(np.concatenate([np.asarray(batch["time"]) for batch in data]),
                    fields, scalars, groups, static, metadata.get("config", {}),
                    np.asarray(json.loads(x_path.read_text())) if x_path.exists() else None,
                    np.asarray(json.loads(y_path.read_text())) if y_path.exists() else None,
-                   {key: value for key, value in metadata.items() if key != "config"})
+                   {key: value for key, value in metadata.items() if key != "config"},
+                   accumulated=accumulated, accumulated_meta=accumulated_meta)
 
 
 def load_results(path: str | Path) -> Results | SweepResults:

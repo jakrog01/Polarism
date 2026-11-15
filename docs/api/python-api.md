@@ -76,6 +76,19 @@ For constructor calls and working extension examples, see the [plugin guide](../
 
 ::: polarism.results.reader.SweepResults
 
+::: polarism.results.accumulators.Accumulator
+
+::: polarism.results.accumulators.AccumulatedResult
+
+::: polarism.results.accumulators.register_accumulator
+
+`polarism.results.available_accumulators` is the registry of available
+accumulator classes.
+
+::: polarism.analysis.g1
+
+::: polarism.analysis.g2
+
 ## Controller and solver extension
 
 ::: polarism.simulation_controller.SimulationController

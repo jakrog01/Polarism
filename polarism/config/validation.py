@@ -16,6 +16,7 @@ from polarism.envelopes import create_envelope
 from polarism.model_terms import available_terms
 from polarism.results.builtin_observables import TWO_DIMENSIONAL_OBSERVABLES
 from polarism.results.observable_registry import available_observables
+from polarism.results.accumulators import available_accumulators
 from polarism.results.storage import available_storages
 
 if TYPE_CHECKING:
@@ -244,6 +245,30 @@ def _validate_result(cfg: Config) -> None:
         raise ConfigValidationError("result.save_psi must be a boolean")
     if r.save_every is not None:
         _validate_time_multiple("result.save_every", r.save_every, cfg.solver.dt)
+    if not isinstance(r.accumulators, dict):
+        raise ConfigValidationError("result.accumulators must map names to parameter mappings")
+    for name, params in r.accumulators.items():
+        try:
+            accumulator = available_accumulators.lookup(name)
+        except ValueError as exc:
+            raise ConfigValidationError(f"result.accumulators: {exc}") from exc
+        if not isinstance(params, dict):
+            raise ConfigValidationError(f"result.accumulators.{name} must be a parameter mapping")
+        unknown = set(params) - {"start", "stop", "every"} - accumulator.parameter_keys
+        if unknown:
+            raise ConfigValidationError(
+                f"result.accumulators.{name}: unknown keys {sorted(unknown)}; "
+                f"registered accumulators: {sorted(available_accumulators)}"
+            )
+        for key in ("start", "every", "stop"):
+            value = params.get(key)
+            if value is None:
+                continue
+            if key in {"start", "stop"} and value == 0 and type(value) in (int, float):
+                continue
+            _validate_time_multiple(f"result.accumulators.{name}.{key}", value, cfg.solver.dt)
+        if params.get("stop") is not None and params["stop"] < params.get("start", 0):
+            raise ConfigValidationError(f"result.accumulators.{name}.stop must be >= start")
     if r.batch_size < 1:
         raise ConfigValidationError(f"result.batch_size must be >= 1, got {r.batch_size}")
 

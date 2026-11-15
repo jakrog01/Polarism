@@ -185,3 +185,18 @@ class HDF5Storage(BaseStorage):
         """Store stop times in root metadata, aligned with member_index."""
         self.h5_file.attrs["stop_time"] = np.asarray(stop_times, dtype=float)
         self.h5_file.flush()
+
+    def write_accumulated(self, results, metadata) -> None:
+        """Write final accumulated datasets with sampling metadata."""
+        root = self.h5_file.require_group("accumulated")
+        for name, result in results.items():
+            group = root.require_group(name)
+            if "value" in group:
+                del group["value"]
+            dataset = group.create_dataset("value", data=result.value)
+            dataset.attrs["dims"] = result.dims
+            dataset.attrs["units"] = result.units
+            dataset.attrs["label"] = result.label
+            dataset.attrs["wigner_corrected"] = result.wigner_corrected
+            group.attrs.update(metadata[name])
+        self.h5_file.flush()

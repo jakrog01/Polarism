@@ -171,6 +171,7 @@ class ResultParameters:
     save_npy: bool = False
     formats: tuple[str, ...] = ()
     observables: tuple[str, ...] = ()
+    accumulators: dict[str, dict] = field(default_factory=dict)
     compression: str = "none"
     compression_level: int = 4
     save_psi: bool = False

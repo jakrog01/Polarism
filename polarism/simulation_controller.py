@@ -41,6 +41,7 @@ from polarism.results.real_time_visualization import RealTimeVisualization
 from polarism.results.result_groups import Results2D, ResultScalar, ResultScalarGroup
 from polarism.results.result_node import ResultNode
 from polarism.results.observable_registry import available_observables
+from polarism.results.accumulators import AccumulatedResult, available_accumulators
 from polarism.results.results_manager import ResultsManager
 from polarism.results.visitors.result_visitor import ResultVisitor
 from polarism.results.visitors.animation_visitor import AnimationFieldSpec, AnimationVisitor
@@ -314,6 +315,11 @@ class SimulationController:
         self.run_directory = None
         self._events = []
         self._reset_stop_state()
+        self._accumulators = {
+            name: available_accumulators.lookup(name)(self, **params)
+            for name, params in cfg.result.accumulators.items()
+        }
+        self.accumulated: dict[str, AccumulatedResult] = {}
 
         if cfg.checkpoint.resume_from is not None:
             self.load_checkpoint(cfg.checkpoint.resume_from)
@@ -770,6 +776,17 @@ class SimulationController:
                 group = h5.create_group("reservoir")
                 for name, value in zip(names, fields):
                     group.create_dataset(name, data=value)
+                if self._accumulators:
+                    accumulated = h5.create_group("accumulators")
+                    for name, accumulator in self._accumulators.items():
+                        saved = accumulated.create_group(name)
+                        values = accumulator.state_dict()
+                        saved.attrs["samples"] = values["samples"]
+                        saved.attrs["t_first"] = np.nan if values["t_first"] is None else values["t_first"]
+                        saved.attrs["t_last"] = np.nan if values["t_last"] is None else values["t_last"]
+                        for key, value in values.items():
+                            if key not in {"samples", "t_first", "t_last"}:
+                                saved.create_dataset(key, data=compute_engine.to_cpu(value))
             os.replace(temporary, target)
         finally:
             if os.path.exists(temporary):
@@ -789,6 +806,11 @@ class SimulationController:
             saved_noise = saved_config["noise"]
             if saved_config.get("stop", asdict(self.cfg.stop)) != asdict(self.cfg.stop):
                 raise ValueError("checkpoint stop config mismatch")
+            if saved_config.get("result", {}).get("accumulators", {}) != self.cfg.result.accumulators:
+                raise ValueError("checkpoint accumulator config mismatch")
+            accumulated = h5.get("accumulators")
+            if set(accumulated or ()) != set(self._accumulators):
+                raise ValueError("checkpoint accumulators mismatch")
             if self._seed_drawn:
                 drawn = self.cfg.noise.seed
                 self.cfg.noise.seed = saved_noise["seed"]
@@ -855,6 +877,14 @@ class SimulationController:
                 raise ValueError("checkpoint steady-state reference shape mismatch")
             if steady_last_step > step or steady_last_step < -1:
                 raise ValueError("checkpoint steady-state check step mismatch")
+            accumulator_states = {}
+            for name, group in (accumulated.items() if accumulated is not None else ()):
+                accumulator_states[name] = {
+                    "samples": int(group.attrs["samples"]),
+                    "t_first": None if np.isnan(group.attrs["t_first"]) else float(group.attrs["t_first"]),
+                    "t_last": None if np.isnan(group.attrs["t_last"]) else float(group.attrs["t_last"]),
+                    **{key: dataset[:] for key, dataset in group.items()},
+                }
             if precision_changed:
                 warnings.warn("checkpoint precision differs; casting state", UserWarning, stacklevel=2)
         dtype = complex_dtype(self.xp, self.cfg.solver.precision) if precision_changed else None
@@ -870,6 +900,8 @@ class SimulationController:
         self._steady_last_step = steady_last_step
         self._steady_norm = np.asarray(steady_norm).copy() if steady_norm is not None else None
         self._steady_density = self.xp.asarray(steady_density).copy() if steady_density is not None else None
+        for name, values in accumulator_states.items():
+            self._accumulators[name].load_state_dict(values)
         self._resumed = True
         if field_k is not None:
             self.state.field_k = self.xp.asarray(field_k, dtype=dtype).copy()
@@ -953,6 +985,36 @@ class SimulationController:
         steady_interval = (_validate_time_multiple("stop.check_every", self.cfg.stop.check_every, dt)
                            if self.cfg.stop.steady_state else 0)
         stopping_active = bool(self._events or steady_interval or np.isfinite(self.stop_times).any())
+        schedules = []
+        for accumulator in self._accumulators.values():
+            start = (0 if accumulator.start == 0 else
+                     _validate_time_multiple("accumulator start", accumulator.start, dt))
+            every = _validate_time_multiple("accumulator every",
+                                            accumulator.every or self.cfg.result.save_every or dt, dt)
+            stop = (n_steps if accumulator.stop is None else 0 if accumulator.stop == 0 else
+                    _validate_time_multiple("accumulator stop", accumulator.stop, dt))
+            schedules.append((accumulator, start, every, min(stop, n_steps)))
+
+        def next_sample(step, start, every, stop):
+            due = start if step < start else start + ((step - start) // every + 1) * every
+            return due if due <= stop else None
+
+        advance = self.solver.advance
+        if schedules:
+            solver_advance = advance
+
+            def advance(model, state, count):
+                target = state.step + count
+                while state.step < target:
+                    sample_end = target
+                    for _, start, every, stop in schedules:
+                        due = next_sample(state.step, start, every, stop)
+                        if due is not None:
+                            sample_end = min(sample_end, due)
+                    solver_advance(model, state, sample_end - state.step)
+                    for accumulator, start, every, stop in schedules:
+                        if start <= state.step <= stop and (state.step - start) % every == 0:
+                            accumulator.update(state, state.t)
 
         def request_stop(signum, frame):
             self._stop_requested = True
@@ -963,6 +1025,10 @@ class SimulationController:
                 signal.signal(signum, request_stop)
 
         try:
+            if self.state.step == 0:
+                for accumulator, start, _, stop in schedules:
+                    if start == 0 and stop >= 0 and accumulator.samples == 0:
+                        accumulator.update(self.state, self.state.t)
             if self.state.step == 0 and not self._resumed and (self.results_manager.visitors or self.storage_visitor is not None or self.animation_visitor is not None):
                 self._record_results(self.state.t)
                 if self.visualizer is not None:
@@ -998,7 +1064,7 @@ class SimulationController:
                             end = min(end, ((step // event_interval) + 1) * event_interval)
                     if steady_interval:
                         end = min(end, ((step // steady_interval) + 1) * steady_interval)
-                    self.solver.advance(self.model, self.state, end - step)
+                    advance(self.model, self.state, end - step)
                     progress.update(end - step)
                     step = self.state.step
                     t_after = self.state.t
@@ -1048,6 +1114,24 @@ class SimulationController:
                 print(f"Stop times (ps): {values}")
         finally:
             try:
+                if self._accumulators:
+                    finalized = [(accumulator, result)
+                                 for accumulator in self._accumulators.values() if accumulator.samples
+                                 for result in accumulator.results()]
+                    self.accumulated = {
+                        result.name: AccumulatedResult(result.name, compute_engine.to_cpu(result.value),
+                                                       result.dims, result.units, result.label,
+                                                       result.wigner_corrected)
+                        for _, result in finalized
+                    }
+                    if self.storage_visitor is not None:
+                        metadata = {
+                            result.name: {"samples": accumulator.samples,
+                                          "t_first": accumulator.t_first,
+                                          "t_last": accumulator.t_last}
+                            for accumulator, result in finalized
+                        }
+                        self.storage_visitor.set_accumulated(self.accumulated, metadata)
                 if self.storage_visitor is not None and stopping_active:
                     self.storage_visitor.set_stop_times(self.stop_times)
                 for visitor in self.results_manager.visitors:
