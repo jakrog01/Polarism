@@ -9,7 +9,7 @@ python -m pip install polarism
 polarism --help
 ```
 
-To pin the documented release, use `python -m pip install "polarism==0.9.0"`.
+To pin the documented release, use `python -m pip install "polarism==0.9.1"`.
 
 ## Add CUDA support
 
