@@ -233,3 +233,17 @@ class StorageVisitor(ResultVisitor):
         self.flush()
         for storage in self.storages:
             storage.set_stop_times(stop_times)
+
+    def set_step_statistics(self, statistics) -> None:
+        """Persist adaptive statistics in supporting storage formats."""
+        self.flush()
+        for storage in self.storages:
+            setter = getattr(storage, "set_step_statistics", None)
+            if setter is not None:
+                setter(statistics)
+
+    def set_accumulated(self, results, metadata) -> None:
+        """Persist finalized accumulated arrays after draining frame writes."""
+        self.flush()
+        for storage in self.storages:
+            storage.write_accumulated(results, metadata)

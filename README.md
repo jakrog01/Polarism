@@ -18,6 +18,8 @@ Polarism is a Python package for 1-D and 2-D driven-dissipative Gross-Pitaevskii
 - Single, double, quadratic-double or no reservoir; incoherent pumps with spatial profiles, lattices and temporal envelopes, and coherent (resonant) drive.
 - Scalar or spinor (ψ±) polaritons with TE–TM splitting, Zeeman splitting and cross-spin interaction, on 1D and 2D grids.
 - Stochastic truncated-Wigner noise from a counter-based Philox generator, reproducible from one seed on CPU and GPU.
+- Accumulated observables sampled during the run: momentum distribution, g⁽¹⁾, g⁽²⁾ and Welch energy spectra E(k) and E(x), checkpointed and averaged over sweep members.
+- Adaptive time stepping for the embedded IFRK tableaus (DP5, DOP853, Verner 7/9), landing exactly on every output time.
 - HDF5, NPY, and JSON output written on a background thread, so saving frames barely slows GPU runs; `ps.load_results` reads runs back lazily.
 - Checkpoint and restart, including a clean stop on SLURM time-limit signals.
 - Parameter sweeps with batched device execution, saved member results, and resume.
@@ -166,7 +168,7 @@ See the [parameter sweeps guide](https://jakrog01.github.io/Polarism/user-guide/
 | `rk4-cuda` | periodic or closed-interval | CUDA | Fused FDM runs |
 | `split-step-fft`, `etd-rk2`, `ip-rk4` | periodic | CPU or CuPy | Spectral integration |
 | `split-step-fft-cuda` | periodic | CUDA | Second-order spectral runs |
-| `ifrk-fft-cuda` | periodic | CPU or CUDA | Spectral RK4/DP5/DOP853/Verner 7/9 with stage-coupled reservoirs |
+| `ifrk-fft-cuda` | periodic | CPU or CUDA | Spectral RK4/DP5/DOP853/Verner 7/9 with stage-coupled reservoirs; adaptive dt with embedded tableaus |
 | `ifrk4-fft-cuda` | periodic | CPU or CUDA | Historical alias for spectral RK4 |
 
 Check timestep and grid convergence for your model. See the [solver reference](https://jakrog01.github.io/Polarism/api/solvers/) for compatibility details.

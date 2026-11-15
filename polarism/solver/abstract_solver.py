@@ -77,12 +77,23 @@ class AbstractSolver(ABC):
 
     @abstractmethod
     def step(self, model, state, dt) -> StepReport:
-        """Advance one step and update state time and step on acceptance."""
+        """Advance one fixed step or report an adaptive trial without changing its tick."""
         raise NotImplementedError
 
     def advance(self, model, state, n_steps: int) -> None:
         """Advance several steps and apply noise after accepted steps."""
         self.batch_physics.check(state.field_k if state._field is None else state.field, getattr(state, "components", 1))
+        if self.config.solver.adaptive:
+            from polarism.solver.step_controller import StepController
+
+            if not hasattr(self, "step_controller"):
+                self.step_controller = StepController(self)
+            target = state.t0 + (state.step + n_steps) * self.config.solver.dt
+            while state.t < target:
+                self.step_controller.trial(self, model, state, target)
+            state.step += n_steps
+            state.t = state.t0 + state.step * self.config.solver.dt
+            return
         for _ in range(n_steps):
             completed = state.step
             report = self.step(model, state, self.config.solver.dt)

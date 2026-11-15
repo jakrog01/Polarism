@@ -93,6 +93,12 @@ and constant potential envelope use the existing solver arithmetic.
 | `split-step-fft-cuda` | yes | yes |
 | `ifrk-fft-cuda`, `ifrk4-fft-cuda` | yes | yes |
 
+## Adaptive time stepping
+
+Only `ifrk-fft-cuda` declares `adaptive`, and only with an embedded tableau
+(`dp5`, `dop853`, `vern7`, `vern9`). `ifrk4-fft-cuda` and every other solver
+use fixed steps. See [Time Evolution](../user-guide/time-evolution.md#adaptive-time-stepping).
+
 ## Compatibility guidance
 
 The package includes explicit compatibility checks and warnings. In practice:

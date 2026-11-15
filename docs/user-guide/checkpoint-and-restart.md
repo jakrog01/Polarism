@@ -57,8 +57,11 @@ reservoir's state names. Built-in names are `nR`, `nA` and `nI` as applicable;
 plugins without `state_names` use numeric names starting at `0`. Attributes
 include `t`, `step`, `t0`, `dt`, `ndim`, spatial `shape`, `components`, `batched`,
 `reservoir_type`, `config_json`, `polarism_version`, and, for sweeps,
-`member_configs_json`. The groups `step_controller` and `accumulators` are
-reserved for future formats and are not written. Checkpoint v1 is rejected.
+`member_configs_json`. Adaptive runs write a `step_controller` group with the
+next trial size, previous error, and trial statistics. The `accumulators`
+group stores accumulator state when configured. Resume restores the adaptive
+trial sequence, and changing between adaptive and fixed mode on resume is
+rejected. Checkpoint v1 is rejected.
 
 With `checkpoint.on_signal=True`, SIGTERM and SIGUSR1 request a stop after the
 current solver chunk. The controller writes a checkpoint, finalizes result

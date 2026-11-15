@@ -35,3 +35,22 @@ node names to `(field, reduced)` pairs. Set `data_location` to `"cpu"` or
 a visit error stops the run. An optional `finalize()` is called at the end of
 the run, including after an exception. Sampling uses `result.save_every`
 and always includes the initial state.
+
+## Accumulator plugins
+
+Register an `Accumulator` subclass with
+`polarism.results.register_accumulator("name")` and select it in
+`cfg.result.accumulators = {"name": {"start": 0.0, "every": 1.0}}`.
+The class constructor receives the initialized controller and the common
+`start`, `stop`, and `every` parameters. Declare additional accepted keys in
+`parameter_keys`; unknown keys fail config validation. Implement `update(state,
+t)` using `compute_engine.xp` device operations without host reads or syncs.
+Keep raw sums in float64 or complex128 arrays. `state_dict()` returns those
+arrays together with base sampling metadata; `load_state_dict(values)` restores
+them for checkpoint resume. `results()` returns `AccumulatedResult` instances
+with `name`, `value`, `dims`, `units`, `label`, `wigner_corrected`, and
+`linear`. Set `linear=True` for values that can be averaged across sweep
+members; `SweepResults.mean` checks this field. Include a leading `member`
+dimension in batched runs. The base class tracks `samples`, `t_first`, and
+`t_last`; call `_sampled(t)` once per update. Finalized results are written at
+the end of the run and exposed through `controller.accumulated`.

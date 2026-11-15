@@ -97,6 +97,27 @@ record a component axis where applicable, and each dataset has `dims` and `units
 Time uses ps and coordinates use µm. NPY and JSON output keep public field
 shapes and record dimensions and units in `metadata.json`.
 
+Accumulated values live in `Results.accumulated[name]`. HDF5 values are lazy
+datasets at `accumulated/<name>/value`; their attributes are `dims`, `units`,
+`label`, `wigner_corrected`, and `linear`, while the parent group holds `samples`,
+`t_first`, and `t_last`. `Results.accumulated_meta[name]` collects those
+attributes. NPY stores `accumulated_<name>.npy` with metadata in
+`metadata.json`; JSON stores the values and attributes in its `accumulated`
+metadata section. `Results.kx` and `Results.ky` return fft-shifted angular
+wavenumbers in µm⁻¹. `SweepResults.member(i).accumulated` selects a member;
+`SweepResults.mean(name, members=None)` returns a sample-weighted array when
+the accumulated result has `linear=true`. This includes spectra and the
+`momentum_distribution`, `density_mean`, and `density_squared_mean` moments. Recompute
+the derived correlations with `polarism.analysis.g1(n_k, ndim=None)` and
+`polarism.analysis.g2(mean, squared_mean)` after an ensemble mean.
+
+`spectrum_k` has dimensions `(member?, component?, E, kx)` and units
+particles/mode/meV. `spectrum_x` has dimensions `(member?, component?, E, x)`
+and units µm⁻ᵈ meV⁻¹. Their energy arrays, `spectrum_k_energy` and
+`spectrum_x_energy`, have dimensions `(member?, E)` and units meV. Energies
+are ascending and include the coherent drive energy when enabled. The energy
+axis can differ between sweep members when their drive energies differ.
+
 For spinor runs, `psi` and `density` have shape `(time, component, *space)` or
 `(time, member, component, *space)`, with component order `(σ+, σ−)`. HDF5
 keeps this axis; `load_results` squeezes a singleton component axis for
@@ -116,6 +137,7 @@ The user-facing result configuration exposes these main storage choices:
 | `save_npy` | NumPy array dumps |
 | `formats` | additional registered formats; combined with enabled `save_*` flags |
 | `observables` | registered factories that add result nodes |
+| `accumulators` | registered samplers for final time-averaged arrays |
 | `real_time_view` | interactive visualization during a run |
 | `animate` | stream an online animation during the run |
 

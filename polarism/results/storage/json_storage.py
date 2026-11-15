@@ -127,3 +127,13 @@ class JSONStorage(BaseStorage):
     def set_stop_times(self, stop_times) -> None:
         """Store stop times in the JSON metadata."""
         self.metadata["stop_time"] = np.asarray(stop_times, dtype=float).tolist()
+
+    def write_accumulated(self, results, metadata) -> None:
+        """Keep final accumulated arrays in the metadata JSON section."""
+        self.metadata["accumulated"] = {
+            name: {**metadata[name], "dims": result.dims, "units": result.units,
+                   "label": result.label, "wigner_corrected": result.wigner_corrected,
+                   "linear": result.linear,
+                   "value": self._json_field(np.asarray(result.value))}
+            for name, result in results.items()
+        }

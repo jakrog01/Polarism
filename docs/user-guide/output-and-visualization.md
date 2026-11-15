@@ -73,6 +73,96 @@ The initial state is recorded at its starting time `t0`. After that, every
 output receives a frame every `save_every` ps. The interval must be a positive
 multiple of `solver.dt`; by default every step is saved.
 
+## Accumulated observables
+
+Accumulators average fields over selected simulation steps without saving every
+field frame. They sample the initial state when `start` is zero and then every
+`every` ps through `stop` or the end of the run. `start` and `every` must be
+multiples of `solver.dt`; `every` defaults to `result.save_every` or one step.
+
+```yaml
+result:
+  save_results: true
+  formats: [hdf5]
+  accumulators:
+    momentum-distribution: {start: 500.0, every: 1.0}
+    g2: {start: 500.0, every: 1.0}
+```
+
+`momentum-distribution` writes `momentum_distribution`, the fft-shifted
+particle number per mode, and derived `g1`. Its sum over modes is the mean
+particle number. `g2` writes the linear moments `density_mean` and
+`density_squared_mean`, plus their ratio `g2`. With Wigner stochastic noise,
+the two accumulators remove the symmetric-ordering vacuum terms using
+`noise.stochastic_strength` and the cell volume. Each saved value records
+`wigner_corrected`, `samples`, `t_first`, and `t_last`.
+
+```python
+from polarism import SimulationController, load_results
+from polarism.config import Config
+
+cfg = Config()
+cfg.result.accumulators = {"momentum-distribution": {"every": 1.0}, "g2": {"every": 1.0}}
+controller = SimulationController(cfg)
+controller.run()
+g2_array = controller.accumulated["g2"].value
+
+cfg.result.save_results = True
+cfg.result.formats = ("hdf5",)
+controller = SimulationController(cfg)
+controller.run()
+with load_results(controller.run_directory) as results:
+    n_k = results.accumulated["momentum_distribution"][:]
+    kx = results.kx
+```
+
+For ensemble correlations, sweep `noise.seed`, call
+`SweepResults.mean("momentum_distribution")`,
+`SweepResults.mean("density_mean")`, and
+`SweepResults.mean("density_squared_mean")`, then derive `g1` and `g2` with
+`polarism.analysis.g1(n_k)` and
+`polarism.analysis.g2(mean, squared_mean)`. Means use sample counts as weights;
+the stored `g1` and `g2` ratios should be recomputed from the ensemble means.
+For a 1D batched array, pass `ndim=1` to `g1`.
+
+### Energy spectra
+
+`spectrum-k` samples the `ky=0` momentum row in 2D or the full momentum
+axis in 1D. `spectrum-x` samples the real-space row nearest `y` in 2D or the
+full x axis in 1D. Omit `y` for 1D runs.
+
+```yaml
+result:
+  accumulators:
+    spectrum-k: {start: 500.0, every: 0.1, segment: 1024}
+    spectrum-x: {start: 500.0, every: 0.1, segment: 1024, y: 0.0}
+```
+
+The even `segment` length defaults to 1024 and needs at least that many
+samples between `start` and `stop` or `solver.total_time`. Spectra use a
+periodic Hann window and 50% overlap. The energy bin width is
+`2πħ / (segment × every)` and the window spans `±πħ / every` around the
+drive energy (or zero without a drive); choose `every` small enough that the
+emission lies inside it. The ring buffer uses
+`segment × members × components × n × itemsize` bytes, where `n` is the
+number of x points and `itemsize` is the field dtype size. The float64 PSD
+sum and FFT workspace need additional memory. If a run stops before one
+segment completes, Polarism warns and emits no spectrum.
+
+`spectrum_k` is in particles/mode/meV; `spectrum_x` is in µm⁻ᵈ meV⁻¹.
+The energy arrays `spectrum_k_energy` and `spectrum_x_energy` are in meV.
+For a chemical potential estimate, sum the spectrum over positions or
+wavenumbers and components, then use
+`energy[argmax(spectrum.sum(axis=(-1, -3)))]` for a spinor spectrum, or
+`energy[argmax(spectrum.sum(axis=-1))]` for a scalar spectrum. Select a
+member first for batched results. The energy axis includes the drive energy
+when the coherent drive is enabled. Spectra are not Wigner-corrected:
+vacuum noise follows the bare dispersion and is not a flat spectral floor.
+
+`examples/spectra_and_correlations.py` runs a pumped spot with adaptive steps,
+plots E(k) against the bare dispersion with μ marked, and shows n(k) and
+|g1|.
+
 ## Saving results
 
 ```python

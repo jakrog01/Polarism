@@ -119,9 +119,22 @@ class NPYStorage(BaseStorage):
             previous["datasets"].update(self.metadata["datasets"])
             if "stop_time" in self.metadata:
                 previous["stop_time"] = self.metadata["stop_time"]
+            if "accumulated" in self.metadata:
+                previous["accumulated"] = self.metadata["accumulated"]
             self.metadata = previous
         path.write_text(json.dumps(self.metadata, sort_keys=True))
 
     def set_stop_times(self, stop_times) -> None:
         """Store stop times in the NumPy metadata."""
         self.metadata["stop_time"] = np.asarray(stop_times, dtype=float).tolist()
+
+    def write_accumulated(self, results, metadata) -> None:
+        """Write final arrays and their metadata."""
+        self.metadata["accumulated"] = {}
+        for name, result in results.items():
+            np.save(self.output_dir / f"accumulated_{name}.npy", result.value)
+            self.metadata["accumulated"][name] = {
+                **metadata[name], "dims": result.dims, "units": result.units,
+                "label": result.label, "wigner_corrected": result.wigner_corrected,
+                "linear": result.linear,
+            }

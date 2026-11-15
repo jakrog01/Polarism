@@ -33,7 +33,7 @@ from polarism.grid.simulation_grid import SimulationGrid
 from polarism.simulation_state import SimulationState
 from polarism.solver import AbstractSolver, StepReport, SolverCapabilities, create_solver
 
-__version__ = "0.8.2"
+__version__ = "0.9.0"
 __all__ = [
     "BoundaryCondition",
     "Config",

@@ -164,6 +164,10 @@ The condensate equation receives `nR` as the active reservoir density.
 | `method` | time integrator | `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`, `split-step-fft`, `split-step-fft-cuda`, `etd-rk2`, `ip-rk4`, `ifrk-fft-cuda`, `ifrk4-fft-cuda` |
 | `tableau` | fixed-step RK coefficients read by `ifrk-fft-cuda`; its `ifrk4-fft-cuda` alias always uses RK4 | `rk4` (default), `dp5`, `dop853`, `vern7`, `vern9` |
 | `dt` | timestep | positive float |
+| `adaptive` | use embedded error control inside schedule ticks with `ifrk-fft-cuda` | boolean, default `False` |
+| `rtol` | relative trial error tolerance | positive float, default `1e-6` |
+| `atol` | absolute trial error tolerance | nonnegative float, default `1e-8` |
+| `dt_max` | maximum adaptive substep in ps | positive float or `None`, default `None` |
 | `total_time` | total simulation time | positive float |
 | `precision` | arithmetic mode where supported | typically `single`, `double` |
 | `cuda_graphs` | enable CUDA graph replay for eligible solver chunks | boolean, default `True` |
@@ -185,6 +189,7 @@ with reduced grid-direction anisotropy.
 | `save_hdf5`, `save_json`, `save_npy` | storage backends | booleans |
 | `formats` | additional registered storage formats, combined with enabled `save_*` options | tuple of names, default `()` |
 | `observables` | registered observable factories that add result nodes; built in: `angular-momentum`, `center-of-mass`, `current`, `momentum-density`, `vortices` (the first and last are 2D only) | tuple of names, default `()` |
+| `accumulators` | mapping from registered accumulator name to parameters; built in: `momentum-distribution`, `g2`, `spectrum-k`, `spectrum-x` | `start`, `stop`, `every` in ps; spectra also accept even `segment` >= 8 (default 1024); `spectrum-x` accepts `y` in µm for 2D; default `{}` |
 | `save_every` | time in ps between writes after the initial state; defaults to one `solver.dt` | positive multiple of `solver.dt` |
 | `batch_size` | maximum frames buffered before a write; a batch is also written once its fields reach 256 MiB | positive integer |
 | `compression` | compression for saved HDF5 result frames | `none` (default), `lzf`, `gzip` |

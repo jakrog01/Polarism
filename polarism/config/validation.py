@@ -16,6 +16,7 @@ from polarism.envelopes import create_envelope
 from polarism.model_terms import available_terms
 from polarism.results.builtin_observables import TWO_DIMENSIONAL_OBSERVABLES
 from polarism.results.observable_registry import available_observables
+from polarism.results.accumulators import available_accumulators
 from polarism.results.storage import available_storages
 
 if TYPE_CHECKING:
@@ -213,6 +214,31 @@ def _validate_solver(cfg: Config) -> None:
         )
     if not isinstance(s.cuda_graphs, bool):
         raise ConfigValidationError("solver.cuda_graphs must be a boolean")
+    if type(s.adaptive) is not bool:
+        raise ConfigValidationError("solver.adaptive must be a boolean")
+    if s.adaptive:
+        from polarism.solver.tableaus import TABLEAUS
+
+        if not solver_capabilities(s.method).adaptive:
+            raise ConfigValidationError(f"solver.method={s.method!r} does not support solver.adaptive")
+        if TABLEAUS[s.tableau].embedded_order is None:
+            raise ConfigValidationError("solver.adaptive requires an embedded solver.tableau")
+        if cfg.noise.enabled and cfg.noise.stochastic != "none":
+            raise ConfigValidationError("solver.adaptive requires stochastic noise off")
+        try:
+            absorption = available_absorptions.lookup(cfg.boundary_condition.absorption)
+        except ValueError as exc:
+            raise ConfigValidationError(f"boundary_condition.absorption: {exc}") from exc
+        if not absorption.after_step_is_noop:
+            raise ConfigValidationError("solver.adaptive requires absorption.after_step_is_noop")
+        for name, positive in (("rtol", True), ("atol", False), ("dt_max", True)):
+            value = getattr(s, name)
+            if value is None and name == "dt_max":
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or (value <= 0 if positive else value < 0):
+                raise ConfigValidationError(f"solver.{name} must be {'> 0' if positive else '>= 0'} and finite")
+        if s.precision == "single" and s.rtol < 1e-5:
+            raise ConfigValidationError("solver.rtol must be >= 1e-5 in single precision")
 
 
 def _validate_result(cfg: Config) -> None:
@@ -244,6 +270,47 @@ def _validate_result(cfg: Config) -> None:
         raise ConfigValidationError("result.save_psi must be a boolean")
     if r.save_every is not None:
         _validate_time_multiple("result.save_every", r.save_every, cfg.solver.dt)
+    if not isinstance(r.accumulators, dict):
+        raise ConfigValidationError("result.accumulators must map names to parameter mappings")
+    for name, params in r.accumulators.items():
+        try:
+            accumulator = available_accumulators.lookup(name)
+        except ValueError as exc:
+            raise ConfigValidationError(f"result.accumulators: {exc}") from exc
+        if not isinstance(params, dict):
+            raise ConfigValidationError(f"result.accumulators.{name} must be a parameter mapping")
+        unknown = set(params) - {"start", "stop", "every"} - accumulator.parameter_keys
+        if unknown:
+            raise ConfigValidationError(
+                f"result.accumulators.{name}: unknown keys {sorted(unknown)}; "
+                f"registered accumulators: {sorted(available_accumulators)}"
+            )
+        for key in ("start", "every", "stop"):
+            value = params.get(key)
+            if value is None:
+                continue
+            if key in {"start", "stop"} and value == 0 and type(value) in (int, float):
+                continue
+            _validate_time_multiple(f"result.accumulators.{name}.{key}", value, cfg.solver.dt)
+        if params.get("stop") is not None and params["stop"] < params.get("start", 0):
+            raise ConfigValidationError(f"result.accumulators.{name}.stop must be >= start")
+        if name in {"spectrum-k", "spectrum-x"}:
+            segment = params.get("segment", 1024)
+            if type(segment) is not int or segment < 8 or segment % 2:
+                raise ConfigValidationError(f"result.accumulators.{name}.segment must be an even integer >= 8")
+            if "y" in params:
+                y = params["y"]
+                if cfg.grid.ndim == 1:
+                    raise ConfigValidationError(f"result.accumulators.{name}.y requires a 2D grid")
+                if isinstance(y, bool) or not isinstance(y, (int, float)) or not math.isfinite(y):
+                    raise ConfigValidationError(f"result.accumulators.{name}.y must be a finite number in µm")
+            start = round(params.get("start", 0) / cfg.solver.dt)
+            stop = params.get("stop")
+            end = round(min(stop if stop is not None else cfg.solver.total_time,
+                            cfg.solver.total_time) / cfg.solver.dt)
+            every = round((params.get("every") or r.save_every or cfg.solver.dt) / cfg.solver.dt)
+            if end < start or (end - start) // every + 1 < segment:
+                raise ConfigValidationError(f"result.accumulators.{name} requires at least {segment} samples")
     if r.batch_size < 1:
         raise ConfigValidationError(f"result.batch_size must be >= 1, got {r.batch_size}")
 
