@@ -214,6 +214,31 @@ def _validate_solver(cfg: Config) -> None:
         )
     if not isinstance(s.cuda_graphs, bool):
         raise ConfigValidationError("solver.cuda_graphs must be a boolean")
+    if type(s.adaptive) is not bool:
+        raise ConfigValidationError("solver.adaptive must be a boolean")
+    if s.adaptive:
+        from polarism.solver.tableaus import TABLEAUS
+
+        if not solver_capabilities(s.method).adaptive:
+            raise ConfigValidationError(f"solver.method={s.method!r} does not support solver.adaptive")
+        if TABLEAUS[s.tableau].embedded_order is None:
+            raise ConfigValidationError("solver.adaptive requires an embedded solver.tableau")
+        if cfg.noise.enabled and cfg.noise.stochastic != "none":
+            raise ConfigValidationError("solver.adaptive requires stochastic noise off")
+        try:
+            absorption = available_absorptions.lookup(cfg.boundary_condition.absorption)
+        except ValueError as exc:
+            raise ConfigValidationError(f"boundary_condition.absorption: {exc}") from exc
+        if not absorption.after_step_is_noop:
+            raise ConfigValidationError("solver.adaptive requires absorption.after_step_is_noop")
+        for name, positive in (("rtol", True), ("atol", False), ("dt_max", True)):
+            value = getattr(s, name)
+            if value is None and name == "dt_max":
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or (value <= 0 if positive else value < 0):
+                raise ConfigValidationError(f"solver.{name} must be {'> 0' if positive else '>= 0'} and finite")
+        if s.precision == "single" and s.rtol < 1e-5:
+            raise ConfigValidationError("solver.rtol must be >= 1e-5 in single precision")
 
 
 def _validate_result(cfg: Config) -> None:

@@ -43,6 +43,16 @@ chunked runs and checkpoint resume. `state.field` and reservoir fields use
 `(B, 1, *S)` arrays, with `S=(nx,)` or `(ny, nx)`. Assigning `state.field`
 invalidates its spectral cache.
 
+Adaptive solvers declare `capabilities.adaptive=True` and provide an embedded
+tableau. In adaptive mode, `step(model, state, h)` is a trial: it commits the
+field, spectral field, reservoir, and `state.t += h` only when the normalized
+error is at most one. It leaves `state.step` unchanged. A rejected trial leaves
+the state untouched. Return `StepReport(accepted, error, dt_next)`, with a
+finite normalized error and optionally a proposed next trial size. When
+`dt_next` is `None`, the inherited `advance` uses its PI controller. The
+driver counts schedule ticks and sets the final tick time. Adaptive solvers
+must route `advance` through that driver.
+
 The inherited `advance(model, state, n_steps)` calls `step` and applies
 `model.noise` after each accepted step. Override `advance` only when a solver
 can combine multiple steps efficiently. The override owns the same time and

@@ -41,6 +41,38 @@ CUDA graph chunking.
 reservoir coupling is second order for the built-in models, including
 `quadratic-double`.
 
+## Adaptive time stepping
+
+Set `solver.method: ifrk-fft-cuda`, choose `dp5`, `dop853`, `vern7`, or
+`vern9`, and set `solver.adaptive: true`. `solver.dt` remains the schedule tick
+for output, checkpoints, events, accumulators, and `total_time`. The integrator
+chooses internal substeps using `solver.rtol` and `solver.atol`; `solver.dt_max`
+optionally caps them. Substeps can span several ticks but end exactly at each
+scheduled boundary. Changing the output schedule can change the substep sequence.
+The first trial uses `solver.dt` (capped by `dt_max`). Defaults are
+`rtol: 1e-6` and `atol: 1e-8` (in the units of ψ and the reservoir
+densities); single precision requires `rtol >= 1e-5`.
+
+```yaml
+solver:
+  method: ifrk-fft-cuda
+  tableau: dop853
+  adaptive: true
+  dt: 0.1
+  rtol: 1.0e-6
+result:
+  save_every: 1.0
+```
+
+The error estimate combines real-space condensate and reservoir elements.
+For batches, all members share the step size chosen for the largest member
+error. Each trial requires a host synchronization for the accept decision.
+Adaptive runs use the generic NumPy or CuPy path, without fused CUDA kernels
+or CUDA graphs. Stochastic noise and mask absorption are unsupported; initial
+noise and CAP absorption are supported. `controller.step_statistics` reports
+accepted and rejected trials and the smallest, largest, and last accepted
+substep. HDF5 results record these values in `adaptive_*` root attributes.
+
 ## Time-step guidance
 
 There is no hard-coded CFL guard in the runtime path. You must validate `dt` yourself.

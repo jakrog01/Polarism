@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from dataclasses import replace
 
 import numpy as np
 
@@ -9,7 +10,7 @@ from polarism.config.dtype_utils import complex_dtype, real_dtype
 from polarism.dispersion import apply_spinor_matrix, spinor_matrix_exponential
 from polarism.laser.pump_field import evaluate_pump
 from polarism.simulation_state import SimulationState
-from polarism.solver.abstract_solver import AbstractSolver, ACCEPTED, SolverCapabilities
+from polarism.solver.abstract_solver import AbstractSolver, ACCEPTED, SolverCapabilities, StepReport
 from polarism.solver.solver_registry import register_solver
 from polarism.solver.tableaus import TABLEAUS
 
@@ -30,6 +31,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
         kinetic_relaxation=True, dispersion=frozenset({"parabolic"}), terms=True,
         coherent_drive=True, time_dependent_potential=True,
         noise=frozenset({"none", "wigner"}),
+        adaptive=True,
         quantitative_reservoirs=frozenset({"single", "double", "quadratic-double", "none"}),
         description='FFT interaction-picture RK solver with selectable tableau. Stage-coupled reservoir and cuFFT fused stages for supported GPU cases. Evaluates kinetic_relaxation_eta in nonlinear RHS. Spectral production path for periodic grids; use a wide CAP absorber for open boundaries.',
     )
@@ -80,6 +82,8 @@ class IFRKFFTCudaSolver(AbstractSolver):
         self._fused = None
 
     def _cuda(self, reservoir):
+        if self.config.solver.adaptive:
+            return None
         if getattr(self.xp, "__name__", "") != "cupy":
             return None
         if self._spinor and any(term.cuda is None for term in self._model_features.terms):
@@ -91,6 +95,10 @@ class IFRKFFTCudaSolver(AbstractSolver):
 
     def _phase(self, fraction: float, h: float):
         if self._spinor:
+            if self.config.solver.adaptive:
+                return spinor_matrix_exponential(
+                    self._spinor_matrix, self._hbar, h * fraction, self.xp
+                ).astype(self._complex_dtype)
             key = (fraction, h)
             if key not in self._spinor_phase_cache:
                 self._spinor_phase_cache[key] = spinor_matrix_exponential(
@@ -138,7 +146,7 @@ class IFRKFFTCudaSolver(AbstractSolver):
         return bool(getattr(absorption, "after_step_is_noop", False))
 
     def _generic_step(self, potential, pump, reservoir, boundary_condition, state,
-                      h: float | None = None) -> None:
+                      h: float | None = None) -> StepReport | None:
         xp = self.xp
         h = self.config.solver.dt if h is None else h
         psi0_k = state.field_k
@@ -195,6 +203,26 @@ class IFRKFFTCudaSolver(AbstractSolver):
                 else:
                     psi_new_k += self._scalar(h * bj) * self._phase(1.0 - self._c[j], h) * f[j]
         psi_new_k = psi_new_k.astype(self._complex_dtype, copy=False)
+        if self.config.solver.adaptive:
+            res_new = []
+            for field, r0 in enumerate(res0):
+                value = r0.copy()
+                for j, bj in enumerate(self._b):
+                    if bj:
+                        value += self._scalar(h * bj) * derivatives[j][field]
+                res_new.append(xp.maximum(value, 0).astype(self._real_dtype, copy=False))
+            psi_start = (state._field if state._field is not None else
+                         self._ifft(psi0_k, **({"axis": -1} if self._ndim == 1 else {"axes": (-2, -1)})))
+            psi_new = self._ifft(psi_new_k, **({"axis": -1} if self._ndim == 1 else {"axes": (-2, -1)}))
+            weights = tuple(b - float(b_hat) for b, b_hat in zip(self._b, self.tableau.b_hat))
+            error = self._adaptive_error(h, psi_start, psi_new, psi0_k, f,
+                                         res0, tuple(res_new), derivatives, weights)
+            if error <= 1:
+                state.field = psi_new.astype(self._complex_dtype, copy=False)
+                state.field_k = psi_new_k
+                reservoir.set_state(tuple(res_new))
+                state.t += h
+            return StepReport(error <= 1, error, None)
         if self._can_skip_after_step(boundary_condition):
             state.field = None
             state.field_k = psi_new_k
@@ -212,6 +240,58 @@ class IFRKFFTCudaSolver(AbstractSolver):
             res_new.append(xp.maximum(value, 0).astype(self._real_dtype, copy=False))
         reservoir.set_state(tuple(res_new))
 
+    def _adaptive_error(self, h, psi_start, psi_new, psi0_k, f,
+                        res0, res_new, derivatives, weights):
+        xp = self.xp
+        axes = tuple(range(1, psi_new.ndim))
+
+        def spectral_error(coefficients):
+            field_k = xp.zeros_like(psi0_k)
+            for j, coefficient in enumerate(coefficients):
+                if coefficient:
+                    if self._spinor:
+                        field_k += self._scalar(h * coefficient) * self._linear(1.0 - self._c[j], h, f[j])
+                    else:
+                        field_k += self._scalar(h * coefficient) * self._phase(1.0 - self._c[j], h) * f[j]
+            return field_k
+
+        weights3 = (tuple(b - float(b_hat) for b, b_hat in zip(self._b, self.tableau.b_hat3))
+                    if self.tableau.b_hat3 is not None else None)
+        spectral = spectral_error(weights)
+        if weights3 is not None:
+            spectral = xp.stack((spectral, spectral_error(weights3)))
+        field_errors = self._ifft(spectral, **({"axis": -1} if self._ndim == 1 else {"axes": (-2, -1)}))
+
+        def estimator(coefficients, field_error):
+            scale = self.config.solver.atol + self.config.solver.rtol * xp.maximum(xp.abs(psi_start), xp.abs(psi_new))
+            magnitude = xp.abs(field_error)
+            scaled = xp.where(scale > 0, magnitude / xp.where(scale > 0, scale, 1),
+                              xp.where(magnitude == 0, 0, xp.inf))
+            squares = xp.sum(scaled * scaled, axis=axes)
+            count = psi_new[0].size
+            for field, (r0, r1) in enumerate(zip(res0, res_new)):
+                value = xp.zeros_like(r0)
+                for j, coefficient in enumerate(coefficients):
+                    if coefficient:
+                        value += self._scalar(h * coefficient) * derivatives[j][field]
+                scale = self.config.solver.atol + self.config.solver.rtol * xp.maximum(xp.abs(r0), xp.abs(r1))
+                magnitude = xp.abs(value)
+                scaled = xp.where(scale > 0, magnitude / xp.where(scale > 0, scale, 1),
+                                  xp.where(magnitude == 0, 0, xp.inf))
+                squares = squares + xp.sum(scaled * scaled, axis=axes)
+                count += r0[0].size
+            return squares, count
+
+        error5, count = estimator(weights, field_errors[0] if weights3 is not None else field_errors)
+        if weights3 is not None:
+            error3, _ = estimator(weights3, field_errors[1])
+            denominator = error5 + 0.01 * error3
+            member_errors = xp.where(denominator > 0,
+                                     error5 / xp.sqrt(xp.where(denominator > 0, denominator, 1) * count), 0)
+        else:
+            member_errors = xp.sqrt(error5 / count)
+        return float(xp.max(member_errors))
+
     def step(self, model, state, dt):
         potential = model.potential
         pump = model.pump
@@ -219,6 +299,8 @@ class IFRKFFTCudaSolver(AbstractSolver):
         boundary_condition = model.boundary
         self.batch_physics.check(state.field_k if state._field is None else state.field,
                                  getattr(state, "components", 1))
+        if self.config.solver.adaptive:
+            return self._generic_step(potential, pump, reservoir, boundary_condition, state, dt)
         fused = self._cuda(reservoir)
         if fused is None:
             self._generic_step(potential, pump, reservoir, boundary_condition, state)
@@ -229,6 +311,8 @@ class IFRKFFTCudaSolver(AbstractSolver):
         return ACCEPTED
 
     def advance(self, model, state, n_steps: int) -> None:
+        if self.config.solver.adaptive:
+            return super().advance(model, state, n_steps)
         potential = model.potential
         pump = model.pump
         reservoir = model.reservoir
@@ -248,5 +332,5 @@ class IFRKFFTCudaSolver(AbstractSolver):
 @register_solver("ifrk4-fft-cuda")
 class IFRK4FFTCudaSolver(IFRKFFTCudaSolver):
     """Use the RK4 tableau regardless of the generic solver's setting."""
-    capabilities = IFRKFFTCudaSolver.capabilities
+    capabilities = replace(IFRKFFTCudaSolver.capabilities, adaptive=False)
     tableau_name = "rk4"

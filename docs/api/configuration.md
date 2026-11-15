@@ -164,6 +164,10 @@ The condensate equation receives `nR` as the active reservoir density.
 | `method` | time integrator | `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`, `split-step-fft`, `split-step-fft-cuda`, `etd-rk2`, `ip-rk4`, `ifrk-fft-cuda`, `ifrk4-fft-cuda` |
 | `tableau` | fixed-step RK coefficients read by `ifrk-fft-cuda`; its `ifrk4-fft-cuda` alias always uses RK4 | `rk4` (default), `dp5`, `dop853`, `vern7`, `vern9` |
 | `dt` | timestep | positive float |
+| `adaptive` | use embedded error control inside schedule ticks with `ifrk-fft-cuda` | boolean, default `False` |
+| `rtol` | relative trial error tolerance | positive float, default `1e-6` |
+| `atol` | absolute trial error tolerance | nonnegative float, default `1e-8` |
+| `dt_max` | maximum adaptive substep in ps | positive float or `None`, default `None` |
 | `total_time` | total simulation time | positive float |
 | `precision` | arithmetic mode where supported | typically `single`, `double` |
 | `cuda_graphs` | enable CUDA graph replay for eligible solver chunks | boolean, default `True` |

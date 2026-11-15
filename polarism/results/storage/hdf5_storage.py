@@ -186,6 +186,12 @@ class HDF5Storage(BaseStorage):
         self.h5_file.attrs["stop_time"] = np.asarray(stop_times, dtype=float)
         self.h5_file.flush()
 
+    def set_step_statistics(self, statistics) -> None:
+        """Write adaptive trial statistics as root attributes."""
+        for name, value in statistics.items():
+            self.h5_file.attrs[f"adaptive_{name}"] = value
+        self.h5_file.flush()
+
     def write_accumulated(self, results, metadata) -> None:
         """Write final accumulated datasets with sampling metadata."""
         root = self.h5_file.require_group("accumulated")

@@ -759,6 +759,10 @@ class SimulationController:
                 h5.attrs["batched"] = self.state.batched
                 h5.attrs["reservoir_type"] = self.cfg.reservoir.reservoir_type
                 h5.attrs["config_json"] = json.dumps(asdict(self.cfg))
+                if self.cfg.solver.adaptive:
+                    controller = self._step_controller()
+                    saved_controller = h5.create_group("step_controller")
+                    saved_controller.attrs.update(controller.state_dict())
                 h5.attrs["stop_time"] = self.stop_times
                 h5.attrs["steady_last_step"] = self._steady_last_step
                 if self._steady_norm is not None:
@@ -803,6 +807,10 @@ class SimulationController:
             if h5.attrs["dt"] != self.cfg.solver.dt:
                 raise ValueError("checkpoint dt mismatch")
             saved_config = json.loads(h5.attrs["config_json"])
+            saved_adaptive = bool(saved_config["solver"].get("adaptive", False))
+            if saved_adaptive != self.cfg.solver.adaptive or ("step_controller" in h5) != self.cfg.solver.adaptive:
+                raise ValueError("checkpoint adaptive mode mismatch")
+            controller_state = dict(h5["step_controller"].attrs) if saved_adaptive else None
             saved_noise = saved_config["noise"]
             if saved_config.get("stop", asdict(self.cfg.stop)) != asdict(self.cfg.stop):
                 raise ValueError("checkpoint stop config mismatch")
@@ -907,6 +915,23 @@ class SimulationController:
             self.state.field_k = self.xp.asarray(field_k, dtype=dtype).copy()
         self.model = self._make_model()
         self.solver = create_solver(self.cfg, self.grid, self.model)
+        if controller_state is not None:
+            from polarism.solver.step_controller import StepController
+
+            self.solver.step_controller = StepController(self.solver)
+            self.solver.step_controller.load_state_dict(controller_state)
+
+    @property
+    def step_statistics(self):
+        """Return adaptive trial counts and accepted step sizes."""
+        return self._step_controller().statistics if self.cfg.solver.adaptive else None
+
+    def _step_controller(self):
+        from polarism.solver.step_controller import StepController
+
+        if not hasattr(self.solver, "step_controller"):
+            self.solver.step_controller = StepController(self.solver)
+        return self.solver.step_controller
 
     def _make_model(self) -> Model:
         """Collect solver inputs and optional stochastic noise."""
@@ -1134,6 +1159,8 @@ class SimulationController:
                         self.storage_visitor.set_accumulated(self.accumulated, metadata)
                 if self.storage_visitor is not None and stopping_active:
                     self.storage_visitor.set_stop_times(self.stop_times)
+                if self.storage_visitor is not None and self.cfg.solver.adaptive:
+                    self.storage_visitor.set_step_statistics(self.step_statistics)
                 for visitor in self.results_manager.visitors:
                     finalize = getattr(visitor, "finalize", None)
                     if not callable(finalize):

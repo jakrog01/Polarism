@@ -157,6 +157,10 @@ class SolverParameters:
     precision: str = "double"
     laplacian: str = "five-point"
     cuda_graphs: bool = True
+    adaptive: bool = False
+    rtol: float = 1e-6
+    atol: float = 1e-8
+    dt_max: float | None = None
 
 
 @dataclass
