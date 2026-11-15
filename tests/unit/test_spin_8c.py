@@ -56,8 +56,8 @@ def _initial(grid, dtype):
 
 
 def _run(cfg, gpu, initial=None, members=None):
-    import cupy as cp
-
+    if gpu:
+        import cupy as cp
     current = deepcopy(cfg)
     current.compute_engine.use_gpu = gpu
     run = SimulationController(current, members=members)
