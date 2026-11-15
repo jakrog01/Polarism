@@ -50,7 +50,7 @@ def _config(method, precision="double", graphs=False, reservoir_components=2):
 
 def _initial(grid, dtype):
     x = grid.X.get() if hasattr(grid.X, "get") else grid.X
-    y = grid.Y.get() if hasattr(grid.Y, "get") else grid.Y
+    y = 0.0 if grid.ndim == 1 else (grid.Y.get() if hasattr(grid.Y, "get") else grid.Y)
     wave = np.exp(2j * np.pi * (x + 2 * y) / 8.0)
     return np.stack(((0.35 + 0.1j) * wave, (0.2 - 0.15j) * np.conj(wave))).astype(dtype)
 
@@ -251,6 +251,37 @@ def test_spinor_gpu_matches_numpy(method, reference, precision, graphs,
                  run.solver._graph_cache if method == "split-step-fft-cuda" else
                  run.solver._fused._graph_cache)
         assert cache
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("reservoir_type", ("double", "quadratic-double"))
+@pytest.mark.parametrize("ndim", (1, 2))
+@pytest.mark.parametrize("graphs", (False, True))
+def test_spinor_two_reservoir_fp64_is_deterministic(reservoir_type, ndim, graphs,
+                                                    use_gpu):
+    if not use_gpu or not has_cuda_device():
+        pytest.skip("CUDA device unavailable")
+    cfg = _config("rk4-cuda", "double", graphs)
+    cfg.grid.ndim = ndim
+    cfg.grid.nx = 64 if ndim == 1 else 32
+    cfg.grid.ny = 32
+    cfg.grid.lx = cfg.grid.ly = 40.0
+    cfg.physics.te_tm = 0.02
+    cfg.physics.zeeman = 0.05
+    cfg.reservoir.reservoir_type = reservoir_type
+    cfg.solver.dt = 0.01
+    cfg.solver.total_time = 0.5
+    reference = deepcopy(cfg)
+    reference.solver.method = "rk4-fdm"
+    _, expected, expected_res = _run(reference, False)
+    _, first, first_res = _run(cfg, True)
+    _, second, second_res = _run(cfg, True)
+    np.testing.assert_array_equal(first, second)
+    for left, right in zip(first_res, second_res):
+        np.testing.assert_array_equal(left, right)
+    np.testing.assert_allclose(first, expected, rtol=2e-8, atol=2e-8)
+    for actual, wanted in zip(first_res, expected_res):
+        np.testing.assert_allclose(actual, wanted, rtol=2e-8, atol=2e-8)
 
 
 @pytest.mark.gpu

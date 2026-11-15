@@ -1841,6 +1841,11 @@ def build_spinor_step_source(real_type, tile_x, tile_y, two_d, reservoir_model,
     ``whole`` runs all four stages with a four-cell tile halo. ``first`` runs
     stages 0-1 and stores the stage-1 derivative with the running weighted sum;
     ``second`` resumes from those arrays and runs stages 2-3.
+
+    Every stage before the last writes its staged values to shared memory,
+    including the unread final store of ``first``. Guarding that store with
+    the stage index made NVRTC 12.9 emit FP64 code that read unwritten shared
+    memory when a thread covers more than one tile cell.
     """
     import re
 
@@ -2166,15 +2171,10 @@ extern "C" __global__ void __launch_bounds__(256, 2) spinor_tiled_step(
                 for (int k = 0; k < {planes}; ++k) {{
                     acc[it][k] = stage == 0 ? d[k] : acc[it][k]+(real)2*d[k];
                 }}
-{f"""                if (stage < {last}) {{
-                    for (int k = 0; k < {planes}; ++k) {{
-                        scratch[out_offset+k*area+p] = init[it][k]+c_dt*d[k];
-                    }}
-                }}
-""" if phase == "first" else f"""                for (int k = 0; k < {planes}; ++k) {{
+                for (int k = 0; k < {planes}; ++k) {{
                     scratch[out_offset+k*area+p] = init[it][k]+c_dt*d[k];
                 }}
-"""}{f"""                if (stage == {last} && interior) {{
+{f"""                if (stage == {last} && interior) {{
 {partial_write}                }}
 """ if phase == "first" else ""}            }}{f"""
             else if (interior) {{
@@ -2728,8 +2728,9 @@ class RK4CudaSolver(AbstractSolver):
             field_derivatives = tuple(xp.empty_like(field) for _ in range(4 if staged else 0))
             res_derivatives = tuple(tuple(xp.empty(reservoir_shape, dtype=self._spinor_real)
                                           for _ in initial) for _ in range(4 if staged else 0))
-            field_out = xp.empty_like(field)
-            res_out = tuple(xp.empty_like(item) for item in initial)
+            field_out = tuple(xp.empty_like(field) for _ in range(2))
+            res_out = tuple(tuple(xp.empty_like(item) for item in initial)
+                            for _ in range(2))
             partials = (tuple((xp.empty_like(field), tuple(xp.empty_like(item) for item in initial))
                               for _ in range(2)) if self._spinor_step_phases == ("first", "second")
                         else ())
@@ -2737,7 +2738,10 @@ class RK4CudaSolver(AbstractSolver):
                                     field_derivatives, res_derivatives, field_out, res_out,
                                     partials)
             self._spinor_graphs.clear()
-        _, zero_field, zero_res, k, dr, out, out_res, partials = self._spinor_buffers
+        _, zero_field, zero_res, k, dr, outputs, reservoir_outputs, partials = self._spinor_buffers
+        output_index = int(field.data.ptr == outputs[0].data.ptr)
+        out = outputs[output_index]
+        out_res = reservoir_outputs[output_index]
         potential_source = (model.potential_static if model.time_dependent_potential
                             else model.potential)
         potential_key = (id(potential_source), field.shape)
@@ -2935,8 +2939,13 @@ class RK4CudaSolver(AbstractSolver):
         with stream:
             while remaining:
                 length = min(64, remaining)
-                if length not in self._spinor_graphs:
+                reservoir = model.reservoir
+                initial = reservoir.get_state()
+                key = (length, state.field.data.ptr,
+                       tuple(item.data.ptr for item in initial))
+                if key not in self._spinor_graphs:
                     start_step, start_time = state.step, state.t
+                    start_field = state.field
                     stream.synchronize()
                     stream.begin_capture()
                     try:
@@ -2945,15 +2954,23 @@ class RK4CudaSolver(AbstractSolver):
                                 self._spinor_graph_scales, self._spinor_graph_times,
                                 offset)
                         graph = stream.end_capture()
+                        final_field = state.field
+                        final_reservoir = reservoir.get_state()
                     except Exception:
                         try:
                             stream.end_capture()
                         except Exception:
                             pass
                         state.step, state.t = start_step, start_time
+                        state.field = start_field
+                        for name, value in zip(reservoir.state_names, initial):
+                            setattr(reservoir, name, value)
                         raise
                     state.step, state.t = start_step, start_time
-                    self._spinor_graphs[length] = graph
+                    state.field = start_field
+                    for name, value in zip(reservoir.state_names, initial):
+                        setattr(reservoir, name, value)
+                    self._spinor_graphs[key] = (graph, final_field, final_reservoir)
                 times = np.asarray([state.t0+(state.step+k)*dt+c*dt
                                     for k in range(length) for c in (0, 0.5, 1)])
                 scales = (np.asarray([coefficient(t) for t in times],
@@ -2974,7 +2991,11 @@ class RK4CudaSolver(AbstractSolver):
                     step_base = np.asarray([state.step], dtype=np.uint64)
                     self._spinor_noise_base.set(step_base, stream=stream)
                     pending_hosts.append(step_base)
-                self._spinor_graphs[length].launch(stream=stream)
+                graph, final_field, final_reservoir = self._spinor_graphs[key]
+                graph.launch(stream=stream)
+                state.field = final_field
+                for name, value in zip(reservoir.state_names, final_reservoir):
+                    setattr(reservoir, name, value)
                 state.step += length
                 state.t = state.t0 + state.step * dt
                 remaining -= length
