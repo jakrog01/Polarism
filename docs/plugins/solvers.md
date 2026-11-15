@@ -1,7 +1,7 @@
 # Solver plugins
 
 A solver integrates the condensate and reservoir fields. The controller builds a
-[`Model`](../api/model-components.md) containing the grid, batched physics,
+[`Model`](../plugins/index.md) containing the grid, batched physics,
 potential, pump, reservoir, boundary condition, and optional stochastic noise.
 A plugin receives this model at construction and for every step.
 

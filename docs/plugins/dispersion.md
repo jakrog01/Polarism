@@ -1,7 +1,7 @@
 # Dispersion plugins
 
 A dispersion plugin replaces the parabolic kinetic energy
-`hbar^2 k^2 / (2 m_eff)` of the spectral solvers with another relation E(k),
+`ħ² k² / (2 m_eff)` of the spectral solvers with another relation E(k),
 for example a quartic correction or a measured polariton branch.
 
 ## Contract
@@ -19,7 +19,7 @@ class Quartic(Dispersion):
         return hbar**2 * grid.k_squared / (2 * m_eff) + 1e-4 * grid.k_squared**2
 ```
 
-`energy(grid, physics)` returns the real energy E(k) in meV on the FFT grid:
+The quartic coefficient in this example is `1e-4` meV·µm⁴. `energy(grid, physics)` returns the real energy E(k) in meV on the FFT grid:
 an array with the shape of `grid.k_squared` (`(nx,)` or `(ny, nx)`), or one
 that broadcasts against `(B, 1, *S)` when a parameter varies between sweep
 members. `physics` is `BatchPhysics`; use `physics.get(name)`. The registered

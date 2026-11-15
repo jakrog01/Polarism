@@ -1,81 +1,31 @@
 # Testing and CI
 
-The repository has multiple pytest layers, and they serve different purposes. This was previously undocumented; this page is the operational reference.
+Run the fast CPU selection for ordinary changes and the targeted numerical suites when solver behavior changes. GitHub Actions checks the CPU selection and builds documentation, while GPU and long tests run locally on suitable hardware.
 
-## Test suites
-
-| Command | Purpose |
-| --- | --- |
-| `.venv/bin/pytest -q` | Default CPU-oriented regression suite |
-| `.venv/bin/pytest -m compliance` | Solver-to-solver agreement and compatibility checks |
-| `.venv/bin/pytest -q -m "gpu and not slow" --use-gpu` | GPU-marked tests without the long-running ones |
-| `.venv/bin/pytest -m slow --use-gpu` | Convergence, memory and GPU-speedup studies |
-| `.venv/bin/pytest -q -m '' --use-gpu --junitxml=artifacts/reports/full_verification.xml` | Complete CPU and GPU verification |
-
-The default `pyproject.toml` configuration excludes `slow` and `compliance` markers from a plain `pytest` run.
-A `-m` option on the command line replaces that default, so `pytest -m gpu`
-also runs slow GPU tests; add `and not slow` to skip them.
-
-## Recommended local workflow
-
-Before a normal contribution:
+## Local commands
 
 ```bash
-pytest
-mkdocs build
+.venv/bin/pytest -q -m "not slow and not compliance and not gpu"
+.venv/bin/mkdocs build --strict
 ```
 
-Before changing solver kernels, reservoir logic, or numerical defaults:
+`pyproject.toml` registers `slow`, `compliance`, and `gpu` markers. Its default pytest expression excludes `slow` and `compliance`, but does not exclude `gpu`. The explicit command above matches the hosted CPU selection. To select a suite explicitly, use:
 
 ```bash
-pytest
-pytest -m compliance
-mkdocs build
+.venv/bin/pytest -q -m compliance
+.venv/bin/pytest -q -m "gpu and not slow" --use-gpu
+.venv/bin/pytest -q -m slow --use-gpu
+.venv/bin/pytest -q -m '' --use-gpu
 ```
 
-Before claiming GPU performance or benchmark parity:
+A command-line `-m` replaces the default marker expression. The final command includes all markers; run it on a machine with a CUDA device and allow enough time for performance studies. Do not run concurrent GPU benchmarks when comparing timing. Tests under `tests/reference/` check analytic decay, spatial uniformity, and reservoir limits; cross-check tests compare solver behavior.
 
-```bash
-pytest -m slow --use-gpu
-```
+## Hosted workflows
 
-Run the slow suite only on a machine where the runtime and available data make sense.
+| Workflow | Trigger | Checks |
+| --- | --- | --- |
+| `tests.yml` | Push, pull request, or reusable call | Python 3.12 and 3.13; `not slow and not compliance and not gpu` |
+| `docs.yml` | Pull request or reusable call | Python 3.13; strict MkDocs build; deploys only when called with `deploy` |
+| `release.yml` | Pull request to `master` or push to `master` | Version and tag checks, tests, distributions; publication and release only after push |
 
-## Complete verification run
-
-Use the following command for a complete verification pass:
-
-```bash
-.venv/bin/pytest -q -m '' --use-gpu --tb=short \
-  --junitxml=artifacts/reports/full_verification.xml
-```
-
-`-m ''` overrides the normal development selection and includes every marker:
-unit, integration, reference, compliance, slow, and GPU. Do not run a second
-pytest process at the same time: the GPU-speedup study needs exclusive use of
-the GPU for meaningful timing.
-
-The JUnit XML is the primary machine-readable execution record. All outputs
-under `artifacts/` are local generated data and must not be committed.
-
-## What the tests cover
-
-- `tests/reference/test_solver_decay.py` checks exponential decay against an analytic expectation.
-- `tests/reference/test_solver_uniformity.py` verifies that a uniform pump does not create artificial spatial structure.
-- `tests/reference/test_reservoir_0d_stationary.py` checks the single-reservoir stationary limit.
-- `tests/crosscheck/test_solver_compliance.py` compares solver families and reservoir variants.
-
-## GitHub Actions workflows
-
-- **Test** (`tests.yml`) runs for every push and pull request on Python 3.12
-  and 3.13. It installs the `test` dependency extra and runs the CPU test
-  selection, excluding slow, compliance, and GPU-only tests.
-- **Docs** (`docs.yml`) builds the MkDocs site in strict mode for every pull
-  request. It deploys to GitHub Pages only when called by the release workflow.
-- **Release** (`release.yml`) runs for pull requests into `master` and for
-  pushes to `master`; see [Branches and releases](contributing.md#branches-and-releases).
-
-## Important limitation
-
-The hosted workflows do not run the slow, compliance, or GPU suites. Run those
-locally before opening a release pull request when solver behavior changed.
+The GitHub ruleset requires CI on `master`. The release workflow also rejects a release pull request whose source is not `dev`. Hosted tests do not run the compliance, slow, or GPU suites; run the relevant ones before a numerical release. See [Contributing](contributing.md) for the branch and release process.

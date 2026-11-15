@@ -97,7 +97,7 @@ with `ps.Config.from_yaml("run.yaml")`, or run it from the CLI:
 polarism --config run.yaml --grid.nx 256
 ```
 
-CLI flags override values in the file. See the [configuration guide](https://jakrog01.github.io/Polarism/user-guide/grid-and-parameters/#yaml-configuration).
+CLI flags override values in the file. See the [configuration guide](https://jakrog01.github.io/Polarism/user-guide/configuration/#yaml-configuration).
 
 For long cluster jobs, `cfg.checkpoint.every` sets the checkpoint cadence in ps and `cfg.checkpoint.resume_from` continues from one; see [Checkpoint and restart](https://jakrog01.github.io/Polarism/user-guide/checkpoint-and-restart/).
 
@@ -171,18 +171,18 @@ See the [parameter sweeps guide](https://jakrog01.github.io/Polarism/user-guide/
 | `ifrk-fft-cuda` | periodic | CPU or CUDA | Spectral RK4/DP5/DOP853/Verner 7/9 with stage-coupled reservoirs; adaptive dt with embedded tableaus |
 | `ifrk4-fft-cuda` | periodic | CPU or CUDA | Historical alias for spectral RK4 |
 
-Check timestep and grid convergence for your model. See the [solver reference](https://jakrog01.github.io/Polarism/api/solvers/) for compatibility details.
+Check timestep and grid convergence for your model. See the [solver reference](https://jakrog01.github.io/Polarism/reference/solvers/) for compatibility details.
 
 ## Documentation
 
-- [Getting started](https://jakrog01.github.io/Polarism/getting-started/)
-- [User guide](https://jakrog01.github.io/Polarism/user-guide/grid-and-parameters/)
+- [Getting started](https://jakrog01.github.io/Polarism/getting-started/quickstart/)
+- [User guide](https://jakrog01.github.io/Polarism/user-guide/configuration/)
 - [Running on GPUs](https://jakrog01.github.io/Polarism/user-guide/running-on-gpus/)
 - [Plugin guide](https://jakrog01.github.io/Polarism/plugins/)
-- [Reference](https://jakrog01.github.io/Polarism/api/overview/) and [Python API](https://jakrog01.github.io/Polarism/api/python-api/)
-- [Physics background](https://jakrog01.github.io/Polarism/development/physics-background/)
+- [Reference](https://jakrog01.github.io/Polarism/reference/configuration/) and [Python API](https://jakrog01.github.io/Polarism/reference/python-api/)
+- [Physics background](https://jakrog01.github.io/Polarism/explanation/physics/)
 
-For pulsed pumps, `power_definition: pulse_energy` makes `power` or `P` the integrated dose of one pulse over space and time. The legacy `peak_amplitude` mode remains available for reproducing older runs. See [Potentials and Pumps](https://jakrog01.github.io/Polarism/user-guide/potentials-and-pumps/).
+For pulsed pumps, `power_definition: pulse_energy` makes `power` or `P` the integrated dose of one pulse over space and time. The legacy `peak_amplitude` mode remains available for reproducing older runs. See [Potentials and Pumps](https://jakrog01.github.io/Polarism/user-guide/pumps-and-reservoirs/).
 
 ## Contributing
 

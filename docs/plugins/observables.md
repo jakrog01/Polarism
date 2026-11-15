@@ -5,7 +5,7 @@ it with `cfg.result.observables = (name,)`. Factories receive the initialized
 `SimulationController` and return one `ResultNode` or a list of nodes. Unknown
 names fail configuration validation and list registered observables. The
 registry already holds the
-[built-in observables](../user-guide/output-and-visualization.md#built-in-observables);
+[built-in observables](../user-guide/output-and-results.md);
 a plugin name that equals one of them overrides it with a warning, and two
 selected observables must not produce nodes with the same name.
 
@@ -13,8 +13,8 @@ selected observables must not produce nodes with the same name.
 `scalar_groups`, the context keys passed by
 `SimulationController._record_results`. Use `compute_engine.xp` for NumPy or
 CuPy operations. For `is_field=False`, storage records the value returned by
-`compute_fn`; `reduce_dim_fn` is applied only for CPU visitors such as live
-view. Return a 0-D backend array for a scalar to avoid a GPU sync during
+`compute_fn`; `reduce_dim_fn` is evaluated when a CPU visitor requests the node, including live
+view. A device-only visitor can skip this reduction. Return a 0-D backend array for a scalar to avoid a GPU sync during
 result computation. Set `save` and `expose` to control storage and live view.
 
 ```python

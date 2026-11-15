@@ -24,6 +24,8 @@ potential:
   profile: {type: parabolic-trap, curvature: 0.01, amplitude: 0.002}
 ```
 
+In this example, `curvature` is 0.01 µm⁻² and `amplitude` is 0.002 meV. The final potential has units meV.
+
 A plugin can attach a `validate(spec, ndim)` callable to its function for parameter and dimensionality checks before array creation. Raise `ValueError` with a useful message for invalid values.
 
 ## Temporal envelope contract
@@ -50,4 +52,4 @@ laser:
   envelope: {type: linear-ramp, duration: 2.0}
 ```
 
-`create_profile`, `available_profiles`, `create_envelope`, and `available_envelopes` are exported from `polarism`. Registry names must be unique for predictable configuration loading. Built-in profile and envelope names and their parameters are listed in the [user guide](../user-guide/profiles-and-envelopes.md).
+The ramp duration in this example is 2 ps. `create_profile`, `available_profiles`, `create_envelope`, and `available_envelopes` are exported from `polarism`. Registry names must be unique for predictable configuration loading. Built-in profile and envelope names and their parameters are listed in the [user guide](../user-guide/profiles-and-envelopes.md).

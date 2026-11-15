@@ -1,7 +1,7 @@
 # Plugins
 
 A plugin is a Python module that registers a laser, potential, initial condition, reservoir,
-solver, extra term, dispersion, grid, absorption strategy, storage format, or observable under a configuration name. Start with
+solver, extra term, dispersion, grid, absorption strategy, storage format, observable, or accumulator under a configuration name. Start with
 [Your first plugin](first-plugin.md) for a complete run before using the
 component-specific contracts below.
 
@@ -39,6 +39,7 @@ component-specific contracts below.
 | [Absorption](absorption.md) | `polarism.boundary_conditions.absorption.register_absorption` | `cfg.boundary_condition.absorption` | `StrategyClass(grid, boundary_config, physics)` |
 | [Storage format](storage.md) | `polarism.results.storage.register_storage` | `cfg.result.formats` | `StorageClass(output_dir, batch_size, config, x, y)` |
 | [Observable](observables.md) | `polarism.results.register_observable` | `cfg.result.observables` | `factory(controller)` |
+| [Accumulator](observables.md) | `polarism.results.register_accumulator` (`Accumulator` base class) | `cfg.result.accumulators` | `AccumulatorClass(controller, **params)` |
 
 In `multiple` laser mode, the factory calls the same laser constructor once per YAML entry. The other factories each create one selected object.
 
@@ -54,8 +55,8 @@ In `multiple` laser mode, the factory calls the same laser constructor once per 
    `make_result_nodes()` contributes optional nodes.
 4. During a run, the controller calls `solver.advance(model, state, n_steps)`
    for chunks between output samples. The inherited `advance()` calls
-   `step(model, state, dt)` repeatedly; each accepted step updates `state.step`
-   and `state.t`.
+   `step(model, state, dt)` repeatedly; each accepted fixed step updates `state.step`
+   and `state.t`. Adaptive trials update time within each schedule tick.
 5. A solver samples the callable pump at its stage times, advances the
    condensate and reservoir, and applies the boundary after-step action when
    its method requires it. The controller records results at configured times.

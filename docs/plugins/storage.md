@@ -28,5 +28,5 @@ propagate to the simulation thread.
 ```
 
 This small example writes only saved scalar nodes, including built-in `norm`,
-to `scalars.csv`. The [integration test](../plugins/index.md#try-and-test-a-plugin)
+to `scalars.csv`. The [integration test](index.md)
 loads it through plugin discovery and checks the output.

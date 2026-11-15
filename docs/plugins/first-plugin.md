@@ -73,14 +73,14 @@ ps.SimulationController(cfg).run()
 ```
 
 The controller searches the **current working directory**, so run this from
-`my_project/`. The configured ten steps are intentionally small for a first
-check. The output writer creates a timestamped directory below `results/`.
+`my_project/`. The box is 40 µm on each side. The ring radius is 8 µm, its width is 2 µm, and `P0` is 0.02 µm⁻² ps⁻¹. Ten steps of 0.001 ps reach 0.01 ps. The output writer creates a timestamped directory below `results/`.
 
 ## 4. Inspect the pump in HDF5 output
 
 The controller exposes a `pump` result node when
-`cfg.laser.expose_results` is true (its default). A continuous pump is stored
-once as a static field. Check the latest run:
+`cfg.laser.expose_results` is true (its default). This example class inherits
+`time_independent = False`, so the writer saves its pump at each sampled time,
+even though `_P_time()` returns a constant. Check the latest run:
 
 ```python
 from pathlib import Path
@@ -89,7 +89,7 @@ import polarism as ps
 files = sorted(Path("results").glob("*/results.h5"))
 assert files, "run.py did not write results.h5"
 with ps.load_results(files[-1]) as saved:
-    pump = saved.static["pump"][:]
+    pump = saved.fields["pump"][0]
     print(pump.shape)
     assert pump.shape == (32, 32)
     assert pump.max() > 0
