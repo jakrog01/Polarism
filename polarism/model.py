@@ -152,7 +152,7 @@ class Model:
         self._laplacian(field, lap)
         density = xp.abs(field) ** 2
         other_density = density[:, ::-1]
-        zeeman_sign = xp.asarray([1, -1]).reshape((1, 2, *(1,) * self.grid.ndim))
+        zeeman_sign = xp.asarray([1, -1], dtype=density.dtype).reshape((1, 2, *(1,) * self.grid.ndim))
         kinetic = -(physics.get("hbar")**2) / (2 * physics.get("m_eff")) * lap
         eff_energy = (
             self.potential_at(t) + physics.get("g_C") * density

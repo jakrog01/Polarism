@@ -236,3 +236,16 @@ def test_unsupported_solvers_reject_spinor(method):
     cfg.solver.method = method
     with pytest.raises(ConfigValidationError, match="2 components"):
         validate_config(cfg)
+
+
+@pytest.mark.parametrize("components", (1, 2))
+def test_single_precision_spinor_rhs_stays_single(components):
+    cfg = config(ndim=2, nx=16, reservoir="quadratic-double")
+    cfg.solver.precision = "single"
+    cfg.physics.zeeman = 0.05
+    cfg.physics.te_tm = 0.02
+    cfg.reservoir.components = components
+    run = SimulationController(cfg)
+    dfield, dreservoir = run.model.rhs(run.state.field, run.reservoir.get_state(), 0.0)
+    assert dfield.dtype == np.complex64
+    assert all(value.dtype == np.float32 for value in dreservoir)
