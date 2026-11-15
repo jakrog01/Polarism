@@ -28,7 +28,7 @@ This gives a Gaussian pump with centre strength 0.02 µm⁻² ps⁻¹ and width 
 
 `power_definition: peak_amplitude` interprets `P0` as local peak pump density. For `pulse-gaussian`, `power_definition: pulse_energy` normalizes one pulse over the grid and its time envelope, so `P0` is the integrated dose of that pulse. In 2D it is then the number of injected excitons per pulse, a dimensionless number. Use it when comparing pulse widths or spot sizes at fixed dose. The profile laser requires `peak_amplitude`. See [Configuration reference](../reference/configuration.md) for the related fields.
 
-To add pumps, set `laser.mode` to `multiple` and `laser.config_file` to a YAML file whose `lasers` list contains one mapping per pump, each with `laser_type` and its own parameters. The pump fields add. Entries can each have a `profile` and `envelope` mapping.
+To add pumps, set `laser.mode` to `multiple` and `laser.config_file` to a YAML file whose `lasers` list contains one mapping per pump, each with `laser_type` and its own parameters. The pump fields add. Entries can each have a `profile` and `envelope` mapping. Use `laser.entry_overrides` to apply fields to individual entries by their zero-based index, such as `{1: {"delay": 0.2}}`. These values take precedence over the YAML entries.
 
 ## Choose a reservoir
 

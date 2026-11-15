@@ -23,6 +23,20 @@ def test_filtered_mode_requires_cutoff() -> None:
         validate_config(cfg)
 
 
+@pytest.mark.parametrize("mode,overrides", [
+    ("single", {0: {"P0": 1.0}}),
+    ("multiple", {-1: {"P0": 1.0}}),
+    ("multiple", {True: {"P0": 1.0}}),
+    ("multiple", {0: 1.0}),
+])
+def test_invalid_entry_overrides(mode, overrides):
+    cfg = small_config()
+    cfg.laser.mode = mode
+    cfg.laser.entry_overrides = overrides
+    with pytest.raises(ConfigValidationError, match="laser.entry_overrides"):
+        validate_config(cfg)
+
+
 @pytest.mark.parametrize("field,registry", [
     ("formats", available_storages),
     ("observables", available_observables),

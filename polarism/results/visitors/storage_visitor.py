@@ -11,7 +11,7 @@ import numpy as np
 from polarism.compute_engine import compute_engine
 from polarism.config.simulation_parameters import Config
 from polarism.results.result_node import ResultNode
-from polarism.results.storage import BaseStorage, available_storages
+from polarism.results.storage import BaseStorage, StorageContext, available_storages
 from polarism.results.storage.resume import trim_saved_frames
 from polarism.results.visitors.result_visitor import ResultVisitor
 
@@ -39,9 +39,10 @@ class StorageVisitor(ResultVisitor):
     batch_size: int
     storages: list[BaseStorage]
 
-    def __init__(self, cfg: Config, x=None, y=None, output_dir=None):
+    def __init__(self, cfg: Config, x, y, output_dir, context: StorageContext):
         """Set up the storage backends for the config."""
         self.cfg = cfg
+        self.context = context
         self.output_dir = Path(output_dir) if output_dir is not None else create_run_directory(self.cfg.result.output_directory)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.batch_size = self.cfg.result.batch_size
@@ -54,11 +55,11 @@ class StorageVisitor(ResultVisitor):
                 (self.cfg.result.save_json, "json"),
             ) if enabled),
         ))
-        if getattr(cfg, "_storage_resume", False):
-            trim_saved_frames(self.output_dir, cfg._storage_resume_time, names,
+        if context.resume:
+            trim_saved_frames(self.output_dir, context.resume_time, names,
                               compressed=cfg.result.compression != "none")
         for name in names:
-            self.storages.append(available_storages[name](self.output_dir, self.batch_size, self.cfg, x, y))
+            self.storages.append(available_storages[name](self.output_dir, self.batch_size, self.cfg, x, y, context))
         self._queue: queue.Queue | None = None
         self._thread: threading.Thread | None = None
         self._error: BaseException | None = None
@@ -108,7 +109,7 @@ class StorageVisitor(ResultVisitor):
         frame_bytes = 0
         for node in selected:
             value = cached[node.name][0]
-            if getattr(self.cfg, "_storage_members", None) == 1 and not node.static:
+            if self.context.members == 1 and not node.static:
                 value = compute_engine.xp.expand_dims(value, axis=0)
             if self._gpu:
                 import cupy as cp
@@ -124,7 +125,7 @@ class StorageVisitor(ResultVisitor):
         for group, values in context.get("scalar_groups", {}).items():
             groups[group] = {}
             for label, value in values.items():
-                if getattr(self.cfg, "_storage_members", None) == 1:
+                if self.context.members == 1:
                     value = compute_engine.xp.expand_dims(value, axis=0)
                 copied = compute_engine.xp.array(value, copy=True)
                 groups[group][label] = copied

@@ -80,7 +80,7 @@ def _measure_point(tmp_path: Path, sample_count: int) -> MemoryScalingPoint:
 
 
 @pytest.mark.slow
-def test_storage_memory_scaling(tmp_path: Path) -> None:
+def test_format_memory_scaling(tmp_path: Path) -> None:
     """Verify WJ-05: "Zapis wyników nie powinien wymagać utrzymywania całej trajektorii symulacji w pamięci operacyjnej. Weryfikacja: Pomiar maksymalnego zużycia pamięci podczas długiego przebiegu dla rosnącej liczby zapisywanych próbek oraz test buforowanego zapisu danych do pliku HDF5."
 
     One stored float64 density field on the 256x256 grid occupies 512 KiB, and

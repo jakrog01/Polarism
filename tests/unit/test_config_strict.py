@@ -25,6 +25,12 @@ def test_unknown_root_field_raises_with_suggestion():
         cfg.phyiscs = None
 
 
+def test_unknown_private_field_raises():
+    cfg = ps.Config()
+    with pytest.raises(AttributeError, match="Unknown config key '_anything'"):
+        cfg._anything = 1
+
+
 def test_known_fields_copy_and_serialize():
     cfg = ps.Config()
     cfg.physics.g_C = 0.5
@@ -39,3 +45,13 @@ def test_yaml_unknown_key_suggests(tmp_path):
     path.write_text("physics:\n  g_c: 0.01\n", encoding="utf-8")
     with pytest.raises(ValueError, match=r"Unknown config key 'physics\.g_c'; did you mean 'g_C'"):
         ps.Config.from_yaml(path)
+
+
+def test_entry_overrides_yaml_round_trip(tmp_path):
+    cfg = ps.Config()
+    cfg.laser.mode = "multiple"
+    cfg.laser.entry_overrides = {1: {"delay": 0.2}}
+    path = tmp_path / "config.yaml"
+    cfg.to_yaml(path)
+    restored = ps.Config.from_yaml(path)
+    assert restored.laser.entry_overrides == {1: {"delay": 0.2}}

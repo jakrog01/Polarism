@@ -9,6 +9,7 @@ from polarism.results.result_node import ResultNode
 from polarism.results.storage.hdf5_storage import HDF5Storage
 from polarism.results.storage.json_storage import JSONStorage
 from polarism.results.storage.npy_storage import NPYStorage
+from polarism.results.storage import StorageContext
 
 TOL_MACHINE_F64 = 1e-12  # Exact algebraic identity in float64.
 
@@ -27,15 +28,15 @@ def _frames(storage) -> None:
     storage.finalize()
 
 
-def test_batch_storage_layouts(tmp_path) -> None:
-    hdf = HDF5Storage(tmp_path / "hdf", 2); _frames(hdf)
+def test_batch_format_layouts(tmp_path) -> None:
+    hdf = HDF5Storage(tmp_path / "hdf", 2, None, None, None, StorageContext()); _frames(hdf)
     with h5py.File(tmp_path / "hdf" / "results.h5") as f:
         assert f["time"].shape == (2,) and f["fields/psi2"].shape == (2, 1, 3, 4) and f["scalars/N"].shape == (2,)
         assert np.allclose(f["time"][:], [0.0, 0.1], rtol=TOL_MACHINE_F64)
-    npy = NPYStorage(tmp_path / "npy", 2); _frames(npy)
+    npy = NPYStorage(tmp_path / "npy", 2, None, None, None, StorageContext()); _frames(npy)
     with np.load(tmp_path / "npy" / "batch_000000.npz") as data:
         assert {"time", "field_psi2", "scalar_N", "group_group_label"} <= set(data.files)
-    js = JSONStorage(tmp_path / "json", 2); _frames(js)
+    js = JSONStorage(tmp_path / "json", 2, None, None, None, StorageContext()); _frames(js)
     assert set(json.loads((tmp_path / "json" / "batch_000000.json").read_text())) == {"time", "fields", "scalars", "scalar_groups"}
 
 

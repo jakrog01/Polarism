@@ -87,6 +87,12 @@ Use `Config` and `SimulationController` for ordinary runs. The API entries below
 `polarism.results.available_accumulators` is the registry of available
 accumulator classes.
 
+Storage plugins receive a `StorageContext` with sweep member indices, seeds,
+and resume state. See [Storage format plugins](../plugins/storage.md) for the
+constructor contract.
+
+::: polarism.results.storage.StorageContext
+
 ::: polarism.analysis.g1
 
 ::: polarism.analysis.g2

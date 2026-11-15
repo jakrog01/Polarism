@@ -81,3 +81,8 @@ def test_pulse_energy_normalisation_and_multiple_mode(tmp_path) -> None:
     multiple = LaserFactory.create_laser(LaserParameters(mode="multiple", config_file=str(yaml_path)), g.X, g.Y)
     assert len(multiple) == 2
     assert np.array_equal(sum(item.get_power(g.X, g.Y, 0.0) for item in multiple), np.full_like(g.X, 3.0))
+    overridden = LaserFactory.create_laser(
+        LaserParameters(mode="multiple", config_file=str(yaml_path), entry_overrides={1: {"P0": 4.0}}),
+        g.X, g.Y,
+    )
+    assert np.array_equal(sum(item.get_power(g.X, g.Y, 0.0) for item in overridden), np.full_like(g.X, 5.0))

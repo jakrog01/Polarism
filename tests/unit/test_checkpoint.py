@@ -290,7 +290,7 @@ def test_set_initial_state_continues_from_absolute_time(tmp_path):
     assert np.array_equal(second.reservoir.get_state()[0], full.reservoir.get_state()[0])
 
 
-def test_checkpoint_without_storage_creates_run_directory(tmp_path):
+def test_checkpoint_without_format_creates_run_directory(tmp_path):
     cfg = configuration(tmp_path)
     cfg.result.save_results = False
     cfg.checkpoint.every = 3 * cfg.solver.dt

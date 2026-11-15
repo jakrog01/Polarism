@@ -92,9 +92,7 @@ def apply_overrides(cfg, overrides, *, allow_groups=False):
                     raise ValueError(f"Unknown sweep path {path!r}; mapping key is absent")
             elif field not in entries[index] and field not in vars(result.laser):
                 raise ValueError(f"Unknown sweep path {path!r}")
-            changes = getattr(result, "_laser_entry_overrides", {})
-            changes.setdefault(index, {})[field] = value
-            result._laser_entry_overrides = changes
+            result.laser.entry_overrides.setdefault(index, {})[field] = value
             continue
         section, field = path.split(".", 1)
         if section == "terms":

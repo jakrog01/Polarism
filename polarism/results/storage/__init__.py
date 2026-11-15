@@ -1,5 +1,5 @@
 """Public storage exports."""
-from polarism.results.storage.base_storage import BaseStorage
+from polarism.results.storage.base_storage import BaseStorage, StorageContext
 from polarism.results.storage.hdf5_storage import HDF5Storage
 from polarism.results.storage.json_storage import JSONStorage
 from polarism.results.storage.npy_storage import NPYStorage
@@ -8,6 +8,7 @@ from polarism.results.storage.storage_registry import available_storages, regist
 
 __all__ = [
     "BaseStorage",
+    "StorageContext",
     "HDF5Storage",
     "JSONStorage",
     "NPYStorage",

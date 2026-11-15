@@ -259,6 +259,33 @@ def test_checkpoint_rejects_changed_member_pump(tmp_path):
         second.load_checkpoint(first.run_directory / "checkpoint.h5")
 
 
+def test_multiple_laser_overrides_survive_checkpoint_and_sweep_resume(tmp_path):
+    cfg = sweep_config(tmp_path / "runs")
+    cfg.checkpoint.every = 2 * cfg.solver.dt
+    laser_file = tmp_path / "lasers.yaml"
+    laser_file.write_text("lasers:\n  - laser_type: uniform\n    P0: 0.2\n")
+    cfg.laser.mode = "multiple"
+    cfg.laser.config_file = str(laser_file)
+    cfg.laser.entry_overrides = {0: {"P0": 0.3}}
+    first = SimulationController(cfg, members=[{"lasers[0].P0": 0.4}, {"lasers[0].P0": 0.5}])
+    first.run()
+    checkpoint = first.run_directory / "checkpoint.h5"
+    with h5py.File(checkpoint) as handle:
+        members = json.loads(handle.attrs["member_configs_json"])
+        assert "laser_entries" not in members[0]
+        assert members[0]["laser"]["entry_overrides"] == {"0": {"P0": 0.4}}
+    same = SimulationController(cfg, members=[{"lasers[0].P0": 0.4}, {"lasers[0].P0": 0.5}])
+    same.load_checkpoint(checkpoint)
+    changed = SimulationController(cfg, members=[{"lasers[0].P0": 0.4}, {"lasers[0].P0": 0.6}])
+    with pytest.raises(ValueError, match="member physics, pump"):
+        changed.load_checkpoint(checkpoint)
+    sweep = Sweep(cfg, {"lasers[0].P0": [0.4, 0.5]})
+    with sweep.run() as result:
+        run_dir = result.path
+    with sweep.run(resume=run_dir) as resumed:
+        assert resumed.manifest["config_signature"]["laser"]["entry_overrides"] == {"0": {"P0": 0.3}}
+
+
 def test_view_visitors_select_member():
     from polarism.results.result_node import ResultNode
     from polarism.results.visitors.animation_visitor import AnimationFieldSpec, AnimationVisitor
@@ -307,7 +334,7 @@ def test_batched_scalar_observable_stays_per_member(tmp_path, monkeypatch):
 
 
 @pytest.mark.gpu
-def test_gpu_async_sweep_storage_matches_single_runs_and_avoids_main_thread_transfer(tmp_path, monkeypatch):
+def test_gpu_async_sweep_format_matches_single_runs_and_avoids_main_thread_transfer(tmp_path, monkeypatch):
     from polarism.compute_engine import compute_engine, has_cuda_device
 
     if not has_cuda_device():

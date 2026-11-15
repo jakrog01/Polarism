@@ -101,7 +101,7 @@ def test_observable_factory_selected(monkeypatch) -> None:
     monkeypatch.delitem(available_observables, "test-observable")
 
 
-def test_storage_formats_merge_with_legacy_flags_once(tmp_path) -> None:
+def test_formats_merge_with_legacy_flags_once(tmp_path) -> None:
     cfg = small_config()
     cfg.result.save_results = True
     cfg.result.save_hdf5 = True

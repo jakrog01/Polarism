@@ -42,6 +42,7 @@ from polarism.results.result_groups import Results2D, ResultScalar, ResultScalar
 from polarism.results.result_node import ResultNode
 from polarism.results.observable_registry import available_observables
 from polarism.results.accumulators import AccumulatedResult, available_accumulators
+from polarism.results.storage import StorageContext
 from polarism.results.results_manager import ResultsManager
 from polarism.results.visitors.result_visitor import ResultVisitor
 from polarism.results.visitors.animation_visitor import AnimationFieldSpec, AnimationVisitor
@@ -240,7 +241,7 @@ class SimulationController:
                               for item in potentials[1:]) else self.xp.stack(potentials)[:, None])
             member_lasers = [LaserFactory.create_laser(
                 member.laser, self.grid.X, self._profile_y, cfg.solver.precision,
-                getattr(member, "_laser_entry_overrides", None), self.grid) for member in member_configs]
+                self.grid) for member in member_configs]
             self.lasers = member_lasers[0]
             self.pump_field = BatchedPumpField(member_lasers, self.grid, cfg.solver.precision)
             self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid,
@@ -263,7 +264,7 @@ class SimulationController:
         else:
             self.potential = create_potential(cfg.potential, self.grid)
             self.lasers = LaserFactory.create_laser(cfg.laser, self.grid.X, self._profile_y, cfg.solver.precision,
-                                                    getattr(cfg, "_laser_entry_overrides", None), self.grid)
+                                                    self.grid)
             self.pump_field = PumpField(self.lasers, self.grid, cfg.solver.precision)
             self.reservoir = create_reservoir(cfg.reservoir, cfg.physics, self.grid, cfg.solver.precision)
             self.state = SimulationState(
@@ -404,16 +405,18 @@ class SimulationController:
         if not self.results_manager.nodes:
             self.results_manager.nodes = self._build_result_nodes()
 
-        self.cfg._storage_members = len(self._member_configs) if self._member_configs is not None and (self._output_dir is not None or self._batched) else None
-        self.cfg._storage_indices = self._member_indices
-        self.cfg._storage_member_seeds = ([member.noise.seed for member in self._member_configs]
-                                           if self._member_configs is not None else None)
-        self.cfg._storage_resume = self.cfg.checkpoint.resume_from is not None
-        self.cfg._storage_resume_time = self.state.t if self._resumed else None
+        context = StorageContext(
+            members=len(self._member_configs) if self._member_configs is not None and (self._output_dir is not None or self._batched) else None,
+            member_indices=tuple(self._member_indices) if self._member_indices is not None else None,
+            member_seeds=tuple(member.noise.seed for member in self._member_configs) if self._member_configs is not None else None,
+            resume=self.cfg.checkpoint.resume_from is not None,
+            resume_time=self.state.t if self._resumed else None,
+        )
         self.storage_visitor = StorageVisitor(
             self.cfg, x=compute_engine.to_cpu(self.grid.X if self.grid.ndim == 1 else self.grid.X[0, :]),
             y=None if self.grid.ndim == 1 else compute_engine.to_cpu(self.grid.Y[:, 0]),
             output_dir=self._output_dir,
+            context=context,
         )
         self.add_visitor(self.storage_visitor)
 
@@ -770,8 +773,7 @@ class SimulationController:
                     h5.create_dataset("steady_density", data=compute_engine.to_cpu(self._steady_density))
                 if self._member_configs is not None:
                     h5.attrs["member_configs_json"] = json.dumps([
-                        {**{name: asdict(member)[name] for name in ("physics", "laser", "potential", "drive", "noise")},
-                         "laser_entries": getattr(member, "_laser_entry_overrides", {})}
+                        {name: asdict(member)[name] for name in ("physics", "laser", "potential", "drive", "noise")}
                         for member in self._member_configs
                     ], sort_keys=True)
                 h5.create_dataset("field", data=field)
@@ -834,8 +836,7 @@ class SimulationController:
                 raise ValueError("checkpoint noise config mismatch")
             if self._member_configs is not None:
                 expected = json.dumps([
-                    {**{name: asdict(member)[name] for name in ("physics", "laser", "potential", "drive", "noise")},
-                     "laser_entries": getattr(member, "_laser_entry_overrides", {})}
+                    {name: asdict(member)[name] for name in ("physics", "laser", "potential", "drive", "noise")}
                     for member in self._member_configs
                 ], sort_keys=True)
                 if h5.attrs.get("member_configs_json") != expected:

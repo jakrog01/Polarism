@@ -162,7 +162,7 @@ def test_checkpoint_resume_is_bitwise_identical(tmp_path):
 
 
 @pytest.mark.parametrize("fmt", ["hdf5", "npy", "json"])
-def test_storage_round_trip_and_reader_axes(tmp_path, fmt):
+def test_format_round_trip_and_reader_axes(tmp_path, fmt):
     cfg = config()
     cfg.result.save_results = True
     cfg.result.formats = (fmt,)
@@ -367,7 +367,7 @@ def test_spectrum_checkpoint_resume_bitwise(tmp_path):
 
 
 @pytest.mark.parametrize("fmt", ["hdf5", "npy", "json"])
-def test_spectrum_storage_and_linear_mean(tmp_path, fmt):
+def test_spectrum_format_and_linear_mean(tmp_path, fmt):
     cfg = spectrum_config()
     cfg.result.save_results = True
     cfg.result.formats = (fmt,)

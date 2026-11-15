@@ -7,7 +7,7 @@ from dataclasses import asdict, is_dataclass
 
 import numpy as np
 
-from polarism.results.storage.base_storage import BaseStorage
+from polarism.results.storage.base_storage import BaseStorage, StorageContext
 from polarism.results.storage.storage_registry import register_storage
 
 
@@ -17,27 +17,23 @@ class NPYStorage(BaseStorage):
     output_dir: Path
     batch_number: int
 
-    def __init__(self, output_dir: Path, batch_size: int, config=None, x=None, y=None,
-                 compress: bool | None = None):
+    def __init__(self, output_dir: Path, batch_size: int, config, x, y, context: StorageContext):
         """Set up NumPy batch storage."""
         super().__init__(output_dir, batch_size)
         self.ndim = config.grid.ndim if config is not None else (2 if y is not None else 1)
         self.components = 2 if config is not None and config.physics.spin == "spinor" else 1
         self.reservoir_components = (config.reservoir.components or self.components) if config is not None else 1
         self.batch_number = 0
-        self._resume = getattr(config, "_storage_resume", False)
+        self._resume = context.resume
         metadata_path = self.output_dir / "metadata.json"
         if self._resume and metadata_path.exists():
             found = json.loads(metadata_path.read_text()).get("format_version")
             if found != 3:
                 raise ValueError(f"results format v{found} is not supported by this Polarism version; supported: 3")
-        self.members = getattr(config, "_storage_members", None)
+        self.members = context.members
         if self._resume:
             self.batch_number = len(list(self.output_dir.glob("batch_*.npz")))
-        if isinstance(config, bool):
-            compress = config if compress is None else compress
-            config = None
-        self.compress = (config.result.compression != "none") if compress is None and config is not None else bool(compress)
+        self.compress = config.result.compression != "none" if config is not None else False
         from polarism import __version__
         self.metadata = {
             "format_version": 3,
@@ -48,11 +44,11 @@ class NPYStorage(BaseStorage):
         }
         if self.members is not None:
             self.metadata["members"] = self.members
-            self.metadata["member_seeds"] = getattr(config, "_storage_member_seeds", None)
+            self.metadata["member_seeds"] = context.member_seeds
             self.metadata["datasets"]["member_index"] = {"dims": ["member"], "units": ""}
             member_path = self.output_dir / "member_index.npy"
             if not self._resume or not member_path.exists():
-                np.save(member_path, np.asarray(config._storage_indices))
+                np.save(member_path, np.asarray(context.member_indices))
         if x is not None:
             grid_path = self.output_dir / "grid_x.npy"
             if not self._resume or not grid_path.exists():
