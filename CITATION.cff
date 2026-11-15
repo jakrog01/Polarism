@@ -9,8 +9,8 @@ authors:
     given-names: Krzysztof
     orcid: "https://orcid.org/0000-0002-2058-5320"
     affiliation: "University of Warsaw, Faculty of Physics, Division of Solid State Physics"
-version: 0.7.0
-date-released: 2026-11-14
+version: 0.8.0
+date-released: 2026-11-15
 doi: 10.5281/zenodo.23531116
 license: MIT
 repository-code: https://github.com/jakrog01/Polarism
