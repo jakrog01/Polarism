@@ -81,8 +81,8 @@ declaration.
 
 `custom_reservoirs` is `"quantitative"`, `"diagnostic"`, or `"unsupported"`.
 The `quantitative_reservoirs` set identifies built-in reservoirs appropriate
-for quantitative coupling comparisons. Built-in CUDA fused solvers currently
-reject `reservoir_type: none`; the NumPy and CuPy solvers support it.
+for quantitative coupling comparisons. `rk4-fdm-fused` rejects
+`reservoir_type: none`; the other built-in solvers support it.
 
 ## Midpoint example
 

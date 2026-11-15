@@ -37,8 +37,9 @@ For `closed-interval` domains use the finite-difference family: `rk4-fdm`,
 See [Running on GPUs](running-on-gpus.md) for CUDA solver requirements and
 CUDA graph chunking.
 
-`etd-rk2` advances the reservoir via a separate midpoint step, not stage-coupled
-with `psi`.  It is not a production path for `quadratic-double` threshold studies.
+`etd-rk2` uses a predictor-corrector midpoint reservoir sample. Its
+reservoir coupling is second order for the built-in models, including
+`quadratic-double`.
 
 ## Time-step guidance
 

@@ -9,12 +9,14 @@
 | `grid` | spatial resolution, box size, and grid topology |
 | `boundary_condition` | absorbing boundary settings |
 | `potential` | external potential type and parameters |
+| `drive` | coherent source and rotating-frame energy |
 | `physics` | driven-dissipative GPE and reservoir coefficients |
 | `terms` | extra [term plugins](../plugins/terms.md) added to the condensate equation |
 | `noise` | initial and stochastic condensate noise |
 | `initial_condition` | deterministic start field added to the initial noise |
 | `laser` | pump mode and pump-shape parameters |
 | `reservoir` | reservoir model selection |
+| `sweep` | sweep batch and memory controls |
 | `solver` | time integrator and timestep settings |
 | `result` | storage, visualization, and output cadence |
 | `checkpoint` | periodic checkpoints, restart source, and signal handling |
@@ -41,7 +43,7 @@
 | `laser.circular_polarization` | incoherent pump polarization ρ_c in `[−1, 1]`; with two reservoirs, weights are `(1 ± ρ_c)/2` | `0.0` |
 | `drive.polarization` | normalized Jones amplitudes `[ψ+, ψ−]` for the coherent drive; quote complex YAML entries such as `"1j"` | `[1, 0]` |
 
-The three new spin energy fields are ignored in scalar runs, with a warning for nonzero values. Step 8a supports `physics.spin: spinor` with `solver.method: rk4-fdm` and `compute_engine.use_gpu: false`; other solvers and the GPU backend reject spinor runs during validation. See [Spin and polarization](../user-guide/spin-and-polarization.md) for the equations and result shapes.
+The three spin energy fields are ignored in scalar runs, with a warning for nonzero values. Spinor runs are supported by all built-in solvers except `rk4-fdm-fused`; see [Spin and polarization](../user-guide/spin-and-polarization.md) for the equations and result shapes.
 
 ## Validation
 
@@ -142,6 +144,7 @@ total pulse dose.
 | Field | Meaning | Main options |
 | --- | --- | --- |
 | `reservoir_type` | reservoir-model selection | `single`, `double`, `quadratic-double`, `none` |
+| `components` | reservoir channels; `null` follows condensate components, or use `1` to share a reservoir in a spinor run | `null`, `1`, `2` (at most the condensate component count) |
 | `expose_results` | publish reservoir fields and scalars to result visitors | boolean |
 
 `quadratic-double` uses an inactive reservoir directly fed by the pump and an
@@ -159,7 +162,7 @@ The condensate equation receives `nR` as the active reservoir density.
 | Field | Meaning | Main options |
 | --- | --- | --- |
 | `method` | time integrator | `rk4-fdm`, `rk4-fdm-fused`, `rk4-cuda`, `split-step-fft`, `split-step-fft-cuda`, `etd-rk2`, `ip-rk4`, `ifrk-fft-cuda`, `ifrk4-fft-cuda` |
-| `tableau` | fixed-step RK coefficients read only by `ifrk-fft-cuda` | `rk4` (default), `dp5`, `dop853`, `vern7`, `vern9` |
+| `tableau` | fixed-step RK coefficients read by `ifrk-fft-cuda`; its `ifrk4-fft-cuda` alias always uses RK4 | `rk4` (default), `dp5`, `dop853`, `vern7`, `vern9` |
 | `dt` | timestep | positive float |
 | `total_time` | total simulation time | positive float |
 | `precision` | arithmetic mode where supported | typically `single`, `double` |
@@ -184,7 +187,7 @@ with reduced grid-direction anisotropy.
 | `observables` | registered observable factories that add result nodes; built in: `angular-momentum`, `center-of-mass`, `current`, `momentum-density`, `vortices` (the first and last are 2D only) | tuple of names, default `()` |
 | `save_every` | time in ps between writes after the initial state; defaults to one `solver.dt` | positive multiple of `solver.dt` |
 | `batch_size` | maximum frames buffered before a write; a batch is also written once its fields reach 256 MiB | positive integer |
-| `compression` | compression for every HDF5 dataset | `none` (default), `lzf`, `gzip` |
+| `compression` | compression for saved HDF5 result frames | `none` (default), `lzf`, `gzip` |
 | `compression_level` | gzip level, used only when `compression="gzip"` | integer from 0 to 9; default `4` |
 | `save_psi` | store the complex condensate field as `psi` | boolean, default `False` |
 | `output_directory` | parent directory for uniquely named run directories | directory string |

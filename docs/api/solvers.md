@@ -129,8 +129,8 @@ use CuPy arrays. Supported extra terms are generated from their CUDA snippets
 inside the tiled RHS. This path has more launches and memory traffic than the
 scalar fused path. The spectral CUDA solvers apply the 2×2 propagator to both
 Fourier components with a dedicated CUDA matrix kernel; their spinor local and
-reservoir steps use CuPy array operations. Spinor runs currently execute
-ordinary launches when `cuda_graphs: true`. Benchmark spinor throughput and
+reservoir steps use CuPy array operations. Eligible spinor runs can replay
+CUDA graph chunks when `cuda_graphs: true`. Benchmark spinor throughput and
 FP64 tile occupancy on the target GPU before production use.
 
 For CUDA graph eligibility, precision guidance, benchmarking, and device
@@ -280,10 +280,10 @@ Use solver choice as a numerical decision, not just a performance switch:
 ## Batched solver capabilities
 
 Use `SimulationState(grid, ..., batch_size: int | None = None)` and
-`create_reservoir(config, physics, grid, precision="double", *, batch_size: int | None = None)`.
+`create_reservoir(config, physics, grid, precision="double", *, batch_size: int | None = None, batch_physics=None)`.
 The built-in reservoir instances also expose `reset(batch_size: int | None = None)`.
 The leading batch axis is independent. Solver fields and reservoir tuples are
-`(B, 1, *S)`; shared potential and boundary fields use `grid.shape`, while
+`(B, C, *S)` with the configured component count `C`; shared potential and boundary fields use `grid.shape`, while
 member-stacked fields use `(B, 1, *S)`.
 
 | Solver | Batched execution |

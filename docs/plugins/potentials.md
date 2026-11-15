@@ -52,9 +52,9 @@ part affects gain or damping, so check its sign carefully.
 
 ## Supported by solvers
 
-All eight registered built-in solver methods have `supports_potential=True`
-in `solver_compatibility.py`. A plugin solver has no automatic capability
-check, so test it with your potential explicitly.
+All nine registered built-in solver methods declare `potential=True` in their
+`SolverCapabilities`. The compatibility check warns when a solver declares
+`potential=False` and the configured potential is nonzero.
 
 ## Pitfalls
 

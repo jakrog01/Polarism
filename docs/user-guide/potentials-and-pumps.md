@@ -29,10 +29,9 @@ potential:
 
 Times are in ps. A complex absorbing potential (CAP) supplied by the boundary
 condition is always active and is never multiplied by this envelope.
-`rk4-fdm`, `ip-rk4`, `etd-rk2`, and `split-step-fft` accept a varying
-potential envelope. The RK methods evaluate it at their stage times;
-`split-step-fft` evaluates it at the midpoint of its local step. Other
-built-in solvers reject a varying envelope during compatibility checking.
+All built-in solvers except `rk4-fdm-fused` accept a varying potential
+envelope. The RK methods evaluate it at their stage times;
+`split-step-fft` evaluates it at the midpoint of its local step.
 For a direct coherent source, see [Coherent drive](coherent-drive.md).
 
 Example:
@@ -113,7 +112,7 @@ and the integrated per-pulse dose when `power_definition: pulse_energy`
 ```yaml
 lasers:
   - laser_type: pulse-gaussian
-    power_definition: pulse_energy   # recommended for geometry/sigma_space sweeps
+    power_definition: pulse_energy
 ```
 
 | Value | Meaning of `P0` / `power` | When to use |
@@ -150,8 +149,6 @@ Increasing `sigma_space` lowers the local peak density while conserving the tota
 peak pump value `P_max` reflects this decrease; the spatial pump integral `P_area_integral` is independent
 of spot size for the same `pulse_energy` and temporal pulse shape.
 
-**Migration note.** Old configs without `power_definition` default to `peak_amplitude` and are unaffected.
-
 For a single pump, configure the values directly on `cfg.laser`:
 
 ```python
@@ -183,6 +180,7 @@ Supported reservoir models:
 - `single`
 - `double`
 - `quadratic-double`
+- `none`
 
 Example:
 
@@ -252,8 +250,8 @@ Choose the reservoir model based on the physical process you are trying to resol
 
 The repository includes explicit compatibility checks:
 
-- Spectral solvers warn when used with non-zero external potentials.
-- Spectral solvers also warn on `closed-interval` grids, where FDM-based methods are usually the safer baseline.
-- CUDA solvers warn when no GPU backend is active.
+- Spectral solvers reject `closed-interval` grids; use an FDM solver for that topology.
+- `rk4-fdm-fused` rejects time-dependent potential envelopes.
+- `split-step-fft-cuda` requires an active CUDA backend; the other CUDA-named solvers warn when running on CPU.
 
-Treat these warnings as numerical guidance, not cosmetic log noise.
+Resolve compatibility errors before running and investigate numerical warnings.

@@ -93,14 +93,14 @@ remain `|ψ|²`, `N(t)`, and `Pump`. Result readers accept format v3 files.
 
 HDF5 format version 3 records `format_version`, `polarism_version`, `ndim`,
 `grid_type`, `components`, and coordinate units at the root. Field datasets
-have a scalar component axis and each dataset has `dims` and `units` attributes.
+record a component axis where applicable, and each dataset has `dims` and `units` attributes.
 Time uses ps and coordinates use µm. NPY and JSON output keep public field
 shapes and record dimensions and units in `metadata.json`.
 
 For spinor runs, `psi` and `density` have shape `(time, component, *space)` or
 `(time, member, component, *space)`, with component order `(σ+, σ−)`. HDF5
-keeps this axis; `load_results` squeezes a singleton component axis only for
-scalar fields. `density_plus` and `density_minus` have no public component axis.
+keeps this axis; `load_results` squeezes a singleton component axis for
+one-component fields. `density_plus` and `density_minus` have no public component axis.
 `stokes` has an axis of length four ordered `(S0, S1, S2, S3)`, followed by
 space; `degree_of_polarization` is a spatial field. Per-component reservoirs
 and `momentum_density` also retain the component axis. With

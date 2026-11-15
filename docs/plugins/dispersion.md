@@ -35,8 +35,9 @@ physics:
 
 `physics.dispersion` defaults to `parabolic`, the built-in
 `ParabolicDispersion`. It is a group setting in sweeps, so members with
-different dispersions run in separate groups. A dispersion applies to a
-single scalar component; a matrix form arrives with spin.
+different dispersions run in separate groups. The default `matrix()` method
+builds the spinor Hamiltonian from `energy()` with Zeeman and TE–TM terms;
+plugins can override it for a different matrix dispersion.
 
 ## Solver support
 

@@ -14,6 +14,12 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - create_absorption_strategy
         - create_grid
         - create_potential
+        - available_profiles
+        - create_profile
+        - register_profile
+        - available_envelopes
+        - create_envelope
+        - register_envelope
         - create_reservoir
         - create_solver
         - AbstractSolver
@@ -30,6 +36,8 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - SimulationController
         - Sweep
         - SweepResults
+        - Results
+        - load_results
         - SimulationGrid
         - SimulationState
         - Results2D
@@ -50,6 +58,7 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - BoundaryConditionParameters
         - PotentialParameters
         - DriveParameters
+        - NoiseParameters
         - InitialConditionParameters
         - LaserParameters
         - ReservoirParameters
@@ -57,6 +66,7 @@ For constructor calls and working extension examples, see the [plugin guide](../
         - ResultParameters
         - ComputeEngineParameters
         - StopParameters
+        - CheckpointParameters
         - SweepParameters
         - Config
 
@@ -112,4 +122,4 @@ registration decorators in context.
 
 ## Batched state and reservoir API
 
-`SimulationState(grid, eps=1e-3, precision="double", *, mode="complex_gaussian_zero_mean", k_cutoff_um=None, seed=None, batch_size=None)` creates identical seeded initial fields along the batch axis. `create_reservoir(reservoir_config, physics, grid, precision="double", *, batch_size=None)` creates matching zero density fields. Built-in reservoirs support `reset(batch_size=None)` to clear and resize their density fields. See [Batched simulations](../user-guide/time-evolution.md#batched-simulations) for a working pattern.
+`SimulationState(grid, eps=1e-3, precision="double", *, mode="complex_gaussian_zero_mean", k_cutoff_um=None, seed=None, batch_size=None, initial_condition=None, components=1)` creates seeded initial fields along the batch axis. `create_reservoir(reservoir_config, physics, grid, precision="double", *, batch_size=None, batch_physics=None)` creates matching zero density fields. Built-in reservoirs support `reset(batch_size=None)` to clear and resize their density fields. See [Batched simulations](../user-guide/time-evolution.md#batched-simulations) for a working pattern.

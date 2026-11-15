@@ -18,6 +18,9 @@ The full runtime configuration is held in `polarism.config.simulation_parameters
 | `reservoir` | Single, double, quadratic-double, or no reservoir |
 | `solver` | Time step, total time, precision, and solver method |
 | `result` | Visualization and storage controls |
+| `checkpoint` | Periodic saves, resume source, and signal handling |
+| `stop` | Steady-state stopping controls |
+| `sweep` | Sweep batch size and memory controls |
 | `compute_engine` | CPU versus GPU backend selection |
 
 ## Grid configuration
@@ -42,7 +45,7 @@ Use `periodic` for FFT-based solvers and clean spectral behavior. Use `closed-in
 
 ### One-dimensional runs
 
-Set `cfg.grid.ndim = 1`, then choose `nx` and `lx`. The `ny` and `ly` settings are ignored. The resulting grid has `shape == (nx,)`, `spacing == (dx,)`, and no y-axis attributes. Public fields have shape `(nx,)` or `(B, nx)` for a batch; solvers and reservoirs use `(B, 1, nx)` internally.
+Set `cfg.grid.ndim = 1`, then choose `nx` and `lx`. The `ny` and `ly` settings are ignored. The resulting grid has `shape == (nx,)`, `spacing == (dx,)`, and no y-axis attributes. Public scalar fields have shape `(nx,)` or `(B, nx)` for a batch; solvers and reservoirs use `(B, C, nx)` internally with the configured component count `C`.
 
 ```python
 cfg.grid.ndim = 1

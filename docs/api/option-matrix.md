@@ -23,6 +23,7 @@ This page collects the main configuration choices in one place. It is meant as a
 | --- | --- | --- |
 | `zero` | you want a homogeneous system without external trapping | simplest baseline for convergence and solver comparison |
 | `double-well-supergaussian` | you want two localized wells with smooth but tunable walls | exposes positions, amplitudes, widths, and super-Gaussian order |
+| `profile` | you want a registered spatial profile | configure `potential.profile` and optionally `potential.envelope` |
 
 ## Laser type
 
@@ -33,6 +34,7 @@ This page collects the main configuration choices in one place. It is meant as a
 | `continuous-exp` | you want a localized pump with longer radial tails than a Gaussian | matches the current implementation exactly |
 | `continuous-exp-length` | you want an exponential pump whose `sigma_space` is the 1/e radial decay length | preferred for new length-consistent configurations |
 | `pulse-gaussian` | you want repeated pulsed excitation with Gaussian spot shape | supports per-pulse strength ramping from `P0` up to `Pmax`; choose `power_definition` carefully |
+| `profile` | you want a registered spatial profile and temporal envelope | configure `laser.profile` and `laser.envelope`; requires `peak_amplitude` |
 
 For pulsed Gaussian studies:
 
@@ -77,7 +79,7 @@ For pulsed Gaussian studies:
 | --- | --- | --- |
 | `physics.dispersion = "parabolic"` | the standard effective-mass kinetic energy is enough | default; accepted by every solver |
 | `physics.dispersion = <plugin name>` | you need another E(k) | only `split-step-fft`, `ip-rk4`, and `etd-rk2`; see [Dispersion plugins](../plugins/dispersion.md) |
-| `terms = {<name>: {...}}` | you need an extra loss, nonlinearity, or energy shift | only `rk4-fdm`, `split-step-fft`, `ip-rk4`, and `etd-rk2`; see [Term plugins](../plugins/terms.md) |
+| `terms = {<name>: {...}}` | you need an extra loss, nonlinearity, or energy shift | all built-in solvers except `rk4-fdm-fused`; CUDA solvers require a CUDA snippet; see [Term plugins](../plugins/terms.md) |
 
 ## RK4 CUDA Laplacian
 

@@ -153,7 +153,7 @@ The active reservoir density driving the term is model-dependent:
 | none              | 0                                 |
 
 The term defaults to zero (`kinetic_relaxation_eta: 0.0`) and is disabled unless
-explicitly set.  Backward compatibility is preserved.
+explicitly set.
 
 **Production models for pulsed-memory campaigns:** `quadratic-double` with either
 `rk4-cuda` (FDM, periodic or closed-interval grids) or `ifrk4-fft-cuda` (spectral,

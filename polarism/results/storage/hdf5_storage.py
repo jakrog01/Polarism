@@ -39,7 +39,7 @@ class HDF5Storage(BaseStorage):
         from polarism import __version__
         if getattr(config, "_storage_resume", False) and "format_version" in self.h5_file.attrs and self.h5_file.attrs["format_version"] != 3:
             found = self.h5_file.attrs["format_version"]
-            raise ValueError(f"results format v{found} is not supported by Polarism 0.7; supported: 3")
+            raise ValueError(f"results format v{found} is not supported by this Polarism version; supported: 3")
         self.h5_file.attrs["format_version"] = 3
         self.h5_file.attrs["ndim"] = self.ndim
         self.h5_file.attrs["grid_type"] = config.grid.grid_type if config is not None else ""

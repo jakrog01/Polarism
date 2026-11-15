@@ -66,9 +66,9 @@ In `multiple` laser mode, the factory calls the same laser constructor once per 
 
 ## Array and parameter rules
 
-Use `compute_engine.xp` or an initialized `self.xp` so arrays stay on NumPy or CuPy as selected. `real_dtype(xp, precision)` and `complex_dtype(xp, precision)` in `polarism.config.dtype_utils` map `single` to float32/complex64 and `double` to float64/complex128. Spatial fields use `grid.shape`: `(nx,)` in 1D and `(ny, nx)` in 2D. Solvers and reservoirs use canonical `(B, 1, *grid.shape)` arrays. Potential and laser factories pass `Y = zeros_like(X)` in 1D. Avoid CPU transfers inside per-step methods on GPU runs.
+Use `compute_engine.xp` or an initialized `self.xp` so arrays stay on NumPy or CuPy as selected. `real_dtype(xp, precision)` and `complex_dtype(xp, precision)` in `polarism.config.dtype_utils` map `single` to float32/complex64 and `double` to float64/complex128. Spatial fields use `grid.shape`: `(nx,)` in 1D and `(ny, nx)` in 2D. Solvers and reservoirs use canonical `(B, C, *grid.shape)` arrays with their configured component count `C`. Potential and laser factories pass `Y = zeros_like(X)` in 1D. Avoid CPU transfers inside per-step methods on GPU runs.
 
-`LaserParameters`, `GridParameters`, and `ReservoirParameters` have an `extra` dictionary. In multiple-laser YAML, unknown keys are merged into each laser's `extra`, alongside top-level `laser.extra` and an explicit entry-level `extra` mapping. These free-form keys are not individual CLI flags. Other configuration blocks do not have `extra`; use their existing fields or a component's own Python setup.
+`LaserParameters`, `GridParameters`, `ReservoirParameters`, and `InitialConditionParameters` have an `extra` dictionary. In multiple-laser YAML, unknown keys are merged into each laser's `extra`, alongside top-level `laser.extra` and an explicit entry-level `extra` mapping. These free-form keys are not individual CLI flags. Other configuration blocks do not have `extra`; use their existing fields or a component's own Python setup.
 
 Registering a name already in a registry replaces the prior object and emits
 `UserWarning`. Use distinct names unless you deliberately override a built-in.
