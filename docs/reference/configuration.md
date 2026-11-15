@@ -139,6 +139,7 @@ Type: `dict[str, Any]`. Default: `{}`. Units and allowed keys depend on register
 | `expose_results` | `bool` | true | 1 | boolean | Expose pump result nodes. |
 | `mode` | `str` | `single` | n/a | single, multiple | One laser or YAML list of lasers. |
 | `config_file` | `str | None` | null | path | null or path string | Multiple-laser YAML path. |
+| `entry_overrides` | `dict[int, dict[str, Any]]` | `{}` | n/a | non-negative integer keys and mapping values; multiple mode only | Per-entry fields applied over the multiple-laser YAML. |
 | `laser_type` | `str` | `pulse-gaussian` | n/a | registered; built in: uniform, continuous-gaussian, continuous-exp, continuous-exp-length, pulse-gaussian, profile | Laser factory name. |
 | `profile` | `dict[str, Any]` | `{}` | n/a | profile mapping; built in: uniform, gaussian, supergaussian, ring, lattice, file; required for profile laser | Spatial pump profile. |
 | `envelope` | `dict[str, Any]` | `{type: constant}` | n/a | registered envelope mapping; built in: constant, step, gaussian-pulses, data | Pump time envelope. |

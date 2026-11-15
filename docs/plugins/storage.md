@@ -7,9 +7,11 @@ each selected name is constructed once. Unknown names fail configuration
 validation and list the registered formats. The built-in names are `hdf5`,
 `npy`, and `json`.
 
-The constructor contract is `StorageClass(output_dir, batch_size, config, x, y)`.
+The constructor contract is `StorageClass(output_dir, batch_size, config, x, y, context)`.
 `output_dir` is the run's `Path`; `config` is the full `Config`; `x` and `y`
-are host coordinate arrays. Subclass `BaseStorage` and implement `dump_batch`,
+are host coordinate arrays. `context` is a frozen `StorageContext` with the
+member count, member indices and seeds, and resume state and time. Subclass
+`BaseStorage` and implement `dump_batch`,
 `write_static`, and `finalize`. Its `add_to_batch(t, nodes, **context)` buffers
 saved fields and scalars and calls `dump_batch` at the configured batch size.
 `node_metadata` holds each saved node's label and optional units. Built-in

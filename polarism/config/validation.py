@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from polarism.boundary_conditions.absorption.absorption_registry import (
@@ -425,6 +426,15 @@ def _validate_reservoir(cfg: Config) -> None:
 
 def _validate_laser(cfg: Config) -> None:
     laser = cfg.laser
+    if not isinstance(laser.entry_overrides, Mapping):
+        raise ConfigValidationError("laser.entry_overrides must be a mapping")
+    if laser.entry_overrides and laser.mode != "multiple":
+        raise ConfigValidationError("laser.entry_overrides requires laser.mode='multiple'")
+    for index, overrides in laser.entry_overrides.items():
+        if type(index) is not int or index < 0:
+            raise ConfigValidationError("laser.entry_overrides keys must be non-negative integers")
+        if not isinstance(overrides, Mapping):
+            raise ConfigValidationError("laser.entry_overrides values must be mappings")
     if isinstance(laser.circular_polarization, bool) or not isinstance(laser.circular_polarization, (int, float)) or not math.isfinite(laser.circular_polarization) or not -1 <= laser.circular_polarization <= 1:
         raise ConfigValidationError("laser.circular_polarization must be in [-1, 1]")
     if cfg.reservoir.reservoir_type == "none" and (laser.P0 != 0 or laser.n_pulses > 0 or laser.mode == "multiple"):

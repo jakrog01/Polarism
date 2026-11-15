@@ -89,10 +89,10 @@ def _json_value(value):
 def _config_signature(cfg):
     """Capture settings that determine stored simulation frames."""
     data = asdict(cfg)
-    return {name: data[name] for name in ("grid", "solver", "reservoir", "physics",
-                                         "terms", "initial_condition", "laser", "potential", "drive",
-                                         "boundary_condition", "stop",
-                                         "compute_engine")}
+    relevant = {name: data[name] for name in ("grid", "solver", "reservoir", "physics",
+                                              "terms", "initial_condition", "laser", "potential", "drive",
+                                              "boundary_condition", "stop", "compute_engine")}
+    return json.loads(json.dumps(relevant, default=_json_value))
 
 
 class Sweep:

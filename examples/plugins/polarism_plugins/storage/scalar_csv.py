@@ -10,7 +10,7 @@ from polarism.results.storage import BaseStorage, register_storage
 class ScalarCSVStorage(BaseStorage):
     """Write scalar nodes to a single CSV file."""
 
-    def __init__(self, output_dir, batch_size, config, x, y):
+    def __init__(self, output_dir, batch_size, config, x, y, context):
         """Set up scalar CSV storage."""
         super().__init__(output_dir, batch_size)
         self.path = output_dir / "scalars.csv"

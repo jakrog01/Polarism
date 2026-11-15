@@ -18,10 +18,10 @@ def unknown_field_message(owner: str, name: str, known) -> str:
 
 
 class StrictFields:
-    """Reject assignment to public attributes that are not declared dataclass fields."""
+    """Reject assignment to attributes that are not declared dataclass fields."""
 
     def __setattr__(self, name, value):
-        if name not in self.__dataclass_fields__ and not name.startswith("_"):
+        if name not in self.__dataclass_fields__:
             owner = _SECTION_NAMES.get(type(self), type(self).__name__)
             raise AttributeError(unknown_field_message(owner, name, self.__dataclass_fields__))
         object.__setattr__(self, name, value)
@@ -128,6 +128,7 @@ class LaserParameters(StrictFields):
     expose_results: bool = True
     mode: str = "single"
     config_file: str | None = None
+    entry_overrides: dict[int, dict[str, Any]] = field(default_factory=dict)
     laser_type: str = "pulse-gaussian"
     profile: dict[str, Any] = field(default_factory=dict)
     envelope: dict[str, Any] = field(default_factory=lambda: {"type": "constant"})

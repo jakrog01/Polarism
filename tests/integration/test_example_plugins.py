@@ -144,7 +144,7 @@ def test_neutral_plugin_reservoir_matches_builtin(example_plugins, method):
     )
 
 
-def test_example_storage_and_observable_run(example_plugins, tmp_path):
+def test_example_format_and_observable_run(example_plugins, tmp_path):
     import csv
 
     cfg = _comparison_config()

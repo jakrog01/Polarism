@@ -2,11 +2,28 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 MAX_BATCH_BYTES = 256 * 1024**2
+
+
+@dataclass(frozen=True)
+class StorageContext:
+    """Run storage state: member count, ordered indices and seeds, resume flag, and saved resume time.
+
+    ``members`` is the batch size when member output is present. ``member_indices``
+    maps batch positions to sweep positions, and ``member_seeds`` records their
+    noise seeds. ``resume`` reopens existing output, while ``resume_time`` is
+    the last restored simulation time used to trim saved frames.
+    """
+    members: int | None = None
+    member_indices: tuple[int, ...] | None = None
+    member_seeds: tuple[int, ...] | None = None
+    resume: bool = False
+    resume_time: float | None = None
 
 
 class BaseStorage(ABC):

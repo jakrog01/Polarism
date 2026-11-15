@@ -9,7 +9,7 @@ from typing import Any
 import h5py
 import numpy as np
 
-from polarism.results.storage.base_storage import BaseStorage
+from polarism.results.storage.base_storage import BaseStorage, StorageContext
 from polarism.results.storage.storage_registry import register_storage
 
 
@@ -24,9 +24,10 @@ class HDF5Storage(BaseStorage):
         self,
         output_dir: Path,
         batch_size: int,
-        config: Any | None = None,
-        x: np.ndarray | None = None,
-        y: np.ndarray | None = None,
+        config: Any | None,
+        x: np.ndarray | None,
+        y: np.ndarray | None,
+        context: StorageContext,
     ):
         """Open the HDF5 output file."""
         super().__init__(output_dir, batch_size)
@@ -34,10 +35,10 @@ class HDF5Storage(BaseStorage):
         self.components = 2 if config is not None and config.physics.spin == "spinor" else 1
         self.reservoir_components = (config.reservoir.components or self.components) if config is not None else 1
         self.h5_path = self.output_dir / "results.h5"
-        self.h5_file = h5py.File(self.h5_path, "a" if getattr(config, "_storage_resume", False) else "w")
+        self.h5_file = h5py.File(self.h5_path, "a" if context.resume else "w")
         self.h5_datasets = {}
         from polarism import __version__
-        if getattr(config, "_storage_resume", False) and "format_version" in self.h5_file.attrs and self.h5_file.attrs["format_version"] != 3:
+        if context.resume and "format_version" in self.h5_file.attrs and self.h5_file.attrs["format_version"] != 3:
             found = self.h5_file.attrs["format_version"]
             raise ValueError(f"results format v{found} is not supported by this Polarism version; supported: 3")
         self.h5_file.attrs["format_version"] = 3
@@ -45,11 +46,11 @@ class HDF5Storage(BaseStorage):
         self.h5_file.attrs["grid_type"] = config.grid.grid_type if config is not None else ""
         self.h5_file.attrs["components"] = (["plus", "minus"] if self.components == 2 else ["scalar"])
         self.h5_file.attrs["units"] = json.dumps({"x": "µm", "y": "µm", "time": "ps"})
-        self.members = getattr(config, "_storage_members", None)
+        self.members = context.members
         if self.members is not None:
             self.h5_file.attrs["members"] = self.members
             if "member_index" not in self.h5_file:
-                dataset = self.h5_file.create_dataset("member_index", data=np.asarray(config._storage_indices))
+                dataset = self.h5_file.create_dataset("member_index", data=np.asarray(context.member_indices))
                 dataset.attrs["dims"] = ["member"]
                 dataset.attrs["units"] = ""
         self.h5_file.attrs["polarism_version"] = __version__
@@ -68,7 +69,7 @@ class HDF5Storage(BaseStorage):
                 asdict(config) if is_dataclass(config) else config,
                 sort_keys=True,
             )
-            member_seeds = getattr(config, "_storage_member_seeds", None)
+            member_seeds = context.member_seeds
             if member_seeds is not None and "member_seeds" not in config_group:
                 config_group.create_dataset("member_seeds", data=np.asarray(member_seeds, dtype=np.int64))
 

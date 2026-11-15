@@ -23,7 +23,6 @@ class LaserFactory:
         X: Union[np.ndarray, cp.ndarray],
         Y: Union[np.ndarray, cp.ndarray],
         precision: str = "double",
-        entry_overrides=None,
         grid=None,
     ) -> list[AbstractLaser]:
         """Create one or more lasers from the config."""
@@ -33,7 +32,7 @@ class LaserFactory:
                     "config_file must be provided for multiple laser mode."
                 )
 
-            return LaserFactory._create_multiple_lasers(laser_config, X, Y, precision, entry_overrides, grid)
+            return LaserFactory._create_multiple_lasers(laser_config, X, Y, precision, grid)
 
         return LaserFactory._create_single_laser(laser_config, X, Y, precision, grid)
 
@@ -58,7 +57,6 @@ class LaserFactory:
         X: Union[np.ndarray, cp.ndarray],
         Y: Union[np.ndarray, cp.ndarray],
         precision: str = "double",
-        entry_overrides=None,
         grid=None,
     ) -> list[AbstractLaser]:
         """Create all lasers listed in the config file."""
@@ -68,7 +66,7 @@ class LaserFactory:
         lasers = []
         for i, item in enumerate(data.get("lasers", [])):
             item = {**item}
-            for field, value in (entry_overrides or {}).get(i, {}).items():
+            for field, value in laser_config.entry_overrides.get(i, {}).items():
                 if field.startswith("extra."):
                     key = field[6:]
                     if key in item and key not in {f.name for f in fields(LaserParameters)}:
