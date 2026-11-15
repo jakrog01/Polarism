@@ -78,10 +78,21 @@ converting the field to NumPy inside `_P_space` or a per-step hook.
 
 ## Testing
 
+From the repository root, run this short CPU check after importing the example plugins:
+
 ```python
+import numpy as np
+import polarism as ps
+
+ps.load_plugins("examples/plugins")
+cfg = ps.Config()
+cfg.grid.nx = cfg.grid.ny = 8
+cfg.grid.lx = cfg.grid.ly = 16.0
+cfg.solver.dt = 0.001
+cfg.solver.total_time = 0.002
 cfg.laser.laser_type = "example-ring"
 cfg.laser.extra = {"ring_radius": 4.0}
-run = SimulationController(cfg)
+run = ps.SimulationController(cfg)
 assert run.pump_field(0).shape == run.grid.shape
 assert np.isfinite(run.pump_field(0)).all()
 ```

@@ -1,95 +1,41 @@
-# Checkpoint and Restart
+# Checkpoint and restart
 
-Set a checkpoint cadence in ps as a positive multiple of `solver.dt` and keep
-`solver.total_time` as the target duration from the initial state. The controller writes `checkpoint.h5` in its timestamped
-run directory at every selected step and at the run end. It creates that
-directory even when result storage is disabled.
+Save a checkpoint at a fixed cadence so a long run can continue after interruption. The target `solver.total_time` stays measured from the original initial state, in ps.
+
+## Save and resume
 
 ```python
-from polarism import Config, SimulationController
+from copy import deepcopy
 
-cfg = Config()
-cfg.solver.total_time = 10.0
-cfg.checkpoint.every = 1.0
-controller = SimulationController(cfg)
+import polarism as ps
+
+cfg = ps.Config()
+cfg.grid.nx = 64
+cfg.grid.ny = 64
+cfg.grid.lx = 60.0
+cfg.grid.ly = 60.0
+cfg.laser.laser_type = "continuous-gaussian"
+cfg.laser.P0 = 0.3
+cfg.laser.sigma_space = 6.0
+cfg.solver.method = "ifrk-fft-cuda"
+cfg.solver.tableau = "dop853"
+cfg.solver.adaptive = True
+cfg.solver.dt = 0.1
+cfg.solver.total_time = 150.0
+cfg.checkpoint.every = 50.0
+controller = ps.SimulationController(cfg)
 controller.run()
-print(controller.run_directory / "checkpoint.h5")
+checkpoint = controller.run_directory / "checkpoint.h5"
+continued = deepcopy(cfg)
+continued.solver.total_time = 300.0
+continued.checkpoint.resume_from = str(checkpoint)
+ps.SimulationController(continued).run()
 ```
 
-To continue to a later time, point a new controller at the saved file. Its
-result files go into a new run directory. Stored `time` values continue from
-the checkpoint time. The initial checkpoint frame is not written again because
-it already belongs to the earlier run; concatenate the two runs' frames in
-directory order to reconstruct the uninterrupted output sequence.
+`checkpoint.every` is in ps and must be a positive multiple of `solver.dt`. The controller writes at that cadence and at run end. It creates a run directory even when result storage is disabled. `checkpoint.path` selects a fixed checkpoint path; otherwise the file is `checkpoint.h5` in the run directory. A resumed run writes any result frames to a new run directory, with times continuing from the saved state.
 
-```python
-continued = Config()
-continued.solver.total_time = 20.0
-continued.checkpoint.resume_from = str(controller.run_directory / "checkpoint.h5")
-SimulationController(continued).run()
-```
+A checkpoint contains condensate and reservoir state, time, step, configuration, and any active accumulator and adaptive step state. The write uses a temporary file and atomic replacement. A different grid shape, reservoir type, batch shape, or time step is rejected. Changing precision casts saved arrays and warns, so exact bitwise continuation requires the original precision. See [Results format](../reference/results-format.md) for the file layout.
 
-The CLI accepts the same settings, including
-`polarism --checkpoint.resume-from path/to/checkpoint.h5 --solver.total-time 20`.
-The checkpoint records the step and time, condensate field, spectral
-field where needed, reservoir densities, timestep, config JSON, and format
-version. The write uses a temporary file and atomic replacement. A different
-grid shape, reservoir type, batch shape, or timestep is rejected. A different
-precision casts the saved arrays and emits a warning, so bitwise continuation
-is only expected at the original precision.
+`checkpoint.on_signal` is enabled by default. While `run()` is active in the main thread, SIGTERM and SIGUSR1 request a stop after the current solver chunk. The controller writes a final checkpoint, closes storage, and returns. On a scheduler, send the signal early enough for one chunk and a checkpoint write. For a sweep, pass its directory to `Sweep.run(resume=...)`; see [Parameter sweeps](parameter-sweeps.md).
 
-For parameter sweeps, each batch has its own checkpoint. Resume by passing the
-sweep directory to `Sweep.run(resume=...)`; completed batches are skipped. See
-[Parameter Sweeps](parameter-sweeps.md#output-and-restart) for details.
-
-For a manually prepared field, call
-`controller.set_initial_state(psi, reservoir_state=None, t=0.0)` before `run()`.
-The optional density tuple must match the condensate shape, including a leading
-batch axis. The supplied `t` becomes `t0` and need not lie on a solver step
-boundary; `step` starts at zero. `save_checkpoint(path)` and `load_checkpoint(path)` are also
-available directly.
-
-## Checkpoint format
-
-Checkpoint v2 stores `field` in canonical `(B, C, *S)` shape and optional
-`field_k`. The `reservoir/<name>` datasets use `(B, C_res, *S)` shape and the
-reservoir's state names. Built-in names are `nR`, `nA` and `nI` as applicable;
-plugins without `state_names` use numeric names starting at `0`. Attributes
-include `t`, `step`, `t0`, `dt`, `ndim`, spatial `shape`, `components`, `batched`,
-`reservoir_type`, `config_json`, `polarism_version`, and, for sweeps,
-`member_configs_json`. Adaptive runs write a `step_controller` group with the
-next trial size, previous error, and trial statistics. The `accumulators`
-group stores accumulator state when configured. Resume restores the adaptive
-trial sequence, and changing between adaptive and fixed mode on resume is
-rejected. Checkpoint v1 is rejected.
-
-With `checkpoint.on_signal=True`, SIGTERM and SIGUSR1 request a stop after the
-current solver chunk. The controller writes a checkpoint, finalizes result
-storage, and returns normally. Signal handlers are installed only while `run()`
-is active in the main thread, then previous handlers are restored.
-
-## SLURM jobs
-
-Slurm delivers `--signal` to job steps started with `srun`, so launch Polarism
-through `srun`. With a fixed checkpoint path, one job script both starts and
-continues the run; submit it again until the target time is reached:
-
-```bash
-#!/bin/bash
-#SBATCH --time=24:00:00
-#SBATCH --signal=USR1@120
-
-CHECKPOINT="$SLURM_SUBMIT_DIR/checkpoint.h5"
-ARGS=(--solver.total-time 20 --checkpoint.every 1 --checkpoint.path "$CHECKPOINT")
-if [ -f "$CHECKPOINT" ]; then
-    ARGS+=(--checkpoint.resume-from "$CHECKPOINT")
-fi
-srun polarism "${ARGS[@]}"
-```
-
-`USR1@120` asks Slurm for the signal 120 seconds before the time limit; choose a
-margin longer than one checkpoint write plus one solver chunk. Each submission
-writes its results to a new run directory and advances only the remaining
-steps. If the job script runs Polarism without `srun`, use
-`#SBATCH --signal=B:USR1@120` and start it with `exec polarism ...` so that the
-signal reaches the Python process instead of the batch shell.
+For a prepared field, call `controller.set_initial_state(psi, reservoir_state=None, t=0.0)` before `run()`. `t` is in ps. Direct `save_checkpoint(path)` and `load_checkpoint(path)` methods are also available. Python event callbacks must be registered again after loading a checkpoint.

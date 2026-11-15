@@ -1,47 +1,40 @@
 # Installation
 
-Install the published package for simulation work. A development checkout is needed only when changing the source or building the docs.
+Install Polarism with Python 3.12 or newer. The base package runs on a CPU; CUDA support is optional.
 
-## Install from PyPI
-
-```bash
-pip install polarism
-```
-
-Pin a release with `pip install "polarism==0.9.0"`.
-
-The development version can be installed straight from GitHub:
+## Install the package
 
 ```bash
-pip install "git+https://github.com/jakrog01/Polarism.git@dev"
-```
-
-Check the installed CLI:
-
-```bash
+python -m pip install polarism
 polarism --help
 ```
 
-On a CUDA machine, `polarism-bench --help` shows the benchmark options; a small
-benchmark can also confirm that the GPU backend is available. See
-[Running on GPUs](../user-guide/running-on-gpus.md) for a command and guidance.
-For a source checkout and test workflow, see [Contributing](../development/contributing.md).
+To pin the documented release, use `python -m pip install "polarism==0.9.1"`.
 
-## Optional GPU support
+## Add CUDA support
 
-The runtime backend uses NumPy by default and switches to CuPy when `cfg.compute_engine.use_gpu = True` and CuPy is available. If CuPy is missing, the code falls back to CPU execution.
+Install the extra that matches your CUDA environment:
 
-Recommended workflow:
+```bash
+python -m pip install "polarism[cuda12]"
+```
 
-- Start with a CPU install and validate correctness first.
-- Add a CuPy build that matches the CUDA toolkit on the target machine:
-  `pip install "polarism[cuda12]"` for CUDA 12.x or
-  `pip install "polarism[cuda13]"` for CUDA 13.x.
-- V100 (Volta) systems need `polarism[cuda12]`; CUDA 13 no longer supports Volta.
-- Polarism compiles some CUDA kernels at runtime, which needs the CUDA headers.
-  If a GPU run fails with `Failed to find CUDA headers`, load a CUDA toolkit
-  (for example `module load` on a cluster) or install
-  `pip install "cupy-cuda12x[ctk]"` (`cupy-cuda13x[ctk]` for CUDA 13).
-- Re-run the compliance or benchmark suites on GPU hardware before trusting production-scale timings.
+Use `polarism[cuda13]` for CUDA 13. Use CUDA 12 for V100 or Volta hardware. CuPy must match the NVIDIA driver and CUDA toolkit. Polarism compiles some kernels at runtime, so CUDA headers must be available. If a run reports `Failed to find CUDA headers`, load the toolkit or install the matching CuPy toolkit extra, such as `cupy-cuda12x[ctk]`.
 
-For solver choice, precision, and CUDA graph chunks, see [Running on GPUs](../user-guide/running-on-gpus.md).
+Check whether CuPy can reach a CUDA device. The command prints `True` when one is available:
+
+```bash
+python -c "from polarism.compute_engine import has_cuda_device; print(has_cuda_device())"
+```
+
+Set `cfg.compute_engine.use_gpu = True` for a GPU run. See [Running on GPUs](../user-guide/running-on-gpus.md) for solver and precision choices.
+
+## Install a development checkout
+
+From the repository root:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+This installs the test and documentation dependencies. See [Contributing](../development/contributing.md) for the development workflow.

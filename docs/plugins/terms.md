@@ -13,7 +13,7 @@ coefficient enters `d psi / dt`:
 | `category` | Contribution | Coefficient |
 | --- | --- | --- |
 | `"energy"` | `(-i / hbar) * E * psi` | `E` in meV |
-| `"rate"` | `G * psi` | `G` in 1/ps |
+| `"rate"` | `G * psi` | `G` in ps⁻¹ |
 
 ```python
 from polarism.model_terms import CudaSnippet, Term, register_term
@@ -31,7 +31,7 @@ class NonlinearLoss(Term):
         return -0.5 * self.params["alpha"] * abs(field) ** 2
 ```
 
-This term adds `-(alpha / 2) |psi|^2 psi`, so the density of a homogeneous
+Here `alpha` has units µm²/ps in 2D. This term adds `-(alpha / 2) |psi|² psi`, so the density of a homogeneous
 field without other losses decays as `n0 / (1 + alpha * n0 * t)`.
 
 `Term.__init__(params, grid, physics)` stores `self.params` (the dictionary

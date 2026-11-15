@@ -76,9 +76,20 @@ potential in `get_potential_distribution`, leave `psi` unchanged in
 
 ## Testing
 
+From the repository root, run this short CPU check after importing the example plugins:
+
 ```python
+import numpy as np
+import polarism as ps
+
+ps.load_plugins("examples/plugins")
+cfg = ps.Config()
+cfg.grid.nx = cfg.grid.ny = 8
+cfg.grid.lx = cfg.grid.ly = 16.0
+cfg.solver.dt = 0.001
+cfg.solver.total_time = 0.002
 cfg.boundary_condition.absorption = "example-soft-edge"
-run = SimulationController(cfg)
+run = ps.SimulationController(cfg)
 field = np.ones(run.grid.shape, dtype=np.complex128)
 damped = run.boundary_condition.after_step_action(field)
 assert np.abs(damped).max() <= 1.0

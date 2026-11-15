@@ -1,63 +1,45 @@
 # Polarism
 
-Polarism is a Python package for 1-D and 2-D driven-dissipative Gross-Pitaevskii simulations of exciton-polariton systems. Start with `pip install polarism`, then follow the [quickstart](getting-started/quickstart.md).
+Polarism simulates driven-dissipative exciton-polariton condensates in one and two dimensions. You describe the sample, pump and numerics in Python or YAML; Polarism integrates the generalized Gross-Pitaevskii equation coupled to reservoir rate equations on a CPU or an NVIDIA GPU.
 
 ## Highlights
 
-- Scalar or spinor (ψ+, ψ−) polaritons with TE–TM splitting, Zeeman splitting and cross-spin interaction. See [Spin and Polarization](user-guide/spin-and-polarization.md).
-- Single, double, quadratic-double or no reservoir, shared or per spin component.
-- Incoherent pumps built from spatial profiles, lattices and temporal envelopes, a coherent (resonant) drive, and time-dependent potentials.
-- Truncated-Wigner noise from a counter-based Philox generator, reproducible from one seed on CPU and GPU.
-- Finite-difference RK4, split-step FFT, ETD-RK2, interaction-picture RK4 and higher-order IFRK solvers on NumPy, CuPy or fused CUDA kernels, with CUDA graph chunks.
-- Accumulated observables: momentum distribution, g⁽¹⁾, g⁽²⁾ and Welch energy spectra E(k) and E(x). See [Output and Visualization](user-guide/output-and-visualization.md).
-- Adaptive time stepping for the embedded IFRK tableaus. See [Time Evolution](user-guide/time-evolution.md).
-- Batched parameter sweeps, checkpoint and restart, asynchronous HDF5/NPY/JSON output and a lazy result reader.
-- Registries for solvers, terms, dispersions, profiles, envelopes, initial conditions, observables and output formats.
+- **Physics:** scalar ψ or spinor (ψ+, ψ−) fields with TE-TM splitting, Zeeman splitting and cross-spin interaction; single, double, quadratic-double or no reservoir; incoherent pumps from spatial profiles, lattices and temporal envelopes; a coherent drive; static and time-dependent potentials; truncated-Wigner noise.
+- **Solvers:** finite-difference RK4, split-step FFT, ETD-RK2 and interaction-picture RK solvers up to Verner 9, with adaptive time stepping for the embedded tableaus. The same configuration runs on NumPy, CuPy or fused CUDA kernels.
+- **Observables:** density, Stokes parameters, currents, vortices, and accumulated n(k), g1, g2 and energy spectra E(k) and E(x).
+- **Workflows:** batched parameter sweeps, checkpoint and restart (including SLURM time limits), asynchronous HDF5, NPY and JSON output, and a lazy result reader.
+- **Extensible:** registries for lasers, potentials, reservoirs, terms, dispersions, solvers, observables, accumulators and storage formats.
+
+## A first run
+
+```python
+import polarism as ps
+
+cfg = ps.Config()
+cfg.grid.nx = 64
+cfg.grid.ny = 64
+cfg.grid.lx = 60.0
+cfg.grid.ly = 60.0
+cfg.laser.laser_type = "continuous-gaussian"
+cfg.laser.P0 = 0.3
+cfg.laser.sigma_space = 6.0
+cfg.solver.method = "ifrk-fft-cuda"
+cfg.solver.tableau = "dop853"
+cfg.solver.adaptive = True
+cfg.solver.dt = 0.1
+cfg.solver.total_time = 300.0
+controller = ps.SimulationController(cfg)
+controller.run()
+```
+
+Lengths are in µm, times in ps and energies in meV. This run forms a condensate under the pump spot in a few seconds on a CPU; the [quickstart](getting-started/quickstart.md) saves and plots it.
+
+## Where to go next
+
+- **New to Polarism:** [install it](getting-started/installation.md) and follow the [quickstart](getting-started/quickstart.md).
+- **Setting up a study:** the [user guide](user-guide/configuration.md) walks through configuration, physics, solvers, output and sweeps.
+- **Looking up a key or a solver:** the [configuration reference](reference/configuration.md) and the [solver reference](reference/solvers.md).
+- **Checking the model:** the [physics page](explanation/physics.md) gives the equations, units and references.
+- **Adding your own physics:** the [plugin guide](plugins/index.md).
 
 Release notes for each version are on the [GitHub releases page](https://github.com/jakrog01/Polarism/releases).
-
-## What is documented here
-
-- A fast path for local installation and first simulation runs.
-- User-facing configuration guidance for grids, pumps, solvers, and outputs.
-- Hand-written reference plus generated Python signatures and docstrings for the public API.
-- Development notes for physics background, testing, CI, and contribution workflow.
-
-## Architecture at a glance
-
-The repository is split along clean responsibility boundaries:
-
-- `polarism/` contains the reusable simulation library: configuration dataclasses, solver implementations, result handling, and the `SimulationController` class.
-- `tests/` contains correctness, compliance, and benchmark-style validation suites.
-- `docs/` and `mkdocs.yml` define the documentation site and generated API reference.
-
-## Core capabilities
-
-- CPU and optional CuPy-backed GPU execution through a shared compute engine abstraction.
-- Multiple solver families, including finite-difference RK4, fused CUDA RK4, split-step FFT, ETD-RK2, interaction-picture RK4, and IFRK with RK4/DP5/DOP853/Verner tableaus.
-- Configurable grid topology, boundary absorption, pumps, reservoirs, and result storage.
-- Batch-oriented HDF5, JSON, and NumPy output paths plus real-time visualization hooks.
-
-## Documentation pillars
-
-### Getting Started
-
-Use this section when you want the shortest path to a working environment and a first run.
-Start with [Getting Started](getting-started/index.md), then continue to [Installation](getting-started/installation.md) or [Quickstart](getting-started/quickstart.md).
-
-### User Guide
-
-Use this section when you need to understand how the configuration maps onto the physics model and solver behavior.
-To add components, start with the [plugin guide](plugins/index.md).
-
-### Reference
-
-Use this section for package responsibilities, interfaces, factories, and supported options. The [Python API](api/python-api.md) is generated from public objects and docstrings.
-
-### Explanation and Development
-
-Use this section when you need the mathematical model, the test strategy, or the repository conventions for contributing code.
-
-## Acknowledgements
-
-This project is co-developed with the [Exciton-Polariton research group](https://polariton.fuw.edu.pl/) working on the Faculty of Physics at University of Warsaw, and is supported by the computing infrastructure of [ICM](https://icm.edu.pl/) University of Warsaw.

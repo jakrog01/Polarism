@@ -15,52 +15,50 @@ nav:
   - Home:
       - Polarism: index.md
       - About: about.md
-  - Getting Started:
-      - getting-started/index.md
+  - Getting started:
       - Installation: getting-started/installation.md
       - Quickstart: getting-started/quickstart.md
-  - User Guide:
+  - User guide:
+      - Configuring a run: user-guide/configuration.md
+      - Grid and physics: user-guide/grid-and-physics.md
+      - Pumps and reservoirs: user-guide/pumps-and-reservoirs.md
+      - Potentials and boundaries: user-guide/potentials-and-boundaries.md
+      - Profiles and envelopes: user-guide/profiles-and-envelopes.md
+      - Coherent drive: user-guide/coherent-drive.md
+      - Spin and polarization: user-guide/spin-and-polarization.md
+      - Initial conditions and noise: user-guide/initial-conditions-and-noise.md
+      - Solvers and time stepping: user-guide/solvers-and-time-stepping.md
+      - Output and results: user-guide/output-and-results.md
+      - Observables and spectra: user-guide/observables-and-spectra.md
+      - Parameter sweeps: user-guide/parameter-sweeps.md
+      - Checkpoint and restart: user-guide/checkpoint-and-restart.md
       - Running on GPUs: user-guide/running-on-gpus.md
-      - Grid and Parameters: user-guide/grid-and-parameters.md
-      - Potentials and Pumps: user-guide/potentials-and-pumps.md
-      - Coherent Drive: user-guide/coherent-drive.md
-      - Spin and Polarization: user-guide/spin-and-polarization.md
-      - Profiles and Envelopes: user-guide/profiles-and-envelopes.md
-      - Time Evolution: user-guide/time-evolution.md
-      - Output and Visualization: user-guide/output-and-visualization.md
-      - Checkpoint and Restart: user-guide/checkpoint-and-restart.md
-      - Parameter Sweeps: user-guide/parameter-sweeps.md
-      - Plugins:
-          - Overview: plugins/index.md
-          - Your first plugin: plugins/first-plugin.md
-          - Lasers: plugins/lasers.md
-          - Potentials: plugins/potentials.md
-          - Initial conditions: plugins/initial-conditions.md
-          - Profiles and envelopes: plugins/profiles.md
-          - Reservoirs: plugins/reservoirs.md
-          - Solvers: plugins/solvers.md
-          - Terms: plugins/terms.md
-          - Dispersion: plugins/dispersion.md
-          - Grids: plugins/grids.md
-          - Absorption strategies: plugins/absorption.md
-          - Storage formats: plugins/storage.md
-          - Observables: plugins/observables.md
+  - Plugins:
+      - Overview: plugins/index.md
+      - Your first plugin: plugins/first-plugin.md
+      - Lasers: plugins/lasers.md
+      - Potentials: plugins/potentials.md
+      - Initial conditions: plugins/initial-conditions.md
+      - Profiles and envelopes: plugins/profiles.md
+      - Reservoirs: plugins/reservoirs.md
+      - Terms: plugins/terms.md
+      - Dispersion: plugins/dispersion.md
+      - Solvers: plugins/solvers.md
+      - Grids: plugins/grids.md
+      - Absorption: plugins/absorption.md
+      - Storage formats: plugins/storage.md
+      - Observables: plugins/observables.md
   - Reference:
-      - Overview: api/overview.md
-      - Option Matrix: api/option-matrix.md
-      - Top-Level Package: api/polarism.md
-      - Configuration: api/configuration.md
-      - Controller and Backend: api/controller-and-backend.md
-      - Model Components: api/model-components.md
-      - Solvers: api/solvers.md
-      - Results: api/results.md
-      - Python API: api/python-api.md
+      - Configuration: reference/configuration.md
+      - Solvers: reference/solvers.md
+      - Results format: reference/results-format.md
+      - Python API: reference/python-api.md
   - Explanation:
-      - Physics Background: development/physics-background.md
+      - Physics: explanation/physics.md
   - Development:
-      - GPU Profiling: development/profiling.md
-      - Testing and CI: development/testing-and-ci.md
       - Contributing: development/contributing.md
+      - Testing and CI: development/testing-and-ci.md
+      - GPU profiling: development/profiling.md
       - Release notes: https://github.com/jakrog01/Polarism/releases
 
 theme:

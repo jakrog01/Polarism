@@ -14,11 +14,11 @@ function and calls it once per member.
 
 | Name and signature | Caller and timing | Return or state | Status |
 | --- | --- | --- | --- |
-| `condition_fn(grid, initial_condition_config, xp, cdtype)` | `SimulationState`, once per member during setup | NumPy/CuPy array of shape `grid.shape` | Required |
+| `condition_fn(grid, initial_condition_config, xp, cdtype)` | `SimulationState`, once per member during setup | NumPy/CuPy array of shape `grid.shape` or `(2, *grid.shape)` | Required |
 | `@register_initial_condition("name")` | Module import | Registers the function under `name` | Required |
 
-The function returns the spatial field only; the framework adds the batch axis,
-casts the result to `cdtype`, and rejects any other shape. `grid.X` (and
+The function returns one spatial field or a two-component spinor field. The framework adds the batch axis,
+casts the result to `cdtype`, and rejects any other shape. In a spinor run, a single field is added to the plus component only. `grid.X` (and
 `grid.Y` in 2D) hold the coordinates in µm, centred on the origin, and
 `grid.ndim` is 1 or 2. `xp` is NumPy or CuPy, so no separate import is needed.
 `InitialConditionParameters` holds `amplitude`, `x0`, `y0`, `kx`, `ky`,
@@ -54,6 +54,14 @@ def gaussian_packet(grid, cfg, xp, cdtype):
 ```
 
 ```python
+import numpy as np
+import polarism as ps
+
+cfg = ps.Config()
+cfg.grid.nx = cfg.grid.ny = 8
+cfg.grid.lx = cfg.grid.ly = 16.0
+cfg.solver.dt = 0.001
+cfg.solver.total_time = 0.002
 cfg.initial_condition.type = "gaussian-packet"
 cfg.initial_condition.amplitude = 0.5
 cfg.initial_condition.extra = {"width": 8.0}
@@ -73,8 +81,7 @@ can vary inside one batch.
 
 ## Pitfalls
 
-- Return an array of exactly `grid.shape`; a scalar or a differently shaped
-  array raises an error.
+- Return `grid.shape` for a scalar field or `(2, *grid.shape)` for a spinor field. A scalar value or any other shape raises an error.
 - The returned field is added to the noise field. Set `noise.enabled = False`
   for a purely deterministic start.
 - The vortex type needs a 2D grid; a plugin that does should check `grid.ndim`.
@@ -82,9 +89,17 @@ can vary inside one batch.
 ## Testing
 
 ```python
+import numpy as np
+import polarism as ps
+
+cfg = ps.Config()
+cfg.grid.nx = cfg.grid.ny = 8
+cfg.grid.lx = cfg.grid.ly = 16.0
+cfg.solver.dt = 0.001
+cfg.solver.total_time = 0.002
 cfg.initial_condition.type = "gaussian-packet"
 cfg.noise.enabled = False
-run = SimulationController(cfg)
+run = ps.SimulationController(cfg)
 assert run.state.psi.shape == run.grid.shape
 assert np.isfinite(run.state.psi).all()
 ```
